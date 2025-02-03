@@ -5,7 +5,7 @@
 Below is an example of defining the module to use a single Kinesis Data Stream for all log types (results, status, and audit):
 ```hcl
 module "kinesis" {
-  source = "github.com/fleetdm/fleet//terraform/addons/byo-kinesis-logging-destination/target-account"
+  source = "github.com/fleetdm/fleet-terraform//addons/byo-kinesis-logging-destination/target-account"
 
   fleet_iam_role_arn = "arn:aws:iam::123456789:role/fleet-server-role" # this is the ARN of the IAM (ECS-task) role the fleet servers are running as
   log_destinations = {
@@ -27,7 +27,7 @@ output "kinesis_logging_destination" {
 If you desired a Kinesis Data Stream per "topic":
 ```hcl
 module "kinesis" {
-   source = "github.com/fleetdm/fleet//terraform/addons/byo-kinesis-logging-destination/target-account"
+   source = "github.com/fleetdm/fleet-terraform//addons/byo-kinesis-logging-destination/target-account"
 
    fleet_iam_role_arn = "arn:aws:iam::123456789:role/fleet-server-role" # this is the ARN of the IAM (ECS-task) role the fleet servers are running as
    log_destinations = {

@@ -8,7 +8,7 @@ Below is an example implementation of the module:
 
 ```
 module "vulnerability_processing" {
-  source                     = "github.com/fleetdm/fleet//terraform/addons/vuln-processing?ref=main"
+  source                     = "github.com/fleetdm/fleet-terraform//addons/vuln-processing?ref=main"
   customer_prefix = "fleet"
   ecs_cluster     = module.main.byo-vpc.byo-db.byo-ecs.cluster.cluster_arn
   vpc_id          = module.main.vpc.vpc_id

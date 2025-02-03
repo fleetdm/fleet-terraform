@@ -9,7 +9,7 @@ See https://github.com/fleetdm/fleet/blob/main/terraform/example/main.tf for det
 
 ```
 module "main" {
-  source          = "github.com/fleetdm/fleet//terraform?ref=main"
+  source          = "github.com/fleetdm/fleet-terraform/?ref=main"
   certificate_arn = module.acm.acm_certificate_arn
   vpc = {
     name = random_pet.main.id
@@ -28,7 +28,7 @@ module "main" {
 }
 
 module "logging_alb" {
-  source        = "github.com/fleetdm/fleet//terraform/addons/logging-alb?ref=main"
+  source        = "github.com/fleetdm/fleet-terraform//addons/logging-alb?ref=main"
   prefix        = "fleet"
   enable_athena = true
 }

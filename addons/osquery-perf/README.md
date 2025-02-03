@@ -8,7 +8,7 @@ Below is an example implementation of the module:
 
 ```
 module "osquery_perf" {
-  source                     = "github.com/fleetdm/fleet//terraform/addons/osquery-perf?ref=main"
+  source                     = "github.com/fleetdm/fleet-terraform//addons/osquery-perf?ref=main"
   customer_prefix            = "fleet"
   ecs_cluster                = module.main.byo-vpc.byo-db.byo-ecs.service.cluster
   subnets                    = module.main.byo-vpc.byo-db.byo-ecs.service.network_configuration[0].subnets

@@ -12,7 +12,7 @@ If you wanted to make changes to the individual files to fit your environment, f
 
 ```
 module "firehose_logging" {
-  source = "github.com/fleetdm/fleet//terraform/addons/byo-firehose-logging-destination/target-account"
+  source = "github.com/fleetdm/fleet-terraform//addons/byo-firehose-logging-destination/target-account"
   
   # Variables
   osquery_logging_destination_bucket_name = {your-desired-bucket-prefix}

@@ -18,12 +18,12 @@ Then provide this secret's ARN as the input to the variable `secret_arn`.
 
 ```hcl
 module "private-auth" {
-  source     = "github.com/fleetdm/fleet//terraform/addons/private-registry"
+  source     = "github.com/fleetdm/fleet-terraform//addons/private-registry"
   secret_arn = "arn:aws:secretsmanager:us-east-2:123456789:secret:MyRegistryCredentials"
 }
 
 module "main" {
-  source       = "github.com/fleetdm/fleet//terraform"
+  source       = "github.com/fleetdm/fleet-terraform/"
   fleet_config = {
     # other fleet configs
     extra_execution_iam_policies = concat(module.private-auth.extra_execution_iam_policies /*, additional execution policies*/)
