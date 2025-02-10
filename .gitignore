@@ -1,2 +1,5 @@
 .external_modules
 .idea
+
+.terraform
+terraform.tfstate*
