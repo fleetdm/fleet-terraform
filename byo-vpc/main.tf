@@ -61,7 +61,7 @@ module "rds" {
   master_username                 = var.rds_config.master_username
   master_password                 = random_password.rds.result
   database_name                   = "fleet"
-  skip_final_snapshot             = true
+  skip_final_snapshot             = var.rds_config.skip_final_snapshot
   snapshot_identifier             = var.rds_config.snapshot_identifier
 
   preferred_maintenance_window = var.rds_config.preferred_maintenance_window
