@@ -63,6 +63,7 @@ module "rds" {
   database_name                   = "fleet"
   skip_final_snapshot             = true
   snapshot_identifier             = var.rds_config.snapshot_identifier
+  backup_retention_period         = var.rds_config.backup_retention_period
 
   preferred_maintenance_window = var.rds_config.preferred_maintenance_window
 
