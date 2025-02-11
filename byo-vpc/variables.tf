@@ -27,6 +27,7 @@ variable "rds_config" {
     cluster_tags                    = optional(map(string), {})
     preferred_maintenance_window    = optional(string, "thu:23:00-fri:00:00")
     skip_final_snapshot             = optional(bool, true)
+    backup_retention_period         = optional(number, 7)
   })
   default = {
     name                            = "fleet"
@@ -47,6 +48,7 @@ variable "rds_config" {
     cluster_tags                    = {}
     preferred_maintenance_window    = "thu:23:00-fri:00:00"
     skip_final_snapshot             = true
+    backup_retention_period         = 7
   }
   description = "The config for the terraform-aws-modules/rds-aurora/aws module"
   nullable    = false
