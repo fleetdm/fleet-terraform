@@ -92,7 +92,7 @@ module "vpc" {
 }
 
 module "byo-vpc" {
-  source = "github.com/fleetdm/fleet-terraform//byo-vpc?ref=tf-mod-byo-vpc-v1.12.1"
+  source = "github.com/fleetdm/fleet-terraform//byo-vpc?ref=tf-mod-byo-vpc-v1.13.0"
   vpc_config = {
     vpc_id = module.vpc.vpc_id
     networking = {

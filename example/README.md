@@ -18,7 +18,7 @@ Due to Terraform issues, this code requires 3 applies "from scratch":
 6. `terraform apply`
 7. If enabling mdm do the following:
  - Record the KMS key from step 5 output.
- - Use `fleetctl` to obtain all of the mdm certs.  Use https://fleetdm.com/docs/using-fleet/mdm-macos-setup#apple-push-notification-service-apns and https://fleetdm.com/docs/using-fleet/mdm-setup#apple-business-manager-abm for reference.
+ - Use `fleetctl` to obtain all of the mdm certs.  Use https://fleetdm.com/docs/using-fleet/mdm-setup#apple-push-notification-service-apns and https://fleetdm.com/docs/using-fleet/mdm-setup#apple-business-manager-abm for reference.
  - Place the certificates in the `resources` folder with the following names based upon their function:
 ```
 scep.crt
@@ -58,10 +58,10 @@ This will encrypt all of the mdm secrets and add the .encrypted extension to the
 | Name | Source | Version |
 |------|--------|---------|
 | <a name="module_acm"></a> [acm](#module\_acm) | terraform-aws-modules/acm/aws | 4.3.1 |
-| <a name="module_firehose-logging"></a> [firehose-logging](#module\_firehose-logging) | github.com/fleetdm/fleet-terraform//addons/logging-destination-firehose | tf-mod-addon-logging-destination-firehose-v1.1.0 |
-| <a name="module_fleet"></a> [fleet](#module\_fleet) | github.com/fleetdm/fleet-terraform/ | tf-mod-root-v1.7.3 |
-| <a name="module_migrations"></a> [migrations](#module\_migrations) | github.com/fleetdm/fleet-terraform//addons/migrations | tf-mod-addon-migrations-v2.0.0 |
-| <a name="module_osquery-carve"></a> [osquery-carve](#module\_osquery-carve) | github.com/fleetdm/fleet-terraform//addons/osquery-carve | tf-mod-addon-osquery-carve-v1.0.1 |
+| <a name="module_firehose-logging"></a> [firehose-logging](#module\_firehose-logging) | github.com/fleetdm/fleet-terraform/addons/logging-destination-firehose | tf-mod-addon-logging-destination-firehose-v1.1.1 |
+| <a name="module_fleet"></a> [fleet](#module\_fleet) | github.com/fleetdm/fleet-terraform | tf-mod-root-v1.12.0 |
+| <a name="module_migrations"></a> [migrations](#module\_migrations) | github.com/fleetdm/fleet-terraform/addons/migrations | tf-mod-addon-migrations-v2.0.1 |
+| <a name="module_osquery-carve"></a> [osquery-carve](#module\_osquery-carve) | github.com/fleetdm/fleet-terraform/addons/osquery-carve | tf-mod-addon-osquery-carve-v1.1.0 |
 
 ## Resources
 
