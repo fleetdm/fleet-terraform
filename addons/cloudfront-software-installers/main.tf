@@ -76,7 +76,7 @@ module "cloudfront_software_installers" {
 
   origin_access_control = {
     s3 = {
-      description      = ""
+      description      = "Require signatures"
       origin_type      = "s3"
       signing_behavior = "always"
       signing_protocol = "sigv4"
@@ -98,8 +98,8 @@ module "cloudfront_software_installers" {
   }
 
   default_cache_behavior = {
-    target_origin_id       = "something"
-    viewer_protocol_policy = "allow-all"
+    target_origin_id       = "s3_one"
+    viewer_protocol_policy = "redirect-to-https"
 
     allowed_methods = ["GET", "HEAD", "OPTIONS"]
     cached_methods  = ["GET", "HEAD"]
@@ -107,22 +107,6 @@ module "cloudfront_software_installers" {
     query_string    = true
   }
 
-  ordered_cache_behavior = [
-    {
-      path_pattern           = "/static/*"
-      target_origin_id       = "s3_one"
-      viewer_protocol_policy = "redirect-to-https"
+  ordered_cache_behavior = []
 
-      allowed_methods = ["GET", "HEAD", "OPTIONS"]
-      cached_methods  = ["GET", "HEAD"]
-      compress        = true
-      query_string    = true
-    }
-  ]
-
-  # Is this needed when not using an alias?
-  viewer_certificate = {
-    acm_certificate_arn = "arn:aws:acm:us-east-1:135367859851:certificate/1032b155-22da-4ae0-9f69-e206f825458b"
-    ssl_support_method  = "sni-only"
-  }
 }
