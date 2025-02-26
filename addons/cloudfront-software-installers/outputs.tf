@@ -14,3 +14,7 @@ output "extra_environment_variables" {
 output "extra_iam_policies" {
   value = [aws_iam_policy.software_installers_secret.arn]
 }
+
+output "cloudfront_arn" {
+  value = module.cloudfront_software_installers.cloudfront_distribution_arn
+}

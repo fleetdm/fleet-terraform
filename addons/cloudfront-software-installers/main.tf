@@ -15,6 +15,19 @@
 #   }
 # }
 
+data "aws_iam_policy_document" "software_installers_bucket" {
+  statement {
+    actions   = ["s3:GetObject"]
+    resources = [data.aws_s3_bucket.software_installers.arn]
+    effect    = "Allow"
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceArn"
+      values   = [module.cloudfront_software_installers.cloudfront_distribution_arn]
+    }
+  }
+}
+
 data "aws_s3_bucket" "software_installers" {
   bucket = var.s3_bucket
 }
@@ -69,11 +82,12 @@ module "cloudfront_software_installers" {
   retain_on_delete    = false
   wait_for_deployment = false
 
-  create_origin_access_identity = true
-  origin_access_identities = {
-    s3_bucket = "${var.customer} CloudFront can access software installers bucket"
-  }
+  create_origin_access_identity = false
+  # origin_access_identities = {
+  #   s3_bucket = "${var.customer} CloudFront can access software installers bucket"
+  # }
 
+  create_origin_access_control = true
   origin_access_control = {
     s3 = {
       description      = "Require signatures"
@@ -91,9 +105,9 @@ module "cloudfront_software_installers" {
   origin = {
     s3_one = {
       domain_name = data.aws_s3_bucket.software_installers.bucket_domain_name
-      s3_origin_config = {
-        origin_access_identity = "s3_bucket"
-      }
+      # s3_origin_config = {
+      #   origin_access_control = "s3"
+      # }
     }
   }
 
