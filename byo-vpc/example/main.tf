@@ -51,7 +51,7 @@ data "aws_route53_zone" "main" {
 }
 
 module "firehose-logging" {
-  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-firehose?ref=tf-mod-addon-logging-destination-firehose-v1.1.1"
+  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-firehose?depth=1&ref=tf-mod-addon-logging-destination-firehose-v1.1.1"
   osquery_results_s3_bucket = {
     name = "${random_pet.main.id}-results"
   }
@@ -92,7 +92,7 @@ module "vpc" {
 }
 
 module "byo-vpc" {
-  source = "github.com/fleetdm/fleet-terraform//byo-vpc?ref=tf-mod-byo-vpc-v1.13.0"
+  source = "github.com/fleetdm/fleet-terraform//byo-vpc?depth=1&ref=tf-mod-byo-vpc-v1.13.0"
   vpc_config = {
     vpc_id = module.vpc.vpc_id
     networking = {
@@ -150,7 +150,7 @@ module "byo-vpc" {
 }
 
 module "migrations" {
-  source                   = "github.com/fleetdm/fleet-terraform//addons/migrations?ref=tf-mod-addon-migrations-v2.0.1"
+  source                   = "github.com/fleetdm/fleet-terraform//addons/migrations?depth=1&ref=tf-mod-addon-migrations-v2.0.1"
   ecs_cluster              = module.byo-vpc.byo-db.byo-ecs.service.cluster
   task_definition          = module.byo-vpc.byo-db.byo-ecs.task_definition.family
   task_definition_revision = module.byo-vpc.byo-db.byo-ecs.task_definition.revision
