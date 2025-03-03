@@ -18,8 +18,12 @@
 data "aws_iam_policy_document" "software_installers_bucket" {
   statement {
     actions   = ["s3:GetObject"]
-    resources = [data.aws_s3_bucket.software_installers.arn]
+    resources = ["${data.aws_s3_bucket.software_installers.arn}/*"]
     effect    = "Allow"
+    principals {
+      type        = "Service"
+      identifiers = ["cloudfront.amazonaws.com"]
+    }
     condition {
       test     = "StringEquals"
       variable = "AWS:SourceArn"
@@ -34,7 +38,7 @@ data "aws_s3_bucket" "software_installers" {
 
 data "aws_iam_policy_document" "software_installers_secret" {
   statement {
-    actions = ["secretsmanager:GetSecretValue"]
+    actions   = ["secretsmanager:GetSecretValue"]
     resources = [aws_secretsmanager_secret.software_installers.arn]
   }
 }
@@ -63,16 +67,13 @@ resource "aws_secretsmanager_secret_version" "software_installers" {
   secret_id = aws_secretsmanager_secret.software_installers.id
   secret_string = jsonencode({
     FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PRIVATE_KEY = var.private_key
-    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PUBLC_KEY = var.public_key
+    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PUBLC_KEY   = var.public_key
   })
   # private key data
 }
 
 module "cloudfront_software_installers" {
   source = "terraform-aws-modules/cloudfront/aws"
-
-  # Will we need an alias?  Should this be optional?
-  # aliases = ["cdn.example.com"]
 
   comment = "${var.customer} software installers"
   enabled = true
@@ -83,14 +84,11 @@ module "cloudfront_software_installers" {
   wait_for_deployment = false
 
   create_origin_access_identity = false
-  # origin_access_identities = {
-  #   s3_bucket = "${var.customer} CloudFront can access software installers bucket"
-  # }
 
   create_origin_access_control = true
   origin_access_control = {
-    s3 = {
-      description      = "Require signatures"
+    "${var.customer}-software-installers" = {
+      description      = "${var.customer}-software-installers"
       origin_type      = "s3"
       signing_behavior = "always"
       signing_protocol = "sigv4"
@@ -105,9 +103,7 @@ module "cloudfront_software_installers" {
   origin = {
     s3_one = {
       domain_name = data.aws_s3_bucket.software_installers.bucket_domain_name
-      # s3_origin_config = {
-      #   origin_access_control = "s3"
-      # }
+      origin_access_control = "${var.customer}-software-installers"
     }
   }
 
@@ -115,10 +111,11 @@ module "cloudfront_software_installers" {
     target_origin_id       = "s3_one"
     viewer_protocol_policy = "redirect-to-https"
 
-    allowed_methods = ["GET", "HEAD", "OPTIONS"]
-    cached_methods  = ["GET", "HEAD"]
-    compress        = true
-    query_string    = true
+    allowed_methods    = ["GET", "HEAD", "OPTIONS"]
+    cached_methods     = ["GET", "HEAD"]
+    compress           = true
+    query_string       = true
+    trusted_key_groups = [aws_cloudfront_key_group.software_installers.id]
   }
 
   ordered_cache_behavior = []
