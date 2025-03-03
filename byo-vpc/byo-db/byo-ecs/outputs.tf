@@ -47,5 +47,6 @@ output "fleet_s3_software_installers_config" {
   value = {
     bucket_name      = var.fleet_config.software_installers.create_bucket == true ? aws_s3_bucket.software_installers[0].bucket : var.fleet_config.software_installers.bucket_name
     s3_object_prefix = var.fleet_config.software_installers.s3_object_prefix
+    kms_key_id       = var.fleet_config.software_installers.create_kms_key == true && var.fleet_config.software_installers.create_bucket ? aws_kms_key.software_installers[0].id : null
   }
 }

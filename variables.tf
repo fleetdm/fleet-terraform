@@ -337,18 +337,14 @@ variable "fleet_config" {
       bucket_name      = optional(string, null)
       bucket_prefix    = optional(string, "fleet-software-installers-")
       s3_object_prefix = optional(string, "")
-      bucket_policy    = optional(string, null)
       create_kms_key   = optional(bool, false)
-      kms_policies     = optional(list(any), [])
       kms_alias        = optional(string, "fleet-software-installers")
       }), {
       create_bucket    = true
       bucket_name      = null
       bucket_prefix    = "fleet-software-installers-"
       s3_object_prefix = ""
-      bucket_policy    = null
-      create_kms_key   = false
-      kms_policies     = []
+      create_kms_key   = false 
       kms_alias        = "fleet-software-installers"
     })
   })

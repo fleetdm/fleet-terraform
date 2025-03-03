@@ -1,19 +1,4 @@
-# Move these to the main terraform
-# data "aws_kms_secrets" "software_installers_private_key" {
-#   secret {
-#     name    = "FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PRIVATE_KEY"
-#     key_id  = var.kms_key_id
-#     payload = file(var.private_key)
-#   }
-# }
-# 
-# data "aws_kms_secrets" "software_installers_public_key" {
-#   secret {
-#     name    = "FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PUBLIC_KEY"
-#     key_id  = var.kms_key_id
-#     payload = file(var.public_key)
-#   }
-# }
+data "aws_caller_identity" "current" {}
 
 data "aws_iam_policy_document" "software_installers_bucket" {
   statement {
@@ -36,8 +21,45 @@ data "aws_s3_bucket" "software_installers" {
   bucket = var.s3_bucket
 }
 
+resource "aws_s3_bucket_policy" "software_installers" {
+  bucket = data.aws_s3_bucket.software_installers.bucket
+  policy = data.aws_iam_policy_document.software_installers_bucket.json
+}
+
+data "aws_iam_policy_document" "software_installers_kms" {
+  statement {
+    actions = ["kms:*"]
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
+    }
+    resources = ["*"]
+  }
+  statement {
+    sid    = "AllowOriginAccessIdentity"
+    effect = "Allow"
+    principals {
+      type        = "Service"
+      identifiers = ["cloudfront.amazonaws.com"]
+    }
+    actions   = ["kms:Decrypt"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceArn"
+      values   = [module.cloudfront_software_installers.cloudfront_distribution_arn]
+    }
+  }
+}
+
+resource "aws_kms_key_policy" "software_installers" {
+  key_id = var.s3_kms_key_id
+  policy = data.aws_iam_policy_document.software_installers_kms.json
+}
+
 data "aws_iam_policy_document" "software_installers_secret" {
   statement {
+    effect    = "Allow"
     actions   = ["secretsmanager:GetSecretValue"]
     resources = [aws_secretsmanager_secret.software_installers.arn]
   }
@@ -66,10 +88,11 @@ resource "aws_secretsmanager_secret" "software_installers" {
 resource "aws_secretsmanager_secret_version" "software_installers" {
   secret_id = aws_secretsmanager_secret.software_installers.id
   secret_string = jsonencode({
-    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PRIVATE_KEY = var.private_key
-    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PUBLC_KEY   = var.public_key
+    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PRIVATE_KEY   = var.private_key
+    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PUBLC_KEY     = var.public_key
+    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL                       = "https://${module.cloudfront_software_installers.cloudfront_distribution_domain_name}"
+    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PUBLIC_KEY_ID = aws_cloudfront_public_key.software_installers.id
   })
-  # private key data
 }
 
 module "cloudfront_software_installers" {
@@ -102,7 +125,7 @@ module "cloudfront_software_installers" {
 
   origin = {
     s3_one = {
-      domain_name = data.aws_s3_bucket.software_installers.bucket_domain_name
+      domain_name           = data.aws_s3_bucket.software_installers.bucket_domain_name
       origin_access_control = "${var.customer}-software-installers"
     }
   }

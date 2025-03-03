@@ -18,3 +18,8 @@ variable "s3_bucket" {
   description = "Name of the S3 bucket that Cloudfront will point to"
   type        = string
 }
+
+variable "s3_kms_key_id" {
+  description = "KMS key id used to encrypt the s3 bucket"
+  type        = string
+}

@@ -19,14 +19,6 @@ locals {
       credentialsParameter = var.fleet_config.repository_credentials
     }
   } : null
-  kms_policies = concat([{
-    actions = ["kms:*"],
-    principals = [{
-      type        = "AWS"
-      identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
-    }]
-    resources = ["*"]
-  }], var.fleet_config.software_installers.kms_policies == [] ? [] : var.fleet_config.software_installers.kms_policies)
 }
 
 data "aws_region" "current" {}
@@ -284,44 +276,14 @@ resource "aws_secretsmanager_secret_version" "fleet_server_private_key" {
   secret_string = random_password.fleet_server_private_key.result
 }
 
-// Customer keys are not supported in our Fleet Terraforms at the moment. We will evaluate the
-// possibility of providing this capability in the future.
 // No versioning on this bucket is by design.
 // Bucket logging is not supported in our Fleet Terraforms at the moment. It can be enabled by the
 // organizations deploying Fleet, and we will evaluate the possibility of providing this capability
 // in the future.
 
-data "aws_iam_policy_document" "kms_software_installers" {
-  dynamic "statement" {
-    for_each = local.kms_policies
-    content {
-      sid       = try(statement.value.sid, "")
-      actions   = try(statement.value.actions, [])
-      resources = try(statement.value.resources, [])
-      effect    = try(statement.value.effect, null)
-      dynamic "principals" {
-        for_each = try(statement.value.principals, [])
-        content {
-          type        = principals.value.type
-          identifiers = principals.value.identifiers
-        }
-      }
-      dynamic "condition" {
-        for_each = try(statement.value.conditions, [])
-        content {
-          test     = condition.value.test
-          variable = condition.value.variable
-          values   = condition.value.values
-        }
-      }
-    }
-  }
-}
-
 resource "aws_kms_key" "software_installers" {
   count               = var.fleet_config.software_installers.create_kms_key == true ? 1 : 0
   enable_key_rotation = true
-  policy              = data.aws_iam_policy_document.kms_software_installers.json
 }
 
 resource "aws_kms_alias" "software_installers" {
@@ -354,10 +316,4 @@ resource "aws_s3_bucket_public_access_block" "software_installers" {
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
-}
-
-resource "aws_s3_bucket_policy" "software_installers" {
-  count  = var.fleet_config.software_installers.create_bucket == true && var.fleet_config.software_installers.bucket_policy != null ? 1 : 0
-  bucket = aws_s3_bucket.software_installers[0].id
-  policy = var.fleet_config.software_installers.bucket_policy
 }
