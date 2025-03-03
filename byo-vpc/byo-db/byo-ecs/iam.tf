@@ -1,3 +1,18 @@
+locals {
+  software_installers_kms_policy = var.fleet_config.software_installers.create_kms_key == true ? [{
+    sid = "AllowSoftwareInstallersKMSAccess"
+    actions = [
+      "kms:ReEncrypt*",
+      "kms:GenerateDataKey*",
+      "kms:Encrypt*",
+      "kms:Describe*",
+      "kms:Decrypt*"
+    ]
+    resources = [aws_kms_key.software_installers[0].arn]
+    effect = "Allow"
+  }] : []
+}
+
 data "aws_iam_policy_document" "software_installers" {
   count = var.fleet_config.software_installers.create_bucket == true ? 1 : 0
   statement {
@@ -13,6 +28,30 @@ data "aws_iam_policy_document" "software_installers" {
       "s3:GetBucketLocation"
     ]
     resources = [aws_s3_bucket.software_installers[0].arn, "${aws_s3_bucket.software_installers[0].arn}/*"]
+  }
+  dynamic "statement" {
+    for_each = local.software_installers_kms_policy
+    content {
+      sid       = try(statement.value.sid, "")
+      actions   = try(statement.value.actions, [])
+      resources = try(statement.value.resources, [])
+      effect    = try(statement.value.effect, null)
+      dynamic "principals" {
+        for_each = try(statement.value.principals, [])
+        content {
+          type        = principals.value.type
+          identifiers = principals.value.identifiers
+        }
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
   }
 }
 
