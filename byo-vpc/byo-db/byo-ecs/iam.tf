@@ -9,7 +9,7 @@ locals {
       "kms:Decrypt*"
     ]
     resources = [aws_kms_key.software_installers[0].arn]
-    effect = "Allow"
+    effect    = "Allow"
   }] : []
 }
 

@@ -296,7 +296,7 @@ variable "fleet_config" {
       bucket_name      = null
       bucket_prefix    = "fleet-software-installers-"
       s3_object_prefix = ""
-      create_kms_key   = false 
+      create_kms_key   = false
       kms_alias        = "fleet-software-installers"
     })
   })
