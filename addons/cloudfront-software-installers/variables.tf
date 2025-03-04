@@ -23,3 +23,21 @@ variable "s3_kms_key_id" {
   description = "KMS key id used to encrypt the s3 bucket"
   type        = string
 }
+
+variable "enable_logging" {
+  description = "Enable optional logging to s3"
+  type        = bool
+  default     = false
+}
+
+variable "logging_s3_bucket" {
+  description = "s3 bucket to log to"
+  type        = string
+  default     = null
+}
+
+variable "logging_s3_prefix" {
+  description = "logging s3 bucket prefix"
+  type        = string
+  default     = "cloudfront"
+}

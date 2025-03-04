@@ -95,6 +95,10 @@ resource "aws_secretsmanager_secret_version" "software_installers" {
   })
 }
 
+data "aws_s3_bucket" "logging" {
+  bucket = var.logging_s3_bucket
+}
+
 module "cloudfront_software_installers" {
   source = "terraform-aws-modules/cloudfront/aws"
 
@@ -119,9 +123,13 @@ module "cloudfront_software_installers" {
   }
 
   # setup a logging bucket
-  # logging_config = {
-  #   bucket = "logs-my-cdn.s3.amazonaws.com"
-  # }
+  logging_config = var.enable_logging == true ? {
+    bucket = data.aws_s3_bucket.logging.bucket_domain_name
+    prefix = var.logging_s3_prefix
+  } : {
+    bucket = null
+    prefix = null
+  }
 
   origin = {
     s3_one = {

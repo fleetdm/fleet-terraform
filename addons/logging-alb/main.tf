@@ -143,6 +143,10 @@ module "s3_bucket_for_logs" {
   block_public_policy                   = true
   ignore_public_acls                    = true
   restrict_public_buckets               = true
+  acl                                   = "private"
+  control_object_ownership              = true
+  object_ownership                      = "ObjectWriter"
+
   server_side_encryption_configuration = {
     rule = {
       bucket_key_enabled = true
@@ -163,7 +167,7 @@ module "s3_bucket_for_logs" {
         }
       ]
       expiration = {
-        days                         = var.s3_expiration_days
+        days = var.s3_expiration_days
         # Always resets to false anyhow showing terraform changes constantly
         expired_object_delete_marker = false
       }
@@ -221,7 +225,7 @@ module "athena-s3-bucket" {
         }
       ]
       expiration = {
-        days                         = var.s3_expiration_days
+        days = var.s3_expiration_days
         # Always resets to false anyhow showing terraform changes constantly
         expired_object_delete_marker = false
       }
