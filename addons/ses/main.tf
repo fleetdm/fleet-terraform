@@ -3,6 +3,7 @@ locals {
     aws_ses_domain_identity.default.domain,
     "_amazonses.${aws_ses_domain_identity.default.domain}"
   ]
+  dmarc_domain = "_dmarc.${aws_ses_domain_identity.default.domain}"
 }
 
 resource "aws_ses_domain_identity" "default" {
@@ -32,6 +33,14 @@ resource "aws_route53_record" "spf_domain" {
   type     = "TXT"
   ttl      = "600"
   records  = each.key == aws_ses_domain_identity.default.domain ? flatten([["v=spf1 include:amazonses.com -all"], var.extra_txt_records]) : ["v=spf1 include:amazonses.com -all"]
+}
+
+resource "aws_route53_record" "dmarc_domain" {
+  zone_id = var.zone_id
+  name    = local.dmarc_domain
+  type    = "TXT"
+  ttl     = "600"
+  records = ["v=DMARC1; p=none;"]
 }
 
 resource "aws_iam_policy" "main" {
