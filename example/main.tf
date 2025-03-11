@@ -31,6 +31,7 @@ locals {
   # name to make finding carves in s3 easier later.  Uncomment if using
   # s3 carves.
   # osquery_carve_bucket_name   = "fleet-osquery-carve"
+  # Uncomment if using Firehose logging destinations.
   # osquery_results_bucket_name = "fleet-osquery-results"
   # osquery_status_bucket_name  = "fleet-osquery-status"
 
@@ -75,14 +76,22 @@ module "fleet" {
     # 4GB Required for vulnerability scanning.  512MB works without.
     mem                         = 4096
     cpu                         = 512
-    extra_environment_variables = local.fleet_environment_variables
+    extra_environment_variables = merge(
+      local.fleet_environment_variables,
+      # uncomment if using a3 carves
+      # module.osquery-carve.fleet_extra_environment_variables
+      # uncomment if using firehose
+      # module.firehose-logging.fleet_extra_environment_variables
+    )
     # Uncomment if enabling mdm module below.
     # extra_secrets = module.mdm.extra_secrets
     # extra_execution_iam_policies = module.mdm.extra_execution_iam_policies
-    extra_iam_policies = concat(
-      module.osquery-carve.fleet_extra_iam_policies,
-      module.firehose-logging.fleet_extra_iam_policies,
-    )
+    # extra_iam_policies = concat(
+      # uncomment if using a3 carves
+      # module.osquery-carve.fleet_extra_iam_policies,
+      # uncomment if using firehose
+      # module.firehose-logging.fleet_extra_iam_policies,
+    # )
   }
   rds_config = {
     # See https://fleetdm.com/docs/deploy/reference-architectures#aws for instance classes.
@@ -138,15 +147,16 @@ module "migrations" {
 #   }
 # }
 
-module "firehose-logging" {
-  source = "github.com/fleetdm/fleet-terraform/addons/logging-destination-firehose?depth=1&ref=tf-mod-addon-logging-destination-firehose-v1.1.1"
-  osquery_results_s3_bucket = {
-    name = local.osquery_results_bucket_name
-  }
-  osquery_status_s3_bucket = {
-    name = local.osquery_status_bucket_name
-  }
-}
+# Uncomment if using firehose logging destination
+# module "firehose-logging" {
+#   source = "github.com/fleetdm/fleet-terraform/addons/logging-destination-firehose?depth=1&ref=tf-mod-addon-logging-destination-firehose-v1.1.1"
+#   osquery_results_s3_bucket = {
+#     name = local.osquery_results_bucket_name
+#   }
+#   osquery_status_s3_bucket = {
+#     name = local.osquery_status_bucket_name
+#   }
+# }
 
 ## MDM
 
