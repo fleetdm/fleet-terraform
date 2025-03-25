@@ -211,8 +211,7 @@ func checkCrons(db *sql.DB, sess *session.Session) (err error) {
 	}
 	cronAlertTimestamp := time.Now().Add(-1 * cronMonitorInterval)
 
-	// Find all cron entries less than cronMonitorInterval old that have errors.
-	// rows, err := db.Query("SELECT name, created_at, IFNULL(updated_at, FROM_UNIXTIME(0)) AS updated_at, errors FROM cron_stats WHERE errors IS NOT NULL AND created_at > \"" + cronAlertTimestamp.Format("20060102150405") + "\"")
+	// Gather stats about how many runs raised errors since the last check.
 	rows, err := db.Query(`
 		SELECT 
 			name, 
@@ -224,10 +223,8 @@ func checkCrons(db *sql.DB, sess *session.Session) (err error) {
 			cron_stats 
 		WHERE 
 			created_at > "` + cronAlertTimestamp.Format("20060102150405") + `" 
-			AND errors IS NOT NULL 
 		GROUP BY 
 			name 
-		HAVING COUNT(errors) > 0
 	`)
 	if err != nil {
 		log.Printf(err.Error())
@@ -242,11 +239,14 @@ func checkCrons(db *sql.DB, sess *session.Session) (err error) {
 			sendSNSMessage("Error scanning row in cron_stats table.  Unable to continue.", "cronSystem", sess)
 			return err
 		}
-		log.Printf("*** %s job had errors, alerting! (errors %s)", row.name, row.errors)
-		if row.num_errors == 1 {
-			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors during its last run:\n%s.", row.name, row.updated_at.String(), row.errors), "cronJobFailure", sess)
+		if row.num_errors == 0 {
+			continue
+		}
+		log.Printf("*** %s job had errors (runs: %d, errors: %d), alerting! (errors %s)", row.name, row.num_occurences, row.num_errors, row.most_recent_error)
+		if row.num_occurences == 1 {
+			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors during its last run:\n%s", row.name, row.updated_at.String(), row.errors), "cronJobFailure", sess)
 		} else {
-			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors in %d of the previous %d runs; the most recent is:\n%s.", row.name, row.last_updated_at.String(), row.num_errors, row.num_occurences, row.most_recent_error), "cronJobFailure", sess)
+			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors in %d of the previous %d runs; the most recent is:\n%s", row.name, row.last_updated_at.String(), row.num_errors, row.num_occurences, row.most_recent_error), "cronJobFailure", sess)
 		}
 	}
 
