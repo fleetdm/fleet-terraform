@@ -41,6 +41,7 @@ jobs:
   tfvalidate:
     name: terraform validate
     runs-on: ubuntu-latest
+    needs: listaddons
     strategy:
       matrix:
         terraform_dir: ${{ fromJson(needs.listaddons.outputs.matrix) }}
