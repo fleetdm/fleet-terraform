@@ -142,7 +142,7 @@ module "byo-vpc" {
       max_capacity = 5
     }
     extra_secrets = {
-      // FLEET_LICENSE_KEY: "secret_manager_license_key_arn" 
+      // FLEET_LICENSE_KEY: "secret_manager_license_key_arn"
     }
     extra_environment_variables = module.firehose-logging.fleet_extra_environment_variables
     extra_iam_policies          = module.firehose-logging.fleet_extra_iam_policies
@@ -150,11 +150,13 @@ module "byo-vpc" {
 }
 
 module "migrations" {
-  source                   = "github.com/fleetdm/fleet-terraform//addons/migrations?depth=1&ref=tf-mod-addon-migrations-v2.0.1"
+  source                   = "github.com/fleetdm/fleet-terraform/addons/migrations?depth=1&ref=tf-mod-addon-migrations-v2.0.1"
   ecs_cluster              = module.byo-vpc.byo-db.byo-ecs.service.cluster
   task_definition          = module.byo-vpc.byo-db.byo-ecs.task_definition.family
   task_definition_revision = module.byo-vpc.byo-db.byo-ecs.task_definition.revision
   subnets                  = module.byo-vpc.byo-db.byo-ecs.service.network_configuration[0].subnets
   security_groups          = module.byo-vpc.byo-db.byo-ecs.service.network_configuration[0].security_groups
+  ecs_service              = module.byo-vpc.byo-db.byo-ecs.service.name
+  desired_count            = module.byo-vpc.byo-db.byo-ecs.appautoscaling_target.min_capacity
+  min_capacity             = module.byo-vpc.byo-db.byo-ecs.appautoscaling_target.min_capacity
 }
-
