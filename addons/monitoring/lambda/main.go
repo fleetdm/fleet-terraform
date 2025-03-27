@@ -115,6 +115,14 @@ type CronStatsRow struct {
 	updated_at time.Time
 }
 
+type CronStatsDigestRow struct {
+	CronStatsRow
+	num_occurences    int
+	num_errors        int
+	last_updated_at   time.Time
+	most_recent_error string
+}
+
 func setupDB(sess *session.Session) (db *sql.DB, err error) {
 	secretCache, err := secretcache.New()
 	if err != nil {
@@ -203,24 +211,43 @@ func checkCrons(db *sql.DB, sess *session.Session) (err error) {
 	}
 	cronAlertTimestamp := time.Now().Add(-1 * cronMonitorInterval)
 
-	// Find all cron entries less than cronMonitorInterval old that have errors.
-	rows, err := db.Query("SELECT name, created_at, IFNULL(updated_at, FROM_UNIXTIME(0)) AS updated_at, errors FROM cron_stats WHERE errors IS NOT NULL AND created_at > \"" + cronAlertTimestamp.Format("20060102150405") + "\"")
-	defer rows.Close()
+	// Gather stats about how many runs raised errors since the last check.
+	rows, err := db.Query(`
+		SELECT 
+			name, 
+			COUNT(*) AS occurences_in_last_hour, 
+			COUNT(errors) as errors_in_last_hour, 
+			MAX(updated_at) AS last_updated_at, 
+			SUBSTRING_INDEX( GROUP_CONCAT(errors ORDER BY updated_at DESC SEPARATOR 0x1e), 0x1e, 1 ) AS most_recent_error 
+		FROM 
+			cron_stats 
+		WHERE 
+			created_at > "` + cronAlertTimestamp.Format("20060102150405") + `" 
+		GROUP BY 
+			name 
+	`)
 	if err != nil {
 		log.Printf(err.Error())
 		sendSNSMessage("Unable to SELECT cron_stats table.  Unable to continue.", "cronSystem", sess)
 		return err
 	}
+	defer rows.Close()
 	for rows.Next() {
-		var row CronStatsRow
-		if err := rows.Scan(&row.name, &row.created_at, &row.updated_at, &row.errors); err != nil {
+		var row CronStatsDigestRow
+		if err := rows.Scan(&row.name, &row.num_occurences, &row.num_errors, &row.last_updated_at, &row.most_recent_error); err != nil {
 			log.Printf(err.Error())
 			sendSNSMessage("Error scanning row in cron_stats table.  Unable to continue.", "cronSystem", sess)
 			return err
 		}
-		log.Printf("*** %s job had errors, alerting! (errors %s)", row.name, row.errors)
-		// Fire on the first match and return.  We only need to alert that the crons need looked at, not each cron.
-		sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors during its run:\n%s.", row.name, row.updated_at.String(), row.errors), "cronJobFailure", sess)
+		if row.num_errors == 0 {
+			continue
+		}
+		log.Printf("*** %s job had errors (runs: %d, errors: %d), alerting! (errors %s)", row.name, row.num_occurences, row.num_errors, row.most_recent_error)
+		if row.num_occurences == 1 {
+			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors during its last run:\n%s", row.name, row.updated_at.String(), row.errors), "cronJobFailure", sess)
+		} else {
+			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors in %d of the previous %d runs; the most recent is:\n%s", row.name, row.last_updated_at.String(), row.num_errors, row.num_occurences, row.most_recent_error), "cronJobFailure", sess)
+		}
 	}
 
 	return nil
