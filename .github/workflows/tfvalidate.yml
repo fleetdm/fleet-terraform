@@ -35,7 +35,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b
       - id: matrix
-        run: echo "value=$(find ./ -wholename './addons/*' -maxdepth 2 -mindepth 2 -type d -o -wholename '*example' -type d -mindepth 1 -maxdepth 2 | jq -s -R 'split("\n")[:-1]')
+        run: echo "value=$(find ./ -wholename './addons/*' -maxdepth 2 -mindepth 2 -type d -o -wholename '*example' -type d -mindepth 1 -maxdepth 2 | jq -s -R 'split("\n")[:-1]')"
   tfvalidate:
     name: terraform validate
     runs-on: ubuntu-latest
