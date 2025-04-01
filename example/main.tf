@@ -74,8 +74,8 @@ module "fleet" {
       max_capacity = 5
     }
     # 4GB Required for vulnerability scanning.  512MB works without.
-    mem                         = 4096
-    cpu                         = 512
+    mem = 4096
+    cpu = 512
     extra_environment_variables = merge(
       local.fleet_environment_variables,
       # uncomment if using a3 carves
@@ -87,10 +87,10 @@ module "fleet" {
     # extra_secrets = module.mdm.extra_secrets
     # extra_execution_iam_policies = module.mdm.extra_execution_iam_policies
     # extra_iam_policies = concat(
-      # uncomment if using a3 carves
-      # module.osquery-carve.fleet_extra_iam_policies,
-      # uncomment if using firehose
-      # module.firehose-logging.fleet_extra_iam_policies,
+    # uncomment if using a3 carves
+    # module.osquery-carve.fleet_extra_iam_policies,
+    # uncomment if using firehose
+    # module.firehose-logging.fleet_extra_iam_policies,
     # )
   }
   rds_config = {

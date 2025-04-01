@@ -37,7 +37,12 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b
       - id: matrix
-        run: echo "value=$(find ./ -type f -name '*.tf' | awk -F/ 'BEGIN { OFS="/" } ; {$NF=""; print }' | sort -u | jq -c -s -R 'split("\n")[:-1]')" >> ${GITHUB_OUTPUT} 
+        run: |
+          if [[ "${{ github.event_name }}" = "pull_request" ]]; then
+            echo "value=$(git diff --name-only ${{ github.base_ref }} | awk -F/ 'BEGIN { OFS="/" }; { if ( $NF ~ "\.tf$") { $NF=""; print "./" $0 } }' | sort -u)" >> ${GITHUB_OUTPUT}
+          else
+            echo "value=$(find ./ -type f -name '*.tf' | awk -F/ 'BEGIN { OFS="/" } ; {$NF=""; print }' | sort -u | jq -c -s -R 'split("\n")[:-1]')" >> ${GITHUB_OUTPUT}
+          fi
   tfvalidate:
     name: terraform validate
     runs-on: ubuntu-latest
