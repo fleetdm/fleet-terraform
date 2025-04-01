@@ -37,7 +37,8 @@ jobs:
           egress-policy: audit
       - name: Clone repo 
         uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b
-        fetch-depth: 0
+        with:
+          fetch-depth: 0
       - id: matrix
         run: |
           if [[ "${{ github.event_name }}" = "pull_request" ]]; then
