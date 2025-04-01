@@ -35,7 +35,9 @@ jobs:
         uses: step-security/harden-runner@63c24ba6bd7ba022e95695ff85de572c04a18142 # v2.7.0
         with:
           egress-policy: audit
+      - name: Clone repo 
       - uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b
+        fetch-depth: 0
       - id: matrix
         run: |
           if [[ "${{ github.event_name }}" = "pull_request" ]]; then
