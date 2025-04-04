@@ -41,8 +41,8 @@ jobs:
           fetch-depth: 0
       - id: matrix
         run: |
-          if [[ "${{ github.event_name }}" = "pull_request" ]]; then
-            echo "value=$(git diff --name-only origin/${{ github.base_ref }} | awk -F/ 'BEGIN { OFS="/" }; { if ( $NF ~ "\.tf$") { $NF=""; print "./" $0 } }' | sort -u | jq -c -s -R 'split("\n")[:-1]')" >> ${GITHUB_OUTPUT}
+          if [[ "${{ github.event_name }}" = "pull_request" || "${{ github.event_name }}" = "push" ]]; then
+            echo "value=$(git diff --name-status origin/${{ github.base_ref }} | awk -v gitfilestatus="D" -F$'\t' '$1 != gitfilestatus { print $2 }' | awk -F/ 'BEGIN { OFS="/" }; { if ( $NF ~ "\.tf$") { $NF=""; print "./" $0 } }' | sort -u | jq -c -s -R 'split("\n")[:-1]')" >> ${GITHUB_OUTPUT}
           else
             echo "value=$(find ./ -type f -name '*.tf' | awk -F/ 'BEGIN { OFS="/" } ; {$NF=""; print }' | sort -u | jq -c -s -R 'split("\n")[:-1]')" >> ${GITHUB_OUTPUT}
           fi
