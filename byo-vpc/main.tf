@@ -1,3 +1,16 @@
+locals {
+  replica_numbers = [
+    "one", "two", "three", "four", "five", "six", "seven", "eight",
+    "nine", "ten", "eleven", "twelve", "thirteen", "fourteen",
+    "fifteen", "sixteen"
+  ]
+
+  rds_replica_instances = {
+    for index, replica_number in local.replica_numbers :
+    replica_number => {} if index < var.rds_config.replicas
+  }
+}
+
 module "byo-db" {
   source = "./byo-db"
   vpc_id = var.vpc_config.vpc_id
@@ -38,10 +51,7 @@ module "rds" {
   engine_version = var.rds_config.engine_version
   instance_class = var.rds_config.instance_class
 
-  instances = {
-    one = {}
-    two = {}
-  }
+  instances = local.rds_replica_instances
 
   vpc_id  = var.vpc_config.vpc_id
   subnets = var.rds_config.subnets
