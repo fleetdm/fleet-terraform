@@ -92,7 +92,7 @@ module "vpc" {
 }
 
 module "byo-vpc" {
-  source = "github.com/fleetdm/fleet-terraform//byo-vpc?depth=1&ref=tf-mod-byo-vpc-v1.13.0"
+  source = "github.com/fleetdm/fleet-terraform//byo-vpc?depth=1&ref=tf-mod-byo-vpc-v1.15.0"
   vpc_config = {
     vpc_id = module.vpc.vpc_id
     networking = {
@@ -103,6 +103,7 @@ module "byo-vpc" {
     name           = random_pet.main.id
     instance_class = "db.t4g.large"
     subnets        = module.vpc.database_subnets
+    replicas       = 2
   }
   redis_config = {
     instance_size                 = "cache.m6g.large"

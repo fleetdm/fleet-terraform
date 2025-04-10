@@ -52,7 +52,7 @@ locals {
 }
 
 module "fleet" {
-  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.13.0"
+  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.14.0"
   certificate_arn = module.acm.acm_certificate_arn
 
   vpc = {
@@ -103,6 +103,8 @@ module "fleet" {
     }
     # Uncomment to specify the RDS engine version
     # engine_version = "8.0.mysql_aurora.3.07.1"
+    # Uncomment to use more or fewer replicas
+    # replicas = 2
   }
   redis_config = {
     # See https://fleetdm.com/docs/deploy/reference-architectures#aws for instance types.
