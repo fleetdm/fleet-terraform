@@ -1,6 +1,6 @@
 module "fleet" {
     # source = "./modules/fleet-deploy"
-    source = "git::https://github.com/fleetdm/fleet-terraform?depth=1&ref=tf-fleetk8s-support//k8s/modules/fleet-deploy"
+    source = "git::https://github.com/fleetdm/fleet-terraform//k8s/modules/fleet-deploy?depth=1&ref=tf-fleetk8s-support"
 
     namespace = "fleet"
     hostname = "fleet.localhost.local"
