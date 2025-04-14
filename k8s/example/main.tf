@@ -1,6 +1,6 @@
 module "fleet" {
     # source = "./modules/fleet-deploy"
-    source = "git::https://github.com/fleetdm/fleet-terraform//k8s/modules/fleet-deploy?depth=1&ref=tf-fleetk8s-support"
+    source = "git::https://github.com/fleetdm/fleet-terraform//k8s?depth=1&ref=tf-fleetk8s-support"
 
     namespace = "fleet"
     hostname = "fleet.localhost.local"
@@ -47,23 +47,74 @@ module "fleet" {
     */
     tolerations = []
 
-    affinity = {
-        pod_anti_affinity = {
-            preferred_during_scheduling_ignored_during_execution = {
-                weight = "100"
-                pod_affinity_term = {
-                    topology_key = "kubernetes.io/hostname"
-                    label_selector = {
-                        match_expressions = {
-                            key = "app"
+    /*
+        affinity_rules = {
+            required_during_scheduling_ignored_during_execution = [
+                label_selector = {
+                    match_expressions = [
+                        {
+                            key = "disktype"
                             operator = "In"
-                            values = ["fleet"]
+                            values = ["ssd"]
                         }
+                    ]
+                }
+                topology_key = "kubernetes.io/hostname"
+                }
+            ]
+            preferred_during_scheduling_ignored_during_execution = [
+                {
+                    weight = 1
+                    preference = {
+                        label_selector = {
+                            match_expressions = [
+                                {
+                                    key = "another-label"
+                                    operator = "In"
+                                    values = ["value1", "value2"]
+                                }
+                            ]
+                        }
+                        topology_key = "kubernetes.io/hostname"
                     }
                 }
-            }
+            ]
         }
-    }
+        anti_affinity_rules = {
+            required_during_scheduling_ignored_during_execution = [
+                label_selector = {
+                    match_expressions = [
+                        {
+                            key = "disktype"
+                            operator = "In"
+                            values = ["ssd"]
+                        }
+                    ]
+                }
+                topology_key = "kubernetes.io/hostname"
+                }
+            ]
+            preferred_during_scheduling_ignored_during_execution = [
+                {
+                    weight = 1
+                    preference = {
+                        label_selector = {
+                            match_expressions = [
+                                {
+                                    key = "another-label"
+                                    operator = "In"
+                                    values = ["value1", "value2"]
+                                }
+                            ]
+                        }
+                        topology_key = "kubernetes.io/hostname"
+                    }
+                }
+            ]
+        }
+    */
+    affinity_rules = {}
+    anti_affinity_rules = {}
     
     ingress = {
         enabled = false

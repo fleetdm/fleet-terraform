@@ -90,9 +90,35 @@ variable "environment_from_secrets" {
 /*
     affinity
 */
-variable "affinity" {
-    type = map
-    default = {}
+
+
+variable "affinity_rules" {
+    type = object({ 
+        required_during_scheduling_ignored_during_execution = optional(list(any), [])
+        preferred_during_scheduling_ignored_during_execution = optional(list(any), [])
+    })
+}
+
+variable "anti_affinity_rules" {
+    type = object({ 
+        required_during_scheduling_ignored_during_execution = optional(list(any), [])
+        preferred_during_scheduling_ignored_during_execution = optional(list(any),
+        [
+            {
+                weight = 100
+                label_selector = {
+                    match_expressions = [
+                        {
+                            key = "app"
+                            operator = "In"
+                            values = ["fleet"]
+                        }
+                    ]
+                }
+                topology_key = "kubernetes.io/hostname"
+            }
+        ])
+    })
 }
 
 /*

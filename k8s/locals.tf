@@ -11,7 +11,8 @@ locals {
     vuln_processing = var.vuln_processing
     node_selector = var.node_selector
     tolerations = var.tolerations
-    affinity = var.affinity
+    affinity_rules = var.affinity_rules
+    anti_affinity_rules = var.anti_affinity_rules
     ingress = var.ingress
     fleet = var.fleet
     osquery = var.osquery

@@ -237,24 +237,71 @@ resource "kubernetes_job" "migration" {
                 }
 
                 dynamic "affinity" {
-                    for_each = local.affinity.pod_anti_affinity != {} ? [1] : []
+                    for_each = local.affinity_rules.required_during_scheduling_ignored_during_execution != null ? local.affinity_rules.required_during_scheduling_ignored_during_execution : null
+
+                    content {
+                        pod_affinity {
+                            required_during_scheduling_ignored_during_execution {
+                                label_selector {
+                                    match_expressions {
+                                        key = affinity.value.label_selector.match_expressions[*].key
+                                        operator = affinity.value.label_selector.match_expressions[*].operator
+                                        values = affinity.value.label_selector.match_expressions[*].values
+                                    }
+                                }
+                                topology_key = affinity.value.topology_key
+                            }
+                        }
+                    }
+                }
+            
+                dynamic "affinity" {
+                    for_each = local.affinity_rules.preferred_during_scheduling_ignored_during_execution != null ? local.affinity_rules.preferred_during_scheduling_ignored_during_execution : null
+                    
+                    content {
+                        pod_affinity {
+                            preferred_during_scheduling_ignored_during_execution {
+                                pod_affinity_term {
+                                    preference = affinity.value.preference
+                                }
+                                topology_key = affinity.value.topology_key
+                            }
+                        }
+                    }
+                }
+
+
+                dynamic "affinity" {
+                    for_each = local.anti_affinity_rules.required_during_scheduling_ignored_during_execution != null ? local.affinity_rules.required_during_scheduling_ignored_during_execution : null
 
                     content {
                         pod_anti_affinity {
-                            preferred_during_scheduling_ignored_during_execution {
-                                weight = local.affinity.pod_anti_affinity.preferred_during_scheduling_ignored_during_execution.weight
-                                pod_affinity_term {
-                                    topology_key = local.affinity.pod_anti_affinity.preferred_during_scheduling_ignored_during_execution.pod_affinity_term.topology_key
-                                    label_selector {
-                                        match_expressions {
-                                            key = local.affinity.pod_anti_affinity.preferred_during_scheduling_ignored_during_execution.pod_affinity_term.label_selector.match_expressions.key
-                                            operator = local.affinity.pod_anti_affinity.preferred_during_scheduling_ignored_during_execution.pod_affinity_term.label_selector.match_expressions.operator
-                                            values = local.affinity.pod_anti_affinity.preferred_during_scheduling_ignored_during_execution.pod_affinity_term.label_selector.match_expressions.values
-                                        }
+                            required_during_scheduling_ignored_during_execution {
+                                label_selector {
+                                    match_expressions {
+                                        key = affinity.value.label_selector.match_expressions[*].key
+                                        operator = affinity.value.label_selector.match_expressions[*].operator
+                                        values = affinity.value.label_selector.match_expressions[*].values
                                     }
                                 }
+                                topology_key = affinity.value.topology_key
                             }
-                        } 
+                        }
+                    }
+                }
+
+                dynamic "affinity" {
+                    for_each = local.anti_affinity_rules.preferred_during_scheduling_ignored_during_execution != null ? local.affinity_rules.preferred_during_scheduling_ignored_during_execution : null
+                    
+                    content {
+                        pod_anti_affinity {
+                            preferred_during_scheduling_ignored_during_execution {
+                                pod_affinity_term {
+                                    label_selector = affinity.value.label_selector.label_selector
+                                }
+                                topology_key = affinity.value.topology_key
+                            }
+                        }
                     }
                 }
 
