@@ -90,6 +90,15 @@ terraform plan
 terraform apply
 ```
 
+## Upgrade Fleet
+
+Fleet should not be running when an upgrade is initiated because database migrations need to take place first. After `main.tf` has been updated to increment the version of the Fleet `image_tag`, the following commands can be executed to upgrade Fleet while bringing Fleet down so migrations can run.
+
+```sh
+terraform init
+terraform apply -replace=module.fleet.kubernetes_deployment.fleet
+```
+
 ## Remove your Fleet deployment
 
 ### 1. Tear down Fleet
