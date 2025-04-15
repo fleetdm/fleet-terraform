@@ -1,46 +1,49 @@
 variable "namespace" {
     type = string
     default = "fleet"
-    description = "The value for this variable will be used as the name of the namespace that fleet will be deployed to"
+    description = "The value for this variable will be used as the name of the namespace that fleet will be deployed to."
 }
 
 variable "hostname" {
     type = string
     default = "fleet.localhost"
-    description = "The value for this variable will be used as the hostname that you will access fleet on"
+    description = "Used as the hostname that you will access fleet on."
 }
 
 variable "replicas" {
     type = number
     default = 3
-    description = "The value for this variable will be used to drive the number of fleet deployment replicas"
+    description = "Used to drive the number of fleet deployment replicas."
 }
 
 variable "image_repository" {
     type = string
     default = "fleetdm/fleet"
-    description = "The value for this variable will be used to populate the image repository for fleet"
+    description = "Used to populate the image repository for fleet."
 }
 
 variable "image_tag" {
     type = string
     default = "v4.66.0"
-    description = "The value for this variable will be used to populate the fleet version that will be deployed"
+    description = "Used to populate the fleet version that will be deployed."
 }
 
 variable "pod_annotations" {
     type = map
     default = {}
+    description = "Used to populate the annotations for pods."
 }
 
 variable "service_annotations" {
     type = map
     default = {}
+    description = "Used to populate the annotations for the fleet service."
 }
 
 variable "service_account_annotations" {
     type = map
     default = {}
+    description = "Used to populate the annotations for the fleet service account."
 }
 
 variable "resources" {
@@ -60,31 +63,37 @@ variable "resources" {
             memory = "50Mi"
         })
     })
+    description = "Used to populate resource values for the fleet deployment and migration job."
 }
 
 variable "node_selector" {
     type = map
     default = {}
+    description = "Used to populate node selector values."
 }
 
 variable "tolerations" {
     type = list(any)
     default = []
+    description = "Used to configure tolerations."
 }
 
 variable "environment_variables" {
     type = list(map(string))
     default = []
+    description = "Used to configure additional environment variables for the fleet deployment and vuln-processing cron job."
 }
 
 variable "environment_from_config_maps" {
     type = list(map(string))
     default = []
+    description = "Used to configure additional environment variables from a config map for the fleet deployment and vuln-processing cron job."
 }
 
 variable "environment_from_secrets" {
     type = list(map(string))
     default = []
+    description = "Used to configure additional environment variables from a secret for the fleet deployment and vuln-processing cron job."
 }
 
 /*
@@ -97,6 +106,7 @@ variable "affinity_rules" {
         required_during_scheduling_ignored_during_execution = optional(list(any), [])
         preferred_during_scheduling_ignored_during_execution = optional(list(any), [])
     })
+    description = "Used to configure affinity rules for the fleet deployment, migration job, and vuln-processing cron job."
 }
 
 variable "anti_affinity_rules" {
@@ -119,6 +129,7 @@ variable "anti_affinity_rules" {
             }
         ])
     })
+    description = "Used to configure anti-affinity rules for the fleet deployment, migration job, and vuln-processing cron job."
 }
 
 /*
@@ -147,6 +158,7 @@ variable "vuln_processing" {
             })
         })
     })
+    description = "Used to configure the values for the vuln-processing cron job."
 }
 
 /*
@@ -164,6 +176,7 @@ variable "ingress" {
             hosts = optional(list(string),[])
         })
     })
+    description = "Used to configure values for ingress."
 }
 
 variable "fleet" {
@@ -226,6 +239,7 @@ variable "fleet" {
             run_as_group = optional(number, 3333)
         })
     })
+    description = "Used to configure Fleet specific values for use in the Fleet deployment, migration job, and vuln-processing cron job."
 }
 
 variable "osquery" {
@@ -275,6 +289,7 @@ variable "osquery" {
             })
         })
     })
+    description = "Used to configure osquery specific values for use in the Fleet deployment, migration job, and vuln-processing cron job."
 }
 
 variable "database" {
@@ -298,6 +313,7 @@ variable "database" {
             key_key = optional(string, "")
         })
     })
+    description = "Used to configure database specific values for use in the Fleet deployment, migration job, and vuln-processing cron job."
 }
 
 variable "cache" {
@@ -309,6 +325,7 @@ variable "cache" {
         secret_name = optional(string, "redis-password")
         password_key = optional(string, "redis")
     })
+    description = "Used to configure redis specific values for use in the Fleet deployment, migration job, and vuln-processing cron job."
 }
 
 variable "gke" {
@@ -328,4 +345,5 @@ variable "gke" {
             hostnames = optional(list(string), [""])
         })
     })
+    description = "Used to configure gke specific values for use in the Fleet deployment, migration job, and vuln-processing cron job."
 }
