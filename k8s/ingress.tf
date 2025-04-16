@@ -1,4 +1,4 @@
-resource "kubernetes_ingress" "fleet-ingress"{
+resource "kubernetes_ingress_v1" "fleet-ingress"{
   count = local.ingress.enabled ? 1 : 0
   metadata {
     name = "fleet"
@@ -32,8 +32,12 @@ resource "kubernetes_ingress" "fleet-ingress"{
               path = path.value.path
 
               backend {
-                service_name = resource.kubernetes_service.fleet-service.metadata[0].name
-                service_port = local.fleet.listen_port
+                service {
+                  name = resource.kubernetes_service.fleet-service.metadata[0].name
+                  port {
+                    number = local.fleet.listen_port
+                  }
+                }
               }
             }
           }

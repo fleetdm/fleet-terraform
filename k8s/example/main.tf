@@ -118,20 +118,20 @@ module "fleet" {
     
     ingress = {
         enabled = false
-        class_name = ""
+        class_name = "nginx"
         annotations = {}
         labels = {}
         hosts = [{
-            name = "chart-example.local"
+            name = "fleet.example.com"
             paths = [{
                 path = "/"
                 path_type = "ImplementationSpecific"
             }]
         }]
         tls = {
-            secret_name = "chart-example-tls"
+            secret_name = "fleet-tls"
             hosts = [
-                "chart-example.local"
+                "fleet.example.com"
             ]
         }
     }

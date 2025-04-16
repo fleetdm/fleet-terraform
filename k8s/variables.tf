@@ -167,7 +167,7 @@ variable "vuln_processing" {
 variable "ingress" {
     type = object({
         enabled = optional(bool, false)
-        class_name = optional(string, "")
+        class_name = optional(string, "nginx")
         labels = optional(map(string), {})
         annotations = optional(map(string), {})
         hosts = optional(list(any), [])

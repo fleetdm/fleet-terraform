@@ -1,7 +1,9 @@
 ## Fleet deployment with Terraform
 
-This deployment guide has been tested with k3s and istio for ingress. 
-- Istio has also been used to terminate TLS at the edge.
+This deployment guide has been tested with
+- k3s 
+  - istio ingress
+  - nginx ingress
 
 ## Usage
 
@@ -40,7 +42,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: fleet
-  namespace: terraform
+  namespace: fleet
 type: kubernetes.io/tls
 data:
   tls.crt: |
@@ -58,8 +60,7 @@ kind: Secret
 metadata:
   name: fleet-license
   namespace: fleet
-type: kubernetes.io/basic-auth
-stringData:
+data:
   license: <fleet-license-here>
 ```
 
@@ -68,6 +69,150 @@ Once all of your secrets are configured, use `kubectl apply -f <secret_file_name
 ### 3. Further Configuration
 
 To configure how Fleet runs, such as specifying the number of Fleet instances to deploy or changing the logger plugin for Fleet, edit the `module.fleet` located in `main.tf` file to your desired settings.
+
+#### nginx ingress
+
+Assuming no other ingress controllers are deployed to your environment, you can deploy nginx ingress components by executing `kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.7.1/deploy/static/provider/baremetal/deploy.yaml`
+
+You will need an nginx ingress `Service`, similar to the one below. To deploy run `kubectl apply -f <path_to_service_file>`.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingress-nginx-controller-loadbalancer
+  namespace: ingress-nginx
+spec:
+  selector:
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/instance: ingress-nginx
+    app.kubernetes.io/name: ingress-nginx
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: 80
+    - name: https
+      port: 443
+      protocol: TCP
+      targetPort: 443
+  type: LoadBalancer
+```
+
+The below will be in preparation for deployment through the `terraform apply` in step 5.
+
+In `main.tf` make sure the following variable `fleet.tls.enabled = false`, otherwise the Fleet terraform deployment will fail.
+In `main.tf` make sure the following map is configured with the correct values.
+  - `ingress.enabled` must be `true`, if you'd like fleet to deploy the nginx ingress for you.
+  - `ingress.class_name` needs to be set to `nginx`
+  - `ingress.hosts.name` must have a matching entry in `ingress.tls.hosts`
+    - example: `ingress.hosts.name = fleet.example.com` and `ingress.tls.hosts = fleet.example.com`
+  - Last, `ingress.tls.secret_name` must be a valid secret name in your current namespace.*
+    - Note: The TLS must contain a valid certificate that matches the hostnames provided for `ingress.hosts.name` and `ingress.tls.hosts`.
+  
+```
+...
+    ingress = {
+        enabled = true
+        class_name = "nginx"
+        annotations = {}
+        labels = {}
+        hosts = [{
+            name = "fleet.example.com"
+            paths = [{
+                path = "/"
+                path_type = "ImplementationSpecific"
+            }]
+        }]
+        tls = {
+            secret_name = "fleet-tls"
+            hosts = [
+                "fleet.example.com"
+            ]
+        }
+    }
+...
+```
+
+#### istio ingress
+
+There are different ways to deploy istio to your cluster. We will cover the helm deployment in the [official istio documentation](https://istio.io/latest/docs/setup/install/helm/).
+
+Assuming no other ingress controllers are deployed to your environment, you can deploy istio components by executing the following commands.
+
+```sh
+helm repo add istio https://istio-release.storage.googleapis.com/charts
+helm repo update
+kubectl create namespace istio-system
+helm install istio-base istio/base -n istio-system
+helm install istiod istio/istiod -n istio-system
+kubectl create namespace istio-ingress
+helm install istio-ingress istio/gateway -n istio-ingress --wait
+```
+
+In `main.tf` make sure the following variable `fleet.tls.enabled = false`, otherwise the Fleet terraform deployment will fail.
+
+You will need to create a TLS secret specifically for use by the istio ingress gateway like the example below or re-use Fleet secret created in step 2. You can apply the secret with the following command `kubectl apply -f <path_to_secret_yaml_file>`.
+
+
+```yaml
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fleet
+  namespace: fleet
+type: kubernetes.io/tls
+data:
+  tls.crt: |
+    <base64-encoded-tls-cert-here>
+  tls.key: |
+    <base64-encoded-tls-cert-here>
+```
+
+After the secret has been created, you can create your istio ingress `Gateway` and istio `Virtual Service`. In the examble below you should make reference, in the `Gateway` and `VirtualService` to hostname (example: `fleet.example.com`) covered by your TLS certificate stored in the TLS secret created above (example: `fleet`).
+
+```yaml
+---
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: istio-gateway-fleet
+  namespace: fleet
+spec:
+  selector:
+    istio: ingress # use istio default ingress gateway
+  servers:
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: fleet # must be the same as secret
+    hosts:
+    - 'fleet.example.com'
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: fleet-vs
+  namespace: fleet
+spec:
+  hosts:
+  - "fleet.example.com"
+  gateways:
+  - istio-gateway-fleet
+  http:
+  - match:
+    - uri:
+        prefix: "/"
+    route:
+    - destination:
+        port:
+          number: 8080
+        host: fleet
+```
 
 ### 4. Setup provider.tf
 
