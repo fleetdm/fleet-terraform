@@ -268,7 +268,11 @@ func handler(ctx context.Context, name NullEvent) error {
 	))
 
 	db, err := setupDB(sess)
-	defer db.Close()
+	defer func() {
+		if db != nil {
+			db.Close()
+		}
+	}()
 
 	if err != nil {
 		return nil
