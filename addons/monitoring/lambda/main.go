@@ -55,6 +55,7 @@ type OptionsStruct struct {
 	AWSRegion                  string `long:"aws-region" env:"AWS_REGION" required:"true"`
 	CronDelayTolerance         string `long:"cron-delay-tolerance" env:"CRON_DELAY_TOLERANCE" default:"2h"`
 	CronMonitorInterval        string `long:"monitor-run-interval" env:"CRON_MONITOR_RUN_INTERVAL" default:"1 hour"`
+	AwsEndpointUrl             string `long:"aws-endpoint-url" env:"AWS_ENDPOINT_URL"`
 }
 
 var (
@@ -120,7 +121,7 @@ type CronStatsDigestRow struct {
 	num_occurences    int
 	num_errors        int
 	last_updated_at   time.Time
-	most_recent_error string
+	most_recent_error sql.NullString
 }
 
 func setupDB(sess *session.Session) (db *sql.DB, err error) {
@@ -242,11 +243,11 @@ func checkCrons(db *sql.DB, sess *session.Session) (err error) {
 		if row.num_errors == 0 {
 			continue
 		}
-		log.Printf("*** %s job had errors (runs: %d, errors: %d), alerting! (errors %s)", row.name, row.num_occurences, row.num_errors, row.most_recent_error)
+		log.Printf("*** %s job had errors (runs: %d, errors: %d), alerting! (errors %s)", row.name, row.num_occurences, row.num_errors, row.most_recent_error.String)
 		if row.num_occurences == 1 {
-			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors during its last run:\n%s", row.name, row.updated_at.String(), row.errors), "cronJobFailure", sess)
+			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors during its last run:\n%s", row.name, row.updated_at.String(), row.most_recent_error.String), "cronJobFailure", sess)
 		} else {
-			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors in %d of the previous %d runs; the most recent is:\n%s", row.name, row.last_updated_at.String(), row.num_errors, row.num_occurences, row.most_recent_error), "cronJobFailure", sess)
+			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors in %d of the previous %d runs; the most recent is:\n%s", row.name, row.last_updated_at.String(), row.num_errors, row.num_occurences, row.most_recent_error.String), "cronJobFailure", sess)
 		}
 	}
 
@@ -254,12 +255,15 @@ func checkCrons(db *sql.DB, sess *session.Session) (err error) {
 }
 
 func handler(ctx context.Context, name NullEvent) error {
+	awsConfig := aws.NewConfig()
+	awsConfig = awsConfig.WithRegion(options.AWSRegion)
+	if options.AwsEndpointUrl != "" {
+		awsConfig = awsConfig.WithEndpoint(options.AwsEndpointUrl)
+	}
 	sess := session.Must(session.NewSessionWithOptions(
 		session.Options{
 			SharedConfigState: session.SharedConfigEnable,
-			Config: aws.Config{
-				Region: &options.AWSRegion,
-			},
+			Config:            *awsConfig,
 		},
 	))
 
