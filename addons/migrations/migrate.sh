@@ -39,6 +39,21 @@ do
    export "$KEY"="$VALUE"
 done
 
+# If an IAM role ARN is provided, assume it and export AWS temporary credentials
+if [ -n "${ASSUME_ROLE_ARN:-}" ]; then
+  SESSION_NAME="${ASSUME_ROLE_SESSION_NAME:-migrate-$(date +%s)}"
+  echo "Assuming role ${ASSUME_ROLE_ARN} with session name ${SESSION_NAME}" >&2
+  # Retrieve temporary credentials via AWS STS
+  read AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN <<< "$(
+    aws sts assume-role \
+      --role-arn "${ASSUME_ROLE_ARN}" \
+      --role-session-name "${SESSION_NAME}" \
+      --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+      --output text
+  )"
+  export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+fi
+
 scale_services down "${ECS_SERVICE:?}" true "${DESIRED_COUNT}"
 
 if [ -n "${VULN_SERVICE}" ]; then

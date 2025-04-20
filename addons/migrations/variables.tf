@@ -41,4 +41,15 @@ variable "security_groups" {
 variable "vuln_service" {
   default = ""
 }
+variable "assume_role_arn" {
+  description = "ARN of the IAM role to assume for ECS permissions"
+  type        = string
+  default     = ""
+}
+
+variable "assume_role_session_name" {
+  description = "Session name to use when assuming the IAM role"
+  type        = string
+  default     = ""
+}
 
