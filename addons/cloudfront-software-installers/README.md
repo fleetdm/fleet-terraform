@@ -50,7 +50,7 @@ This example assumes that you used the following commands to create your public 
 
 ```
 openssl genrsa -out cloudfront.key 2048
-openssl rsa -pubout -in cloudfront.pem -out cloudfront.pem
+openssl rsa -pubout -in cloudfront.key -out cloudfront.pem
 ```
 
 To be able to store these in source control in a sane manner, the objects will be KMS encrypted for storage at rest.  This can happen by having a KMS key as follows:
