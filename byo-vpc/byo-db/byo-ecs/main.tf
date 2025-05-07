@@ -298,6 +298,14 @@ resource "aws_s3_bucket" "software_installers" { #tfsec:ignore:aws-s3-encryption
   bucket_prefix = var.fleet_config.software_installers.bucket_prefix
 }
 
+resource "aws_s3_bucket_versioning" "software_installers" {
+  count  = var.fleet_config.software_installers.enable_bucket_versioning == true ? 1 : 0
+  bucket = aws_s3_bucket.software_installers[0].bucket
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "software_installers" {
   count  = var.fleet_config.software_installers.create_bucket == true ? 1 : 0
   bucket = aws_s3_bucket.software_installers[0].bucket
