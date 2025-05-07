@@ -1,7 +1,7 @@
 ## Fleet deployment with Terraform
 
 This deployment guide has been tested with
-- k3s 
+- k3s
   - istio ingress
   - nginx ingress
 
@@ -9,11 +9,11 @@ This deployment guide has been tested with
 
 ### 1. Create namespace
 
-This terraform will not auto-provision a namespace. You can add one with `kubectl create namespace <name>` or by creating a YAML file containing a service and applying it to your cluster. 
+This terraform will not auto-provision a namespace. You can add one with `kubectl create namespace <name>` or by creating a YAML file containing a service and applying it to your cluster.
 
 ### 2. Create Secrets
 
-If you have a requirement to pull container images from a Private registry via `image_pull_secrets`, you can configure them using the instructions below. Additionally, you can instruct the terraform desployment to add the image_pull_secret via `module.fleet.image_pull_secrets`.
+If you have a requirement to pull container images from a Private registry via `image_pull_secrets`, you can configure them using the instructions below. Additionally, you can instruct the terraform desployment to add the image\_pull\_secret via `module.fleet.image_pull_secrets`.
 
 ```
 kubectl create secret docker-registry <secret_name> \
@@ -135,7 +135,6 @@ In `main.tf` make sure the following map is configured with the correct values.
     - example: `ingress.hosts.name = fleet.example.com` and `ingress.tls.hosts = fleet.example.com`
   - Last, `ingress.tls.secret_name` must be a valid secret name in your current namespace.*
     - Note: The TLS must contain a valid certificate that matches the hostnames provided for `ingress.hosts.name` and `ingress.tls.hosts`.
-  
 ```
 ...
     ingress = {
@@ -179,7 +178,6 @@ helm install istio-ingress istio/gateway -n istio-ingress --wait
 In `main.tf` make sure the following variable `fleet.tls.enabled = false`, otherwise the Fleet terraform deployment will fail.
 
 You will need to create a TLS secret specifically for use by the istio ingress gateway like the example below or re-use Fleet secret created in step 2. You can apply the secret with the following command `kubectl apply -f <path_to_secret_yaml_file>`.
-
 
 ```yaml
 ---
@@ -285,7 +283,6 @@ terraform destroy
 
 Using the file configured for your secrets, use `kubectl delete -f <secret_file_name.yaml> --namespace <your_namespace>` to remove the secrets.
 
-<!-- BEGIN_TF_DOCS -->
 ## Requirements
 
 No requirements.
@@ -346,4 +343,3 @@ No modules.
 ## Outputs
 
 No outputs.
-<!-- END_TF_DOCS -->
