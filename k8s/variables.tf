@@ -28,6 +28,14 @@ variable "image_tag" {
     description = "Used to populate the fleet version that will be deployed."
 }
 
+variable "image_pull_secrets" {
+    type = list(object({
+        name = string
+    }))
+    default = []
+    description = "Used to inject image pull secrets for access to a private container registry."
+}
+
 variable "pod_annotations" {
     type = map
     default = {}

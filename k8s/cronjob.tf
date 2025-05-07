@@ -369,6 +369,14 @@ resource "kubernetes_cron_job_v1" "fleet_vuln_processing_cron_job" {
                         }
                         
                         node_selector = local.node_selector
+
+                        dynamic "image_pull_secrets" {
+                            for_each = var.image_pull_secrets
+
+                            content {
+                                name = image_pull_secrets.value["name"]
+                            }
+                        }
                     }
                 }
             }

@@ -317,6 +317,14 @@ resource "kubernetes_job" "migration" {
                 }
 
                 node_selector = local.node_selector
+
+                dynamic "image_pull_secrets" {
+                    for_each = var.image_pull_secrets
+
+                    content {
+                        name = image_pull_secrets.value["name"]
+                    }
+                }
             }
         }
     }

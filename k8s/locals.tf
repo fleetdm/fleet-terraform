@@ -4,6 +4,7 @@ locals {
     replicas = var.replicas
     image_repository = var.image_repository
     image_tag = var.image_tag
+    image_pull_secrets = var.image_pull_secrets
     pod_annotations = var.pod_annotations
     service_annotations = var.service_annotations
     service_account_annotations = var.service_account_annotations

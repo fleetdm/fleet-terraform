@@ -856,6 +856,14 @@ resource "kubernetes_deployment" "fleet" {
                         }
                     }
                 }
+
+                dynamic "image_pull_secrets" {
+                    for_each = var.image_pull_secrets
+
+                    content {
+                        name = image_pull_secrets.value["name"]
+                    }
+                }
             }
         }
     }

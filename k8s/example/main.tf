@@ -1,12 +1,19 @@
 module "fleet" {
-    # source = "./modules/fleet-deploy"
-    source = "git::https://github.com/fleetdm/fleet-terraform//k8s?depth=1&ref=tf-fleetk8s-support"
+    source = "git::https://github.com/fleetdm/fleet-terraform//k8s?depth=1&ref=tf-k8s-v1.0.0"
 
     namespace = "fleet"
     hostname = "fleet.localhost.local"
     replicas = "3"
     image_repository = "fleetdm/fleet"
-    image_tag = "v4.65.0"
+    image_tag = "v4.66.0"
+    /*
+        Example:
+        image_pull_secrets = [
+            { name = "docker_pull_secret" },
+            { name = "docker_pull_secret_two"}
+        ]
+    */
+    image_pull_secrets = [{}]
     pod_annotations = {}
     service_annotations = {}
     service_account_annotations = {}
