@@ -307,7 +307,7 @@ resource "aws_s3_bucket_versioning" "software_installers" {
 
 resource "aws_s3_bucket_lifecycle_configuration" "software_installers" {
   count      = var.fleet_config.software_installers.enable_bucket_versioning == true && var.fleet_config.software_installers.create_bucket == true && var.fleet_config.software_installers.expire_noncurrent_versions == true? 1 : 0
-  depends_on = [aws_s3_bucket_versioning.software_installers]
+  depends_on = [aws_s3_bucket_versioning.software_installers[0]]
   bucket     = aws_s3_bucket.software_installers[0].bucket
   rule {
     id = "expire-noncurrent-versions"
