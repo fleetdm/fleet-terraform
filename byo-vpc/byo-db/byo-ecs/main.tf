@@ -276,7 +276,6 @@ resource "aws_secretsmanager_secret_version" "fleet_server_private_key" {
   secret_string = random_password.fleet_server_private_key.result
 }
 
-// No versioning on this bucket is by design.
 // Bucket logging is not supported in our Fleet Terraforms at the moment. It can be enabled by the
 // organizations deploying Fleet, and we will evaluate the possibility of providing this capability
 // in the future.
@@ -302,6 +301,19 @@ resource "aws_s3_bucket_versioning" "software_installers" {
   count  = var.fleet_config.software_installers.enable_bucket_versioning == true ? 1 : 0
   bucket = aws_s3_bucket.software_installers[0].bucket
   versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "software_installers" {
+  count      = var.fleet_config.software_installers.enable_bucket_versioning == true && var.fleet_config.software_installers.create_bucket == true && var.fleet_config.software_installers.expire_noncurrent_versions == true? 1 : 0
+  depends_on = [aws_s3_bucket_versioning.software_installers]
+  bucket     = aws_s3_bucket.software_installers[0].bucket
+  rule {
+    id = "expire-noncurrent-versions"
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
     status = "Enabled"
   }
 }
