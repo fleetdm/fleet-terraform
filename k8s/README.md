@@ -44,20 +44,20 @@ In order for the deployment to go through successfully, you'll need to create so
 apiVersion: v1
 kind: Secret
 metadata:
-  name: redis-password
-  namespace: <namespace_name>
+  name: redis
+  namespace: <namespace>
 type: kubernetes.io/basic-auth
 stringData:
-  password: <redis-password-here>
+  redis-password: <redis-password-here>
 ---
 apiVersion: v1
 kind: Secret
 metadata:
-  name: mysql-password
-  namespace: <namespace_name>
+  name: mysql
+  namespace: <namespace>
 type: kubernetes.io/basic-auth
 stringData:
-  password: <mysql-password-here>
+  mysql-password: <mysql-password-here>
 ```
 
 If you use Fleet's TLS capabilities, TLS connections to the MySQL server, or AWS access secret keys, additional secrets and keys are needed. The name of each `Secret` must match the value of `secret_name` for each section in `module.fleet` located in `main.tf`. The key of each secret must match the related key value from the values file. For example, to configure Fleet's TLS, you would use a secret like the one below.
@@ -84,10 +84,11 @@ If you have a Fleet premium license you would create a secret like the one below
 apiVersion: v1
 kind: Secret
 metadata:
-  name: fleet-license
-  namespace: <namespace_name>
-data:
-  license: <fleet-license-here>
+  name: license
+  namespace: <namespace>
+type: kubernetes.io/basic-auth
+stringData:
+  license-key: <fleet-license-here>
 ```
 
 Once all of your secrets are configured, use `kubectl apply -f <secret_file_name.yaml> --namespace <your_namespace>` to configure them in the cluster.
@@ -143,16 +144,16 @@ In `main.tf` make sure the following map is configured with the correct values.
         annotations = {}
         labels = {}
         hosts = [{
-            name = "fleet.example.com"
+            name = "fleet.localhost.local"
             paths = [{
                 path = "/"
                 path_type = "ImplementationSpecific"
             }]
         }]
         tls = {
-            secret_name = "fleet-tls"
+            secret_name = "chart-example-tls"
             hosts = [
-                "fleet.example.com"
+                "fleet.localhost.local"
             ]
         }
     }

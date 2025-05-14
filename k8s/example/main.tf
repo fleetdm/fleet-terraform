@@ -1,5 +1,5 @@
 module "fleet" {
-    source = "git::https://github.com/fleetdm/fleet-terraform//k8s?depth=1&ref=tf-mod-k8s-v1.0.0"
+    source = "git::https://github.com/fleetdm/fleet-terraform//k8s?depth=1&ref=tf-mod-k8s-v1.1.0"
 
     namespace = "fleet"
     hostname = "fleet.localhost.local"
@@ -129,16 +129,16 @@ module "fleet" {
         annotations = {}
         labels = {}
         hosts = [{
-            name = "fleet.example.com"
+            name = "fleet.localhost.local"
             paths = [{
                 path = "/"
                 path_type = "ImplementationSpecific"
             }]
         }]
         tls = {
-            secret_name = "fleet-tls"
+            secret_name = "chart-example-tls"
             hosts = [
-                "fleet.example.com"
+                "fleet.localhost.local"
             ]
         }
     }
@@ -258,10 +258,10 @@ module "fleet" {
 
     database = {
         enabled = false
-        secret_name = "password"
-        address = "mysql:3306"
+        secret_name = "mysql"
+        address = "fleet-database-mysql:3306"
         database = "fleet"
-        username = "root"
+        username = "fleet"
         password_key = "mysql-password"
         max_open_conns = 50
         max_idle_conns = 50
@@ -279,11 +279,11 @@ module "fleet" {
 
     cache = {
         enabled = false
-        address = "redis:6379"
+        address = "fleet-cache-redis:6379"
         database = "0"
         use_password = false
-        secret_name = "redis-password"
-        password_key = "redis"
+        secret_name = "redis"
+        password_key = "redis-password"
     }
 
     gke = {
