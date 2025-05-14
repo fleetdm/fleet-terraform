@@ -37,7 +37,7 @@ data:
   .dockerconfigjson: <base64_encoded_config>
 ```
 
-In order for the deployment to go through successfully, you'll need to create some secrets so Fleet knows how to authenticate against things like MySQL and Redis. While we'll only cover creating simple secrets, the deployment via terraform also supports instructing Fleet to pull the `valuesFrom:` an external secret store such as AWS Secrets Manager.
+In order for the deployment to go through successfully, you'll need to create some secrets so Fleet knows how to authenticate against things like MySQL and Redis.
 
 ```yaml
 ---
@@ -48,7 +48,7 @@ metadata:
   namespace: <namespace>
 type: kubernetes.io/basic-auth
 stringData:
-  redis-password: <redis-password-here>
+  password: <redis-password-here>
 ---
 apiVersion: v1
 kind: Secret
@@ -57,7 +57,7 @@ metadata:
   namespace: <namespace>
 type: kubernetes.io/basic-auth
 stringData:
-  mysql-password: <mysql-password-here>
+  password: <mysql-password-here>
 ```
 
 If you use Fleet's TLS capabilities, TLS connections to the MySQL server, or AWS access secret keys, additional secrets and keys are needed. The name of each `Secret` must match the value of `secret_name` for each section in `module.fleet` located in `main.tf`. The key of each secret must match the related key value from the values file. For example, to configure Fleet's TLS, you would use a secret like the one below.
@@ -86,7 +86,7 @@ kind: Secret
 metadata:
   name: license
   namespace: <namespace>
-type: kubernetes.io/basic-auth
+type: Opaque
 stringData:
   license-key: <fleet-license-here>
 ```
@@ -318,8 +318,8 @@ No modules.
 |------|-------------|------|---------|:--------:|
 | <a name="input_affinity_rules"></a> [affinity\_rules](#input\_affinity\_rules) | Used to configure affinity rules for the fleet deployment, migration job, and vuln-processing cron job. | <pre>object({ <br/>        required_during_scheduling_ignored_during_execution = optional(list(any), [])<br/>        preferred_during_scheduling_ignored_during_execution = optional(list(any), [])<br/>    })</pre> | n/a | yes |
 | <a name="input_anti_affinity_rules"></a> [anti\_affinity\_rules](#input\_anti\_affinity\_rules) | Used to configure anti-affinity rules for the fleet deployment, migration job, and vuln-processing cron job. | <pre>object({ <br/>        required_during_scheduling_ignored_during_execution = optional(list(any), [])<br/>        preferred_during_scheduling_ignored_during_execution = optional(list(any),<br/>        [<br/>            {<br/>                weight = 100<br/>                label_selector = {<br/>                    match_expressions = [<br/>                        {<br/>                            key = "app"<br/>                            operator = "In"<br/>                            values = ["fleet"]<br/>                        }<br/>                    ]<br/>                }<br/>                topology_key = "kubernetes.io/hostname"<br/>            }<br/>        ])<br/>    })</pre> | n/a | yes |
-| <a name="input_cache"></a> [cache](#input\_cache) | Used to configure redis specific values for use in the Fleet deployment, migration job, and vuln-processing cron job. | <pre>object({<br/>        enabled = optional(bool, false)<br/>        address = optional(string, "redis:6379")<br/>        database = optional(number, 0)<br/>        use_password = optional(bool, false)<br/>        secret_name = optional(string, "redis-password")<br/>        password_key = optional(string, "redis")<br/>    })</pre> | n/a | yes |
-| <a name="input_database"></a> [database](#input\_database) | Used to configure database specific values for use in the Fleet deployment, migration job, and vuln-processing cron job. | <pre>object({<br/>        enabled = optional(bool, false)<br/>        secret_name = optional(string, "password")<br/>        address = optional(string, "mysql:3306")<br/>        database = optional(string, "fleet")<br/>        username = optional(string, "fleet")<br/>        password_key = optional(string, "mysql-password")<br/>        max_open_conns = optional(number, 50)<br/>        max_idle_conns = optional(number, 50)<br/>        conn_max_lifetime = optional(number, 0)<br/><br/>        tls = object({<br/>            enabled = optional(bool, false)<br/>            config = optional(string, "")<br/>            server_name = optional(string, "")<br/>            ca_cert_key = optional(string, "")<br/>            cert_key = optional(string, "")<br/>            key_key = optional(string, "")<br/>        })<br/>    })</pre> | n/a | yes |
+| <a name="input_cache"></a> [cache](#input\_cache) | Used to configure redis specific values for use in the Fleet deployment, migration job, and vuln-processing cron job. | <pre>object({<br/>        enabled = optional(bool, false)<br/>        address = optional(string, "redis:6379")<br/>        database = optional(number, 0)<br/>        use_password = optional(bool, false)<br/>        secret_name = optional(string, "redis")<br/>        password_key = optional(string, "password")<br/>    })</pre> | n/a | yes |
+| <a name="input_database"></a> [database](#input\_database) | Used to configure database specific values for use in the Fleet deployment, migration job, and vuln-processing cron job. | <pre>object({<br/>        enabled = optional(bool, false)<br/>        secret_name = optional(string, "mysql")<br/>        address = optional(string, "mysql:3306")<br/>        database = optional(string, "fleet")<br/>        username = optional(string, "fleet")<br/>        password_key = optional(string, "password")<br/>        max_open_conns = optional(number, 50)<br/>        max_idle_conns = optional(number, 50)<br/>        conn_max_lifetime = optional(number, 0)<br/><br/>        tls = object({<br/>            enabled = optional(bool, false)<br/>            config = optional(string, "")<br/>            server_name = optional(string, "")<br/>            ca_cert_key = optional(string, "")<br/>            cert_key = optional(string, "")<br/>            key_key = optional(string, "")<br/>        })<br/>    })</pre> | n/a | yes |
 | <a name="input_environment_from_config_maps"></a> [environment\_from\_config\_maps](#input\_environment\_from\_config\_maps) | Used to configure additional environment variables from a config map for the fleet deployment and vuln-processing cron job. | `list(map(string))` | `[]` | no |
 | <a name="input_environment_from_secrets"></a> [environment\_from\_secrets](#input\_environment\_from\_secrets) | Used to configure additional environment variables from a secret for the fleet deployment and vuln-processing cron job. | `list(map(string))` | `[]` | no |
 | <a name="input_environment_variables"></a> [environment\_variables](#input\_environment\_variables) | Used to configure additional environment variables for the fleet deployment and vuln-processing cron job. | `list(map(string))` | `[]` | no |

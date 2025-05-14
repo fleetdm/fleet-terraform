@@ -13,7 +13,7 @@ module "fleet" {
             { name = "docker_pull_secret_two"}
         ]
     */
-    image_pull_secrets = [{}]
+    image_pull_secrets = []
     pod_annotations = {}
     service_annotations = {}
     service_account_annotations = {}

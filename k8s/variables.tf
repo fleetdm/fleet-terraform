@@ -303,11 +303,11 @@ variable "osquery" {
 variable "database" {
     type = object({
         enabled = optional(bool, false)
-        secret_name = optional(string, "password")
+        secret_name = optional(string, "mysql")
         address = optional(string, "mysql:3306")
         database = optional(string, "fleet")
         username = optional(string, "fleet")
-        password_key = optional(string, "mysql-password")
+        password_key = optional(string, "password")
         max_open_conns = optional(number, 50)
         max_idle_conns = optional(number, 50)
         conn_max_lifetime = optional(number, 0)
@@ -330,8 +330,8 @@ variable "cache" {
         address = optional(string, "redis:6379")
         database = optional(number, 0)
         use_password = optional(bool, false)
-        secret_name = optional(string, "redis-password")
-        password_key = optional(string, "redis")
+        secret_name = optional(string, "redis")
+        password_key = optional(string, "password")
     })
     description = "Used to configure redis specific values for use in the Fleet deployment, migration job, and vuln-processing cron job."
 }

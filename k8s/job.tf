@@ -95,8 +95,8 @@ resource "kubernetes_job" "migration" {
                         name = "FLEET_MYSQL_PASSWORD"
                         value_from {
                             secret_key_ref {
-                                key = local.database.secret_name
-                                name = local.database.password_key
+                                name = local.database.secret_name
+                                key = local.database.password_key
                             }
                         }
                     }
