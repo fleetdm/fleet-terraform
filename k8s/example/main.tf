@@ -262,7 +262,7 @@ module "fleet" {
         address = "fleet-database-mysql:3306"
         database = "fleet"
         username = "fleet"
-        password_key = "mysql-password"
+        password_key = "password"
         max_open_conns = 50
         max_idle_conns = 50
         conn_max_lifetime = 0
@@ -283,7 +283,7 @@ module "fleet" {
         database = "0"
         use_password = true
         secret_name = "redis"
-        password_key = "redis-password"
+        password_key = "password"
     }
 
     gke = {
