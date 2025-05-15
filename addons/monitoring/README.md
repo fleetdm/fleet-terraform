@@ -12,23 +12,26 @@ This includes:
 
 # Preparation
 
+> Note: The documented examples and links in this README may assume use of `module.main` instead of `module.fleet`. The monitoring example configuration can be modified as documented below, if your fleet module is named `fleet` instead of `main`, vice versa.
+> - A search and replace of `module.fleet` -> `module.main` or `module.main` -> `module.fleet`
+
 Some of the for\_each and counts in this module cannot pre-determine the numbers until the `main` fleet module is applied.
 
-You will need to `terraform apply -target module.main` prior applying monitoring assuming the use of a configuration matching the example at https://github.com/fleetdm/fleet/blob/main/terraform/example/main.tf.
+You will need to `terraform apply -target module.main` prior to applying monitoring assuming the use of a configuration matching the example at https://github.com/fleetdm/fleet-terraform/blob/main/example/main.tf.
 
-Multiple alb support was added in order to allow monitoring `saml-auth-proxy`.  See https://github.com/fleetdm/fleet/tree/main/terraform/addons/saml-auth-proxy
+Multiple alb support was added in order to allow monitoring `saml-auth-proxy`. See https://github.com/fleetdm/fleet-terraform/tree/main/addons/saml-auth-proxy
 
 # Example configuration
 
 This assumes your fleet module is `main` and is configured with it's default documentation.
 
- https://github.com/fleetdm/fleet/blob/main/terraform/example/main.tf for details.
+https://github.com/fleetdm/fleet-terraform/blob/main/example/main.tf for details.
 
-Note if you haven't specified defined `local.customer` or customized service names, the default is "fleet" for anywhere that `local.customer` is specified below.
+> Note: If you haven't specified defined `local.customer` or customized service names, the default is "fleet" for anywhere that `local.customer` is specified below.
 
 ```
 module "monitoring" {
-  source                 = "github.com/fleetdm/fleet-terraform//addons/monitoring?ref=tf-mod-addon-monitoring-v1.4.0"
+  source                 = "github.com/fleetdm/fleet-terraform//addons/monitoring?ref=tf-mod-addon-monitoring-v1.5.1"
   customer_prefix        = local.customer
   fleet_ecs_service_name = module.main.byo-vpc.byo-db.byo-ecs.service.name
   albs = [
@@ -105,9 +108,9 @@ No requirements.
 
 | Name | Version |
 |------|---------|
-| <a name="provider_archive"></a> [archive](#provider\_archive) | 2.7.0 |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 5.81.0 |
-| <a name="provider_null"></a> [null](#provider\_null) | 3.2.3 |
+| <a name="provider_archive"></a> [archive](#provider\_archive) | n/a |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | n/a |
+| <a name="provider_null"></a> [null](#provider\_null) | n/a |
 
 ## Modules
 
