@@ -131,7 +131,7 @@ The below will be in preparation for deployment through the `terraform apply` in
 In `main.tf` make sure the following variable `fleet.tls.enabled = false`, otherwise the Fleet terraform deployment will fail.
 In `main.tf` make sure the following map is configured with the correct values.
   - `ingress.enabled` must be `true`, if you'd like Fleet to deploy the nginx ingress for you.
-  - `ingress.class_name` needs to be set to `nginx`
+  - `ingress.class_name` needs to be set to `nginx`, but can be changed to values like `traefik`, if you have another compatible ingress.
   - `ingress.hosts.name` must have a matching entry in `ingress.tls.hosts`
     - example: `ingress.hosts.name = fleet.example.com` and `ingress.tls.hosts = fleet.example.com`
   - Last, `ingress.tls.secret_name` must be a valid secret name in your current namespace.*

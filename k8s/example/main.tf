@@ -125,7 +125,7 @@ module "fleet" {
     
     ingress = {
         enabled = false
-        class_name = "nginx"
+        class_name = ""
         annotations = {}
         labels = {}
         hosts = [{
