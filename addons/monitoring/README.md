@@ -12,8 +12,8 @@ This includes:
 
 # Preparation
 
-> Note: The documented examples and links in this README may assume use of `module.main` instead of `module.fleet`. The monitoring example configuration can be modified as documented below, if your fleet module is named `fleet` instead of `main`, vice versa.
-> - A search and replace of `module.fleet` -> `module.main` or `module.main` -> `module.fleet`
+> Note: The documented examples and links in this README may assume use of `module.main` instead of `module.fleet`. The monitoring example configuration can be modified as documented below, if your fleet module is named `fleet` instead of `main`
+> - A search and replace of `module.main` -> `module.fleet`
 
 Some of the for\_each and counts in this module cannot pre-determine the numbers until the `main` fleet module is applied.
 
