@@ -12,7 +12,6 @@ resource "kubernetes_job" "migration" {
         completions = local.fleet.migrations.completions
         active_deadline_seconds = local.fleet.migrations.active_deadline_seconds
         backoff_limit = local.fleet.migrations.backoff_limit
-        ttl_seconds_after_finished = local.fleet.migrations.ttl_seconds_after_finished
 
         manual_selector = local.fleet.migrations.manual_selector
 

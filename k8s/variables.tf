@@ -198,7 +198,6 @@ variable "fleet" {
             completions = optional(number, 1)
             active_deadline_seconds = optional(number, 900)
             backoff_limit = optional(number, 6)
-            ttl_seconds_after_finished = optional(number, 100)
             manual_selector = optional(bool, false)
             restart_policy = optional(string, "Never")
         })

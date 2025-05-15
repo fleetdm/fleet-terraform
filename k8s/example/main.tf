@@ -153,7 +153,6 @@ module "fleet" {
             completions = 1
             active_deadline_seconds = 900
             backoff_limit = 6
-            ttl_seconds_after_finished = 100
             manual_selector = false
             restart_policy = "Never"
         }
