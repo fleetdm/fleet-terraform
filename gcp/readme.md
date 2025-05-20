@@ -64,36 +64,30 @@ This Terraform project automates the deployment of Fleet Device Management (Flee
     # You can override defaults from byo-project/variables.tf here if needed,
     # or set values for variables that don't have defaults.
 
-    # Example: FleetDM Configuration including migration execution
-    fleet_config = {
-      # image_tag                = "fleetdm/fleet:v4.x.y" # Specify your desired Fleet version
-      # license_key              = "YOUR_FLEET_LICENSE_KEY"
-      # installers_bucket_name   = "my-unique-fleet-installers" # Must be globally unique
-      # fleet_cpu                = "1000m"
-      # fleet_memory             = "4096Mi"
-      # debug_logging            = false
-      # min_instance_count       = 1
-      # max_instance_count       = 3
-      # exec_migration           = true # Set to true to run migrations on `terraform apply`
-                                       # (e.g., when changing image_tag)
-    }
+    # Example: FleetDM License Key (if you have one)
+    # fleet_config = {
+    #   license_key = "YOUR_FLEET_LICENSE_KEY"
+    #   # You can also override other fleet_config defaults here:
+    #   # image_tag                = "fleetdm/fleet:latest"
+    #   # installers_bucket_prefix = "my-fleet-installers"
+    #   # fleet_cpu                = "1000m"
+    #   # fleet_memory             = "4096Mi"
+    #   # debug_logging            = false
+    #   # min_instance_count       = 1
+    #   # max_instance_count       = 3
+    # }
 
     ```
 
+    **Key Variables to Set:**
+    *   `org_id`: Your GCP Organization ID.
+    *   `billing_account_id`: Your GCP Billing Account ID.
+    *   `dns_zone_name`: The DNS zone that will be created/managed in Cloud DNS (e.g., `mydomain.com.`). **Must end with a dot.**
+    *   `dns_record_name`: The specific DNS record for Fleet (e.g., `fleet.mydomain.com.`). **Must end with a dot.**
+    *   `project_name`: A descriptive name for the project to be created.
+    *   `fleet_config.license_key` (Optional, inside the `fleet_config` object): Your FleetDM license key if you have one.
 
-**Key Variables to Set:**
-  
-* `org_id`: Your GCP Organization ID.
-*   `billing_account_id`: Your GCP Billing Account ID.
-*   `dns_zone_name`: The DNS zone that will be created/managed in Cloud DNS (e.g., `mydomain.com.`). **Must end with a dot.**
-*   `dns_record_name`: The specific DNS record for Fleet (e.g., `fleet.mydomain.com.`). **Must end with a dot.**
-*   `project_name`: A descriptive name for the project to be created.
-*   `fleet_config.image_tag`: The Docker image tag for the FleetDM version you want to deploy (e.g., `fleetdm/fleet:v4.67.3`).
-*   `fleet_config.exec_migration`: Set to `true` when you are upgrading the `fleet_config.image_tag` to automatically run database migrations. Set to `false` if you want to manage migrations manually or if it's not an image upgrade.
-*   `fleet_config.license_key` (Optional, inside the `fleet_config` object): Your FleetDM license key if you have one.
-
-Review `variables.tf` and `byo-project/variables.tf` for all available options and their defaults.
-
+    Review `variables.tf` and `byo-project/variables.tf` for all available options and their defaults.
 
 ## Deployment Steps
 
@@ -101,6 +95,11 @@ Review `variables.tf` and `byo-project/variables.tf` for all available options a
     Ensure your `gcloud` CLI is authenticated with the account having the necessary permissions.
     ```bash
     gcloud auth application-default login
+    ```
+    If you need to specify a project for ADC (though project factory creates one):
+    ```bash
+    gcloud config set project YOUR_QUOTA_PROJECT_ID # A project where gcloud can store credentials
+    gcloud auth application-default set-quota-project YOUR_QUOTA_PROJECT_ID
     ```
 
 2.  **Initialize Terraform:**
@@ -120,9 +119,32 @@ Review `variables.tf` and `byo-project/variables.tf` for all available options a
     ```bash
     terraform apply tfplan
     ```
-    This process can take a significant amount of time (10–20 minutes or more), especially for the initial project creation, API enablement, and Cloud SQL instance provisioning.
+    This process can take a significant amount of time (15-30 minutes or more), especially for the initial project creation, API enablement, and Cloud SQL instance provisioning.
 
-5.  **Update DNS (if not using Cloud DNS for the parent zone):**
+5.  **Run Database Migrations:**
+    After `terraform apply` completes, the Fleet application is deployed but the database schema needs to be initialized/migrated. The project creates a Cloud Run Job (`fleet-migration-job`) for this purpose. You need to execute this job manually.
+
+    *   **Find the Job Name and Location:**
+        The job name will be like `fleet-migration-job` (if prefix is `fleet`) or `<prefix>-migration-job` in the region you deployed to (default `us-central1`). The project ID will be the one created by project factory. You can find the exact name and project ID in the Terraform output or by inspecting resources in the GCP console.
+
+    *   **Execute the Job using `gcloud`:**
+        Replace `[JOB_NAME]`, `[REGION]`, and `[PROJECT_ID]` with your actual values.
+        ```bash
+        PROJECT_ID=$(terraform output -raw project_id 2>/dev/null || gcloud projects list --filter="name~^my-fleet-project" --format="value(projectId)" | head -n 1) # Adjust filter if your project_name is different
+        JOB_NAME="fleet-migration-job" # Or as configured by 'prefix' variable
+        REGION="us-central1"           # Or as configured by 'region' variable
+
+        gcloud run jobs execute ${JOB_NAME} \
+          --region ${REGION} \
+          --project ${PROJECT_ID} \
+          --wait # Use --wait to see the job complete
+        ```
+        If you don't have `terraform output -raw project_id` (because it's not defined in `outputs.tf`), you'll need to find the project ID manually, e.g., from the GCP console or by listing projects with `gcloud projects list`.
+
+    *   **Verify Job Completion:**
+        You can monitor the job's progress in the GCP Console under Cloud Run > Jobs. Ensure it completes successfully.
+
+6.  **Update DNS (if not using Cloud DNS for the parent zone):**
     If `dns_zone_name` (e.g., `fleet.your-domain.com.`) is a new zone created by this Terraform, and your parent domain (e.g., `your-domain.com.`) is managed elsewhere (e.g., GoDaddy, Cloudflare), you need to delegate this new zone.
     *   Get the Name Servers (NS) records for the newly created `google_dns_managed_zone` (`${var.prefix}-zone`):
         ```bash
@@ -178,12 +200,14 @@ To destroy all resources created by this Terraform project:
 
 ## Important Considerations
 
+*   **Costs:** Running these resources on GCP will incur costs. Be sure to understand the pricing for Cloud SQL, Memorystore, Cloud Run, Load Balancing, GCS, etc. Shut down resources with `terraform destroy` if they are no longer needed.
 *   **Permissions:** The user or service account running Terraform needs extensive permissions, especially for project creation. For ongoing management within the project, a role like `Project Editor` or more granular roles might suffice.
 *   **FleetDM Configuration:** This Terraform setup provisions the infrastructure. Further FleetDM application configuration (e.g., SSO, SMTP, agent options) will need to be done through the Fleet UI or API after deployment.
 *   **Security:**
     *   Review IAM permissions granted.
     *   The Load Balancer is configured for HTTPS and redirects HTTP.
     *   Cloud SQL and Memorystore are not publicly accessible and are connected via Private Service Access.
+    *   Consider enabling IAP (Identity-Aware Proxy) on the Load Balancer for an additional layer of access control if needed (disabled by default in `loadbalancer.tf`).
 *   **Scalability:** Cloud Run scaling parameters (`min_instance_count`, `max_instance_count`) and database/cache tier can be adjusted in `variables.tf` (via `fleet_config`, `database_config`, `cache_config`) to suit your load.
 
 
