@@ -197,6 +197,7 @@ variable "fleet_config" {
       noncurrent_version_expiration_days = optional(number, 30)
       create_kms_key                     = optional(bool, false)
       kms_alias                          = optional(string, "fleet-software-installers")
+      tags                               = optional(list(any), [])
       }), {
       create_bucket                      = true
       bucket_name                        = null
@@ -207,6 +208,7 @@ variable "fleet_config" {
       noncurrent_version_expiration_days = 30
       create_kms_key                     = false
       kms_alias                          = "fleet-software-installers"
+      tags                               = []
     })
   })
   default = {
