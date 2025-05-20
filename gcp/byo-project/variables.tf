@@ -91,21 +91,30 @@ variable "vpc_config" {
 variable "fleet_config" {
   type = object({
     installers_bucket_name = string
-    image_tag                = string
-    fleet_cpu                = string
-    fleet_memory             = string
-    debug_logging            = bool
-    license_key              = optional(string)
-    min_instance_count       = number
-    max_instance_count       = number
+    image_tag              = string
+    fleet_cpu              = string
+    fleet_memory           = string
+    debug_logging          = bool
+    license_key            = optional(string)
+    min_instance_count     = number
+    max_instance_count     = number
+    exec_migration         = bool
+    extra_env_vars         = optional(map(string))
+    extra_secret_env_vars = optional(map(object({
+      secret  = string
+      version = string
+    })))
   })
   default = {
-    image_tag                = "fleetdm/fleet:v4.67.3"
-    installers_bucket_name   = "fleet-installers-gcp-test-1" // todo fix
-    fleet_cpu                = "1000m"
-    fleet_memory             = "4096Mi"
-    debug_logging            = false
-    min_instance_count       = 1
-    max_instance_count       = 5
+    image_tag              = "fleetdm/fleet:v4.67.3"
+    installers_bucket_name = "fleet-installers-gcp-test-1" // todo fix
+    fleet_cpu              = "1000m"
+    fleet_memory           = "4096Mi"
+    debug_logging          = false
+    min_instance_count     = 1
+    max_instance_count     = 5
+    exec_migration         = true
+    extra_env_vars         = {}
+    extra_secret_env_vars  = {}
   }
 }

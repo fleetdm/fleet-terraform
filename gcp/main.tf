@@ -3,7 +3,7 @@ terraform {
   required_providers {
     google = {
       source  = "hashicorp/google"
-      version = "6.32.0"
+      version = "6.35.0"
     }
   }
 }
@@ -54,4 +54,10 @@ module "fleet" {
   project_id      = module.project_factory.project_id
   dns_record_name = var.dns_record_name
   dns_zone_name   = var.dns_zone_name
+  vpc_config      = var.vpc_config
+  fleet_config    = var.fleet_config
+  cache_config    = var.cache_config
+  database_config = var.database_config
+  region          = var.region
+  location        = var.location
 }

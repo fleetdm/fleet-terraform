@@ -10,9 +10,9 @@ module "memstore" {
   project_id              = var.project_id
   region                  = var.region
   enable_apis             = true
-  transit_encryption_mode = "SERVER_AUTHENTICATION"
+  transit_encryption_mode = "DISABLED"
   authorized_network      = module.vpc.network_id
   connect_mode            = var.cache_config.connect_mode
-  reserved_ip_range = ""
 
+  depends_on = [module.private-service-access.peering_completed]
 }
