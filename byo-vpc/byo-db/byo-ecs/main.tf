@@ -296,6 +296,9 @@ resource "aws_s3_bucket" "software_installers" { #tfsec:ignore:aws-s3-encryption
   bucket        = var.fleet_config.software_installers.bucket_name
   bucket_prefix = var.fleet_config.software_installers.bucket_prefix
   tags          = var.fleet_config.software_installers.tags
+  
+  # Allow destroy of non-empty buckets
+  force_destroy = true
 }
 
 resource "aws_s3_bucket_versioning" "software_installers" {
