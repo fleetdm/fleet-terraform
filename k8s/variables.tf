@@ -242,8 +242,8 @@ variable "fleet" {
         extra_volumes = optional(list(any), [])
         extra_volume_mounts = optional(list(any), [])
         security_context = object({
-            run_as_user = optional(number, 3333)
-            run_as_group = optional(number, 3333)
+            run_as_user = optional(number, null)
+            run_as_group = optional(number, null)
         })
     })
     description = "Used to configure Fleet specific values for use in the Fleet deployment, migration job, and vuln-processing cron job."
