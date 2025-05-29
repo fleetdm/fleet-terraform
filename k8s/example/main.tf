@@ -1,5 +1,5 @@
 module "fleet" {
-    source = "git::https://github.com/fleetdm/fleet-terraform//k8s?depth=1&ref=tf-mod-k8s-v1.1.0"
+    source = "git::https://github.com/fleetdm/fleet-terraform//k8s?depth=1&ref=tf-mod-k8s-v1.1.1"
 
     namespace = "fleet"
     hostname = "fleet.localhost.local"
