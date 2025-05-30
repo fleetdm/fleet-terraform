@@ -244,6 +244,7 @@ variable "fleet" {
         security_context = object({
             run_as_user = optional(number, null)
             run_as_group = optional(number, null)
+            run_as_non_root = optional(bool, true)
         })
     })
     description = "Used to configure Fleet specific values for use in the Fleet deployment, migration job, and vuln-processing cron job."

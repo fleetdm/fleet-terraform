@@ -196,9 +196,42 @@ module "fleet" {
         }
         extra_volumes = []
         extra_volume_mounts = []
+        /*
+           If you're not providing an id for run_as_user or run_as_group, 
+           and you're not running on Openshift (Openshift will set the userid/groupid, if left blank),
+           you might encounter an issue with Fleet pods starting up, where
+           k8s is not able to determine whether the fleet user, in the
+           Fleet container image, is running as root. 
+           
+           Examples:
+           1. Openshift example (without id's):
+                security_context = {
+                    run_as_non_root = true
+                }
+
+           2. Openshift example (with id's):
+                security_context = {
+                    run_as_user = 1000653333
+                    run_as_group = 1000653333
+                    run_as_non_root = true
+                }
+
+           3. Non-Openshift (without id's):
+                security_context = {
+                    run_as_non_root = false
+                }
+                
+           4. Non-Openshift (with id's):
+                security_context = {
+                    run_as_user = 3333
+                    run_as_group = 3333
+                    run_as_non_root = true
+                }
+        */
         security_context = {
             run_as_user = 3333
             run_as_group = 3333
+            run_as_non_root = true
         }
     }
 

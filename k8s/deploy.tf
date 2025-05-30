@@ -580,9 +580,9 @@ resource "kubernetes_deployment" "fleet" {
                     }
 
                     security_context {
-                        run_as_user = local.fleet.security_context.run_as_user != null ? local.fleet.security_context.run_as_user : null
-                        run_as_group = local.fleet.security_context.run_as_group != null ? local.fleet.security_context.run_as_group : null
-                        run_as_non_root = "true"
+                        run_as_user = local.fleet.security_context.run_as_user
+                        run_as_group = local.fleet.security_context.run_as_group
+                        run_as_non_root = local.fleet.security_context.run_as_non_root
                         read_only_root_filesystem = "true"
                         privileged = "false"
                         allow_privilege_escalation = "false"
@@ -696,9 +696,9 @@ resource "kubernetes_deployment" "fleet" {
                                 },
                                 privileged = false,
                                 read_only_root_filesystem = true,
-                                run_as_user = local.fleet.security_context.run_as_user != null ? local.fleet.security_context.run_as_user : null,
-                                run_as_group = local.fleet.security_context.run_as_group != null ? local.fleet.security_context.run_as_group : null,
-                                run_as_non_root = true
+                                run_as_user = local.fleet.security_context.run_as_user,
+                                run_as_group = local.fleet.security_context.run_as_group,
+                                run_as_non_root = local.fleet.security_context.run_as_non_root
                             }
                         }
                     ] : []
