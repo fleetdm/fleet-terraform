@@ -44,7 +44,7 @@ locals {
 
 module "fleet-service" {
   source  = "GoogleCloudPlatform/cloud-run/google//modules/v2"
-  version = "~> 0.17"
+  version = "0.17.2"
 
   service_name                  = "fleet-api"
   project_id                    = var.project_id
