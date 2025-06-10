@@ -19,7 +19,7 @@ resource "kubernetes_deployment" "fleet" {
         selector {
             match_labels = {
                 app = "fleet"
-                components = "fleet-server"
+                component = "fleet-server"
             }
         }
 
