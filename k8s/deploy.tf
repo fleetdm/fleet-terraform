@@ -19,6 +19,7 @@ resource "kubernetes_deployment" "fleet" {
         selector {
             match_labels = {
                 app = "fleet"
+                components = "fleet-server"
             }
         }
 
@@ -34,6 +35,7 @@ resource "kubernetes_deployment" "fleet" {
             metadata {
                 labels = {
                     app = "fleet"
+                    component = "fleet-server"
                 }
                 annotations = local.pod_annotations
             }

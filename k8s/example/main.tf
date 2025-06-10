@@ -135,12 +135,16 @@ module "fleet" {
                 path_type = "ImplementationSpecific"
             }]
         }]
-        tls = {
-            secret_name = "chart-example-tls"
-            hosts = [
-                "fleet.localhost.local"
-            ]
-        }
+        /*
+          # Example
+          tls = {
+              secret_name = "chart-example-tls"
+              hosts = [
+                  "fleet.localhost.local"
+              ]
+          }
+        */
+        tls = {}
     }
 
     fleet = {

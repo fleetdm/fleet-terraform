@@ -8,6 +8,7 @@ resource "kubernetes_service" "fleet-service" {
     spec {
         selector = {
             app = "fleet"
+            component = "fleet-server"
         }
 
         dynamic "port" {
