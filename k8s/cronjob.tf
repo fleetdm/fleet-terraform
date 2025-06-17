@@ -104,6 +104,63 @@ resource "kubernetes_cron_job_v1" "fleet_vuln_processing_cron_job" {
                             }
 
                             dynamic "env" {
+                                for_each = local.database.tls.enabled ? [
+                                    { name = "FLEET_MYSQL_TLS_CA", value = "/secrets/mysql/${local.database.tls.ca_cert_key}" },
+                                    { name = "FLEET_MYSQL_TLS_CERT", value = "/secrets/mysql/${local.database.tls.cert_secret_key}" },
+                                    { name = "FLEET_MYSQL_TLS_KEY", value = "/secrets/mysql/${local.database.tls.key_key}" },
+                                    { name = "FLEET_MYSQL_TLS_CONFIG", value = local.database.tls.config },
+                                    { name = "FLEET_MYSQL_TLS_SERVER_NAME", value = local.database.tls.server_name }
+                                ] : []
+
+                                content {
+                                    name = env.value.name
+                                    value = env.value.value
+                                }
+                            }
+
+                            dynamic "env" {
+                                for_each = [ 
+                                    { name = "FLEET_MYSQL_READ_REPLICA_ADDRESS", value = local.database_read_replica.address },
+                                    { name = "FLEET_MYSQL_READ_REPLICA_DATABASE", value = local.database_read_replica.database },
+                                    { name = "FLEET_MYSQL_READ_REPLICA_USERNAME", value = local.database_read_replica.username },
+                                    { name = "FLEET_MYSQL_READ_REPLICA_PASSWORD_PATH", value = local.database_read_replica.password_path },
+                                    { name = "FLEET_MYSQL_READ_REPLICA_MAX_OPEN_CONNS", value = local.database_read_replica.max_open_conns },
+                                    { name = "FLEET_MYSQL_READ_REPLICA_MAX_IDLE_CONNS", value = local.database_read_replica.max_idle_conns },
+                                    { name = "FLEET_MYSQL_READ_REPLICA_CONN_MAX_LIFETIME", value = local.database_read_replica.conn_max_lifetime }
+                                ]
+
+                                content {
+                                    name = env.value.name
+                                    value = env.value.value
+                                }
+                            }
+
+                            env {
+                                name = "FLEET_MYSQL_READ_REPLICA_PASSWORD"
+                                value_from {
+                                    secret_key_ref {
+                                        name = local.database_read_replica.secret_name
+                                        key = local.database_read_replica.password_key
+                                    }
+                                }
+                            }
+
+                            dynamic "env" {
+                                for_each = local.database.tls.enabled ? [
+                                    { name = "FLEET_MYSQL_READ_REPLICA_TLS_CA", value = "/secrets/mysql/${local.database_read_replica.tls.ca_cert_key}" },
+                                    { name = "FLEET_MYSQL_READ_REPLICA_TLS_CERT", value = "/secrets/mysql/${local.database_read_replica.tls.cert_secret_key}" },
+                                    { name = "FLEET_MYSQL_READ_REPLICA_TLS_KEY", value = "/secrets/mysql/${local.database_read_replica.tls.key_key}" },
+                                    { name = "FLEET_MYSQL_READ_REPLICA_TLS_CONFIG", value = local.database_read_replica.tls.config },
+                                    { name = "FLEET_MYSQL_READ_REPLICA_TLS_SERVER_NAME", value = local.database_read_replica.tls.server_name }
+                                ] : []
+
+                                content {
+                                    name = env.value.name
+                                    value = env.value.value
+                                }
+                            }
+
+                            dynamic "env" {
                                 for_each = [ 
                                     { name = "FLEET_REDIS_ADDRESS", value = local.cache.address },
                                     { name = "FLEET_REDIS_DATABASE", value = local.cache.database }

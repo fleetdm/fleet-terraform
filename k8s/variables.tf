@@ -324,6 +324,31 @@ variable "database" {
     description = "Used to configure database specific values for use in the Fleet deployment, migration job, and vuln-processing cron job."
 }
 
+variable "database_read_replica" {
+    type = object({
+        enabled = optional(bool, false)
+        secret_name = optional(string, "mysql")
+        address = optional(string, "mysql-ro:3306")
+        database = optional(string, "fleet")
+        username = optional(string, "fleet-ro")
+        password_key = optional(string, "ro-password")
+        password_path = optional(string,"")
+        max_open_conns = optional(number, 50)
+        max_idle_conns = optional(number, 50)
+        conn_max_lifetime = optional(number, 0)
+
+        tls = object({
+            enabled = optional(bool, false)
+            config = optional(string, "")
+            server_name = optional(string, "")
+            ca_cert_key = optional(string, "")
+            cert_key = optional(string, "")
+            key_key = optional(string, "")
+        })
+    })
+    description = "Used to configure database_read_replica specific values for use in the Fleet deployment and vuln-processing cron job."
+}
+
 variable "cache" {
     type = object({
         enabled = optional(bool, false)

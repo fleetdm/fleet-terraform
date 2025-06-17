@@ -18,6 +18,7 @@ locals {
     fleet = var.fleet
     osquery = var.osquery
     database = var.database
+    database_read_replica = var.database_read_replica
     cache = var.cache
     gke = var.gke
     environment_variables = var.environment_variables
