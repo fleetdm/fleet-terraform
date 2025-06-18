@@ -344,7 +344,7 @@ module "fleet" {
 
     cache = {
         enabled = false
-        address = "fleet-cache-redis-headless:6379"
+        address = "fleet-cache-redis-master:6379"
         database = "0"
         use_password = true
         secret_name = "redis"
