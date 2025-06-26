@@ -6,7 +6,7 @@ No requirements.
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 5.17.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.0.0 |
 
 ## Modules
 
@@ -41,9 +41,9 @@ No requirements.
 | <a name="input_ecs_execution_iam_role_arn"></a> [ecs\_execution\_iam\_role\_arn](#input\_ecs\_execution\_iam\_role\_arn) | n/a | `string` | n/a | yes |
 | <a name="input_ecs_iam_role_arn"></a> [ecs\_iam\_role\_arn](#input\_ecs\_iam\_role\_arn) | n/a | `string` | n/a | yes |
 | <a name="input_idp_metadata_url"></a> [idp\_metadata\_url](#input\_idp\_metadata\_url) | n/a | `string` | n/a | yes |
-| <a name="input_logging_options"></a> [logging\_options](#input\_logging\_options) | n/a | <pre>object({<br>    awslogs-group         = string<br>    awslogs-region        = string<br>    awslogs-stream-prefix = string<br>  })</pre> | n/a | yes |
+| <a name="input_logging_options"></a> [logging\_options](#input\_logging\_options) | n/a | <pre>object({<br/>    awslogs-group         = string<br/>    awslogs-region        = string<br/>    awslogs-stream-prefix = string<br/>  })</pre> | n/a | yes |
 | <a name="input_proxy_containers"></a> [proxy\_containers](#input\_proxy\_containers) | n/a | `number` | `1` | no |
-| <a name="input_saml_auth_proxy_image"></a> [saml\_auth\_proxy\_image](#input\_saml\_auth\_proxy\_image) | n/a | `string` | `"itzg/saml-auth-proxy:1.12.0@sha256:ddff17caa00c1aad64d6c7b2e1d5eb93d97321c34d8ad12a25cfd8ce203db723"` | no |
+| <a name="input_saml_auth_proxy_image"></a> [saml\_auth\_proxy\_image](#input\_saml\_auth\_proxy\_image) | n/a | `string` | `"itzg/saml-auth-proxy:1.16.1@sha256:5be44e1f1232279774be48f6719a6a3ca0b0510bb2459ee6cf9c5015da1ab60c"` | no |
 | <a name="input_security_groups"></a> [security\_groups](#input\_security\_groups) | n/a | `list(string)` | n/a | yes |
 | <a name="input_subnets"></a> [subnets](#input\_subnets) | n/a | `list(string)` | n/a | yes |
 | <a name="input_vpc_id"></a> [vpc\_id](#input\_vpc\_id) | n/a | `string` | n/a | yes |

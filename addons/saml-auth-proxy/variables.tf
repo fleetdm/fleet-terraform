@@ -53,7 +53,7 @@ variable "logging_options" {
 
 variable "saml_auth_proxy_image" {
   type    = string
-  default = "itzg/saml-auth-proxy:1.16.0@sha256:79ff45f45efb4605a250bfcd92651435963477d8a4265b713b016190efa20503"
+  default = "itzg/saml-auth-proxy:1.16.1@sha256:5be44e1f1232279774be48f6719a6a3ca0b0510bb2459ee6cf9c5015da1ab60c"
 }
 
 variable "security_groups" {
