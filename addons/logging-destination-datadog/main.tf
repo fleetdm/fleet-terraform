@@ -9,6 +9,9 @@ resource "aws_s3_bucket_lifecycle_configuration" "datadog-failure" {
   rule {
     status = "Enabled"
     id     = "expire"
+    filter {
+      prefix = ""
+    }
     expiration {
       days = var.s3_bucket_config.expires_days
     }
@@ -98,7 +101,7 @@ resource "aws_kinesis_firehose_delivery_stream" "datadog" {
     }
 
     request_configuration {
-      content_encoding = each.value.compression_type
+      content_encoding = each.value.content_encoding
 
       dynamic "common_attributes" {
         for_each = each.value.common_attributes
