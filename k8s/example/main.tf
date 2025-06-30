@@ -5,7 +5,7 @@ module "fleet" {
     hostname = "fleet.localhost.local"
     replicas = "3"
     image_repository = "fleetdm/fleet"
-    image_tag = "v4.69.0"
+    image_tag = "v4.70.0"
     /*
         Example:
         image_pull_secrets = [

@@ -91,7 +91,7 @@ module "fleet" {
   }
 
   fleet_config = {
-    image = "fleetdm/fleet:v4.69.0"
+    image = "fleetdm/fleet:v4.70.0"
     autoscaling = {
       min_capacity = 2
       max_capacity = 5
