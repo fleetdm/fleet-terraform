@@ -337,14 +337,14 @@ variable "database_read_replica" {
         max_idle_conns = optional(number, 50)
         conn_max_lifetime = optional(number, 0)
 
-        tls = object({
+        tls = optional(object({
             enabled = optional(bool, false)
             config = optional(string, "")
             server_name = optional(string, "")
             ca_cert_key = optional(string, "")
             cert_key = optional(string, "")
             key_key = optional(string, "")
-        })
+        }))
     })
     description = "Used to configure database_read_replica specific values for use in the Fleet deployment and vuln-processing cron job."
 }
