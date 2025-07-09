@@ -5,25 +5,25 @@ variable "customer_prefix" {
 }
 
 variable "ecs_cluster" {
-  type     = string
+  type = string
 }
 
 variable "ecs_execution_iam_role_arn" {
-  type     = string
+  type = string
 }
 
 variable "ecs_iam_role_arn" {
-  type     = string
+  type = string
 }
 
 variable "extra_flags" {
-  type     = list(string)
-  default  = []
+  type    = list(string)
+  default = []
 }
 
 variable "loadtest_containers" {
-  type     = number
-  default  = 1
+  type    = number
+  default = 1
 }
 
 variable "logging_options" {
@@ -35,7 +35,7 @@ variable "logging_options" {
 }
 
 variable "osquery_perf_image" {
-  type     = string
+  type = string
 }
 
 variable "security_groups" {
@@ -44,10 +44,15 @@ variable "security_groups" {
 }
 
 variable "server_url" {
-  type     = string
+  type = string
 }
 
 variable "subnets" {
   type     = list(string)
   nullable = false
+}
+
+variable "enroll_secret" {
+  type    = string
+  default = null
 }
