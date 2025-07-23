@@ -84,17 +84,26 @@ resource "aws_kinesis_firehose_delivery_stream" "snowflake" {
   destination = "snowflake"
 
   snowflake_configuration {
-    account_url        = each.value.account_url
+    account_url        = var.snowflake_shared.account_url
     database           = each.value.databae
-    private_key        = each.value.private_key
-    role_arn           = aws_iam_role.firehose.arn
-    schema             = "example-schema"
-    table              = "example-table"
-    user               = "example-usr"
+    private_key        = var.snowflake_shared.private_key
+    key_passphrase     = var.snowflake_shared.key_passphrase
+    schema             = each.value.schema
+    table              = each.value.table
+    user               = var.snowflake_shared.user
     buffering_size     = each.value.buffering_size
     buffering_interval = each.value.buffering_interval
     role_arn           = aws_iam_role.firehose.arn
     s3_backup_mode     = "FailedDataOnly"
+
+    snowflake_role_configuration {
+      enabled        = var.snowflake_shared.snowflake_role_configuration.enabled
+      snowflake_role = var.snowflake_shared.snowflake_role_configuration.snowflake_role
+    }
+
+    snowflake_vpc_configuration {
+      private_link_vpce_id = var.snowflake_shared.snowflake_vpc_configuration.private_link_vpce_id
+    }
 
     s3_configuration {
       role_arn           = aws_iam_role.firehose.arn
@@ -102,18 +111,6 @@ resource "aws_kinesis_firehose_delivery_stream" "snowflake" {
       buffering_size     = each.value.s3_buffering_size
       buffering_interval = each.value.s3_buffering_interval
       compression_format = var.compression_format
-    }
-
-    request_configuration {
-      content_encoding = each.value.content_encoding
-
-      dynamic "common_attributes" {
-        for_each = each.value.common_attributes
-        content {
-          name  = common_attributes.value.name
-          value = common_attributes.value.value
-        }
-      }
     }
   }
 }

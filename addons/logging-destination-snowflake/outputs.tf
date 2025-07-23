@@ -3,7 +3,7 @@ output "fleet_extra_environment_variables" {
     FLEET_FIREHOSE_STATUS_STREAM    = aws_kinesis_firehose_delivery_stream.snowflake["status"].name
     FLEET_FIREHOSE_RESULT_STREAM    = aws_kinesis_firehose_delivery_stream.snowflake["results"].name
     FLEET_FIREHOSE_AUDIT_STREAM     = aws_kinesis_firehose_delivery_stream.snowflake["audit"].name
-    FLEET_FIREHOSE_REGION           = data.aws_region.current.name
+    FLEET_FIREHOSE_REGION           = data.aws_region.current.region
     FLEET_OSQUERY_STATUS_LOG_PLUGIN = "firehose"
     FLEET_OSQUERY_RESULT_LOG_PLUGIN = "firehose"
     FLEET_ACTIVITY_AUDIT_LOG_PLUGIN = "firehose"
