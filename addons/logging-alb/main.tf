@@ -175,7 +175,7 @@ module "s3_bucket_for_logs" {
         newer_noncurrent_versions = var.s3_newer_noncurrent_versions
         days                      = var.s3_noncurrent_version_expiration_days
       }
-      filter = {}
+      filter = []
     }
   ]
 }
