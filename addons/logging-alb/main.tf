@@ -169,12 +169,13 @@ module "s3_bucket_for_logs" {
       expiration = {
         days = var.s3_expiration_days
         # Always resets to false anyhow showing terraform changes constantly
-        expired_object_delete_marker = false
+        # expired_object_delete_marker = false
       }
       noncurrent_version_expiration = {
         newer_noncurrent_versions = var.s3_newer_noncurrent_versions
         days                      = var.s3_noncurrent_version_expiration_days
       }
+      filter = []
     }
   ]
 }
@@ -227,12 +228,13 @@ module "athena-s3-bucket" {
       expiration = {
         days = var.s3_expiration_days
         # Always resets to false anyhow showing terraform changes constantly
-        expired_object_delete_marker = false
+        # expired_object_delete_marker = false
       }
       noncurrent_version_expiration = {
         newer_noncurrent_versions = var.s3_newer_noncurrent_versions
         days                      = var.s3_noncurrent_version_expiration_days
       }
+      filter = []
     }
   ]
 }

@@ -319,6 +319,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "software_installers" {
       noncurrent_days = 30
     }
     status = "Enabled"
+    filter {}
   }
 }
 
