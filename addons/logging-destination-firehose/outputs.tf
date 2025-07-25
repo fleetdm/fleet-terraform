@@ -6,7 +6,8 @@ output "fleet_extra_environment_variables" {
     FLEET_FIREHOSE_REGION           = data.aws_region.current.region
     FLEET_OSQUERY_STATUS_LOG_PLUGIN = "firehose"
     FLEET_OSQUERY_RESULT_LOG_PLUGIN = "firehose"
-    FLEET_AUDIT_LOG_PLUGIN          = "firehose"
+    FLEET_ACTIVITY_AUDIT_LOG_PLUGIN = "firehose"
+    FLEET_ACTIVITY_ENABLE_AUDIT_LOG = "true"
   }
 }
 
