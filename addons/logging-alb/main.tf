@@ -24,7 +24,7 @@ locals {
       resources = ["*"]
       principals = [{
         type        = "Service"
-        identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
+        identifiers = ["logs.${data.aws_region.current.region}.amazonaws.com"]
       }]
   }], var.extra_kms_policies)
 
