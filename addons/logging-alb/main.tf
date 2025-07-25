@@ -126,7 +126,7 @@ resource "aws_kms_alias" "logs_alias" {
 
 module "s3_bucket_for_logs" {
   source  = "terraform-aws-modules/s3-bucket/aws"
-  version = "5.0.0"
+  version = "4.11.0"
 
   bucket = "${var.prefix}-alb-logs"
 
@@ -177,7 +177,6 @@ module "s3_bucket_for_logs" {
       }
     }
   ]
-  region = data.aws_region.current.region
 }
 
 resource "aws_athena_database" "logs" {
@@ -189,7 +188,7 @@ resource "aws_athena_database" "logs" {
 module "athena-s3-bucket" {
   count   = var.enable_athena == true ? 1 : 0
   source  = "terraform-aws-modules/s3-bucket/aws"
-  version = "5.0.0"
+  version = "4.11.0"
 
   bucket = "${var.prefix}-alb-logs-athena"
 
@@ -236,7 +235,6 @@ module "athena-s3-bucket" {
       }
     }
   ]
-  region = data.aws_region.current.region
 }
 
 resource "aws_athena_workgroup" "logs" {
