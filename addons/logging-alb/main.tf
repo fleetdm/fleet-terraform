@@ -177,6 +177,7 @@ module "s3_bucket_for_logs" {
       }
     }
   ]
+  region = data.aws_region.current.region
 }
 
 resource "aws_athena_database" "logs" {
@@ -235,6 +236,7 @@ module "athena-s3-bucket" {
       }
     }
   ]
+  region = data.aws_region.current.region
 }
 
 resource "aws_athena_workgroup" "logs" {
