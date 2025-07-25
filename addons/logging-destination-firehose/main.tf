@@ -14,6 +14,7 @@ resource "aws_s3_bucket" "osquery-results" { #tfsec:ignore:aws-s3-encryption-cus
 resource "aws_s3_bucket_lifecycle_configuration" "osquery-results" {
   bucket = aws_s3_bucket.osquery-results.bucket
   rule {
+    filter {}
     status = "Enabled"
     id     = "expire"
     expiration {
@@ -52,6 +53,7 @@ resource "aws_s3_bucket" "osquery-status" { #tfsec:ignore:aws-s3-encryption-cust
 resource "aws_s3_bucket_lifecycle_configuration" "osquery-status" {
   bucket = aws_s3_bucket.osquery-status.bucket
   rule {
+    filter {}
     status = "Enabled"
     id     = "expire"
     expiration {
@@ -71,6 +73,45 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "osquery-status" {
 
 resource "aws_s3_bucket_public_access_block" "osquery-status" {
   bucket                  = aws_s3_bucket.osquery-status.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+// Customer keys are not supported in our Fleet Terraforms at the moment. We will evaluate the
+// possibility of providing this capability in the future.
+// No versioning on this bucket is by design.
+// Bucket logging is not supported in our Fleet Terraforms at the moment. It can be enabled by the
+// organizations deploying Fleet, and we will evaluate the possibility of providing this capability
+// in the future.
+resource "aws_s3_bucket" "audit" { #tfsec:ignore:aws-s3-encryption-customer-key:exp:2022-07-01 #tfsec:ignore:aws-s3-enable-versioning #tfsec:ignore:aws-s3-enable-bucket-logging:exp:2022-06-15
+  bucket = var.audit_s3_bucket.name
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "audit" {
+  bucket = aws_s3_bucket.audit.bucket
+  rule {
+    filter {}
+    status = "Enabled"
+    id     = "expire"
+    expiration {
+      days = var.audit_s3_bucket.expires_days
+    }
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "audit" {
+  bucket = aws_s3_bucket.audit.bucket
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "aws:kms"
+    }
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "audit" {
+  bucket                  = aws_s3_bucket.audit.id
   block_public_acls       = true
   block_public_policy     = true
   ignore_public_acls      = true
@@ -107,6 +148,21 @@ data "aws_iam_policy_document" "osquery_status_policy_doc" {
   }
 }
 
+data "aws_iam_policy_document" "audit_policy_doc" {
+  statement {
+    effect = "Allow"
+    actions = [
+      "s3:AbortMultipartUpload",
+      "s3:GetBucketLocation",
+      "s3:ListBucket",
+      "s3:ListBucketMultipartUploads",
+      "s3:PutObject"
+    ]
+    // This bucket is single-purpose and using a wildcard is not problematic
+    resources = [aws_s3_bucket.audit.arn, "${aws_s3_bucket.audit.arn}/*"] #tfsec:ignore:aws-iam-no-policy-wildcards
+  }
+}
+
 resource "aws_iam_policy" "firehose-results" {
   name   = "osquery_results_firehose_policy"
   policy = data.aws_iam_policy_document.osquery_results_policy_doc.json
@@ -117,11 +173,20 @@ resource "aws_iam_policy" "firehose-status" {
   policy = data.aws_iam_policy_document.osquery_status_policy_doc.json
 }
 
+resource "aws_iam_policy" "firehose-audit" {
+  name   = "audit_firehose_policy"
+  policy = data.aws_iam_policy_document.audit_policy_doc.json
+}
+
 resource "aws_iam_role" "firehose-results" {
   assume_role_policy = data.aws_iam_policy_document.osquery_firehose_assume_role.json
 }
 
 resource "aws_iam_role" "firehose-status" {
+  assume_role_policy = data.aws_iam_policy_document.osquery_firehose_assume_role.json
+}
+
+resource "aws_iam_role" "firehose-audit" {
   assume_role_policy = data.aws_iam_policy_document.osquery_firehose_assume_role.json
 }
 
@@ -133,6 +198,11 @@ resource "aws_iam_role_policy_attachment" "firehose-results" {
 resource "aws_iam_role_policy_attachment" "firehose-status" {
   policy_arn = aws_iam_policy.firehose-status.arn
   role       = aws_iam_role.firehose-status.name
+}
+
+resource "aws_iam_role_policy_attachment" "firehose-audit" {
+  policy_arn = aws_iam_policy.firehose-audit.arn
+  role       = aws_iam_role.firehose-audit.name
 }
 
 data "aws_iam_policy_document" "osquery_firehose_assume_role" {
@@ -168,6 +238,17 @@ resource "aws_kinesis_firehose_delivery_stream" "osquery_status" {
   }
 }
 
+resource "aws_kinesis_firehose_delivery_stream" "audit" {
+  name        = var.audit_s3_bucket.name
+  destination = "extended_s3"
+
+  extended_s3_configuration {
+    compression_format = var.compression_format
+    role_arn           = aws_iam_role.firehose-audit.arn
+    bucket_arn         = aws_s3_bucket.audit.arn
+  }
+}
+
 data "aws_iam_policy_document" "firehose-logging" {
   statement {
     actions = [
@@ -175,7 +256,11 @@ data "aws_iam_policy_document" "firehose-logging" {
       "firehose:PutRecord",
       "firehose:PutRecordBatch",
     ]
-    resources = [aws_kinesis_firehose_delivery_stream.osquery_results.arn, aws_kinesis_firehose_delivery_stream.osquery_status.arn]
+    resources = [
+      aws_kinesis_firehose_delivery_stream.osquery_results.arn,
+      aws_kinesis_firehose_delivery_stream.osquery_status.arn,
+      aws_kinesis_firehose_delivery_stream.audit.arn,
+    ]
   }
 }
 
