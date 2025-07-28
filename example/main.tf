@@ -52,7 +52,7 @@ locals {
 }
 
 module "fleet" {
-  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.16.0"
+  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.16.1"
   certificate_arn = module.acm.acm_certificate_arn
 
   vpc = {
@@ -102,7 +102,7 @@ module "fleet" {
       sort_buffer_size = 8388608
     }
     # Uncomment to specify the RDS engine version
-    # engine_version = "8.0.mysql_aurora.3.07.1"
+    # engine_version = "8.0.mysql_aurora.3.08.2"
     # Uncomment to use more or fewer replicas
     # replicas = 2
   }
