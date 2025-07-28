@@ -471,7 +471,7 @@ variable "alb_config" {
     egress_ipv6_cidrs    = optional(list(string), ["::/0"])
     extra_target_groups  = optional(any, [])
     https_listener_rules = optional(any, [])
-    tls_policy           = optional(string, "ELBSecurityPolicy-TLS-1-2-2017-01")
+    tls_policy           = optional(string, "ELBSecurityPolicy-TLS13-1-2-2021-06")
     idle_timeout         = optional(number, 905)
   })
   default = {}
