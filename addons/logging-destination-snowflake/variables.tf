@@ -46,7 +46,7 @@ variable "log_destinations" {
       name                  = "fleet-osquery-results-snowflake"
       database              = "fleet"
       schema                = "fleet-schema"
-      table                 = "osquery-results"
+      table                 = "osquery_results"
       buffering_size        = 2
       buffering_interval    = 60
       s3_buffering_size     = 10
@@ -55,8 +55,8 @@ variable "log_destinations" {
     status = {
       name                  = "fleet-osquery-status-snowflake"
       database              = "fleet"
-      schema                = "fleet-schema"
-      table                 = "osquery-results"
+      schema                = "fleet_schema"
+      table                 = "osquery_status"
       user                  = "fleet"
       buffering_size        = 2
       buffering_interval    = 60
@@ -66,8 +66,8 @@ variable "log_destinations" {
     audit = {
       name                  = "fleet-audit-snowflake"
       database              = "fleet"
-      schema                = "fleet-schema"
-      table                 = "osquery-results"
+      schema                = "fleet_schema"
+      table                 = "fleet_audit"
       buffering_size        = 2
       buffering_interval    = 60
       s3_buffering_size     = 10
