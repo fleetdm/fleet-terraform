@@ -52,7 +52,7 @@ locals {
 }
 
 module "fleet" {
-  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.16.2"
+  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.16.3"
   certificate_arn = module.acm.acm_certificate_arn
 
   vpc = {
@@ -143,7 +143,7 @@ module "migrations" {
 
 # Enable if using s3 for carves
 # module "osquery-carve" {
-#   source = "github.com/fleetdm/fleet-terraform/addons/osquery-carve?depth=1&ref=tf-mod-addon-osquery-carve-v1.1.0"
+#   source = "github.com/fleetdm/fleet-terraform/addons/osquery-carve?depth=1&ref=tf-mod-addon-osquery-carve-v1.1.1"
 #   osquery_carve_s3_bucket = {
 #     name = local.osquery_carve_bucket_name
 #   }
@@ -151,7 +151,7 @@ module "migrations" {
 
 # Uncomment if using firehose logging destination
 # module "firehose-logging" {
-#   source = "github.com/fleetdm/fleet-terraform/addons/logging-destination-firehose?depth=1&ref=tf-mod-addon-logging-destination-firehose-v1.1.1"
+#   source = "github.com/fleetdm/fleet-terraform/addons/logging-destination-firehose?depth=1&ref=tf-mod-addon-logging-destination-firehose-v1.2.1"
 #   osquery_results_s3_bucket = {
 #     name = local.osquery_results_bucket_name
 #   }
