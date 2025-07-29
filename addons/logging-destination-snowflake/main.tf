@@ -101,8 +101,12 @@ resource "aws_kinesis_firehose_delivery_stream" "snowflake" {
       snowflake_role = var.snowflake_shared.snowflake_role_configuration.snowflake_role
     }
 
-    snowflake_vpc_configuration {
-      private_link_vpce_id = var.snowflake_shared.snowflake_vpc_configuration.private_link_vpce_id
+    dynamic "snowflake_vpc_configuration" {
+      for_each = var.snowflake_shared.snowflake_vpc_configuration.private_link_vpce_id == null ? [] : [1]
+
+      content {
+        private_link_vpce_id = var.snowflake_shared.snowflake_vpc_configuration.private_link_vpce_id
+      }
     }
 
     s3_configuration {
