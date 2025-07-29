@@ -62,7 +62,7 @@ variable "certificate_arn" {
 variable "rds_config" {
   type = object({
     name                            = optional(string, "fleet")
-    engine_version                  = optional(string, "8.0.mysql_aurora.3.07.1")
+    engine_version                  = optional(string, "8.0.mysql_aurora.3.08.2")
     instance_class                  = optional(string, "db.t4g.large")
     subnets                         = optional(list(string), [])
     allowed_security_groups         = optional(list(string), [])
@@ -80,10 +80,13 @@ variable "rds_config" {
     skip_final_snapshot             = optional(bool, true)
     backup_retention_period         = optional(number, 7)
     replicas                        = optional(number, 2)
+    serverless                      = optional(bool, false)
+    serverless_min_capacity         = optional(number, 2)
+    serverless_max_capacity         = optional(number, 10)
   })
   default = {
     name                            = "fleet"
-    engine_version                  = "8.0.mysql_aurora.3.07.1"
+    engine_version                  = "8.0.mysql_aurora.3.08.2"
     instance_class                  = "db.t4g.large"
     subnets                         = []
     allowed_security_groups         = []
@@ -101,6 +104,9 @@ variable "rds_config" {
     skip_final_snapshot             = true
     backup_retention_period         = 7
     replicas                        = 2
+    serverless                      = false
+    serverless_min_capacity         = 2
+    serverless_max_capacity         = 10
   }
   description = "The config for the terraform-aws-modules/rds-aurora/aws module"
   nullable    = false

@@ -53,6 +53,11 @@ module "rds" {
 
   instances = local.rds_replica_instances
 
+  serverlessv2_scaling_configuration = var.rds_config.serverless ? {
+    min_capacity = var.rds_config.serverless_min_capacity
+    max_capacity = var.rds_config.serverless_max_capacity
+  } : {}
+
   vpc_id  = var.vpc_config.vpc_id
   subnets = var.rds_config.subnets
 
