@@ -52,7 +52,7 @@ locals {
 }
 
 module "fleet" {
-  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.16.1"
+  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.16.2"
   certificate_arn = module.acm.acm_certificate_arn
 
   vpc = {
