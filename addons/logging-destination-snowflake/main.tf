@@ -85,7 +85,7 @@ resource "aws_kinesis_firehose_delivery_stream" "snowflake" {
 
   snowflake_configuration {
     account_url        = var.snowflake_shared.account_url
-    database           = each.value.databae
+    database           = each.value.database
     private_key        = var.snowflake_shared.private_key
     key_passphrase     = var.snowflake_shared.key_passphrase
     schema             = each.value.schema
