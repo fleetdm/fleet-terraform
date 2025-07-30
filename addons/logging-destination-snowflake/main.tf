@@ -84,6 +84,10 @@ resource "aws_kinesis_firehose_delivery_stream" "snowflake" {
   name        = each.value.name
   destination = "snowflake"
 
+  server_side_encryption {
+    enabled = true
+  }
+
   snowflake_configuration {
     account_url          = var.snowflake_shared.account_url
     database             = each.value.database
