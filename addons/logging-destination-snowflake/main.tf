@@ -84,17 +84,20 @@ resource "aws_kinesis_firehose_delivery_stream" "snowflake" {
   destination = "snowflake"
 
   snowflake_configuration {
-    account_url        = var.snowflake_shared.account_url
-    database           = each.value.database
-    private_key        = var.snowflake_shared.private_key
-    key_passphrase     = var.snowflake_shared.key_passphrase
-    schema             = each.value.schema
-    table              = each.value.table
-    user               = var.snowflake_shared.user
-    buffering_size     = each.value.buffering_size
-    buffering_interval = each.value.buffering_interval
-    role_arn           = aws_iam_role.firehose.arn
-    s3_backup_mode     = "FailedDataOnly"
+    account_url          = var.snowflake_shared.account_url
+    database             = each.value.database
+    private_key          = var.snowflake_shared.private_key
+    key_passphrase       = var.snowflake_shared.key_passphrase
+    schema               = each.value.schema
+    table                = each.value.table
+    user                 = var.snowflake_shared.user
+    buffering_size       = each.value.buffering_size
+    buffering_interval   = each.value.buffering_interval
+    role_arn             = aws_iam_role.firehose.arn
+    s3_backup_mode       = "FailedDataOnly"
+    data_loading_option  = each.value.data_loading_option
+    content_column_name  = each.value.content_column_name
+    metadata_column_name = each.value.metadata_column_name
 
     snowflake_role_configuration {
       enabled        = var.snowflake_shared.snowflake_role_configuration.enabled

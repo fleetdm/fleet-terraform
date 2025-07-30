@@ -40,6 +40,9 @@ variable "log_destinations" {
     buffering_interval    = number
     s3_buffering_size     = number
     s3_buffering_interval = number
+    data_loading_option   = optional(string, "JSON_MAPPING")
+    content_column_name   = optional(string, null)
+    metadata_column_name  = optional(string, null)
   }))
   default = {
     results = {
