@@ -32,17 +32,18 @@ variable "snowflake_shared" {
 variable "log_destinations" {
   description = "A map of configurations for Snowflake Firehose delivery streams."
   type = map(object({
-    name                  = string
-    database              = string
-    schema                = string
-    table                 = string
-    buffering_size        = number
-    buffering_interval    = number
-    s3_buffering_size     = number
-    s3_buffering_interval = number
-    data_loading_option   = optional(string, "JSON_MAPPING")
-    content_column_name   = optional(string, null)
-    metadata_column_name  = optional(string, null)
+    name                   = string
+    database               = string
+    schema                 = string
+    table                  = string
+    buffering_size         = number
+    buffering_interval     = number
+    s3_buffering_size      = number
+    s3_buffering_interval  = number
+    s3_error_output_prefix = optional(string, null)
+    data_loading_option    = optional(string, "JSON_MAPPING")
+    content_column_name    = optional(string, null)
+    metadata_column_name   = optional(string, null)
   }))
   default = {
     results = {

@@ -113,11 +113,12 @@ resource "aws_kinesis_firehose_delivery_stream" "snowflake" {
     }
 
     s3_configuration {
-      role_arn           = aws_iam_role.firehose.arn
-      bucket_arn         = aws_s3_bucket.snowflake-failure.arn
-      buffering_size     = each.value.s3_buffering_size
-      buffering_interval = each.value.s3_buffering_interval
-      compression_format = var.compression_format
+      error_output_prefix = each.value.s3_error_output_prefix
+      role_arn            = aws_iam_role.firehose.arn
+      bucket_arn          = aws_s3_bucket.snowflake-failure.arn
+      buffering_size      = each.value.s3_buffering_size
+      buffering_interval  = each.value.s3_buffering_interval
+      compression_format  = var.compression_format
     }
   }
 }
