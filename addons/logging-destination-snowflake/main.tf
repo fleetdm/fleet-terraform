@@ -130,7 +130,7 @@ data "aws_iam_policy_document" "firehose-logging" {
       "firehose:PutRecord",
       "firehose:PutRecordBatch",
     ]
-    resources = [for stream in aws_kinesis_firehose_delivery_stream.snowflake : stream.arn]
+    resources = [for stream in var.log_destinations : aws_kinesis_firehose_delivery_stream.snowflake[stream].arn]
   }
 }
 
