@@ -49,7 +49,7 @@ variable "log_destinations" {
     results = {
       name                  = "fleet-osquery-results-snowflake"
       database              = "fleet"
-      schema                = "fleet-schema"
+      schema                = "fleet_schema"
       table                 = "osquery_results"
       buffering_size        = 2
       buffering_interval    = 60
