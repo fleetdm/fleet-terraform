@@ -17,6 +17,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "main" {
     expiration {
       days = var.osquery_carve_s3_bucket.expires_days
     }
+    filter {}
   }
 }
 

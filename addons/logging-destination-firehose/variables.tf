@@ -20,6 +20,17 @@ variable "osquery_status_s3_bucket" {
   }
 }
 
+variable "audit_s3_bucket" {
+  type = object({
+    name         = optional(string, "fleet-audit-archive")
+    expires_days = optional(number, 1)
+  })
+  default = {
+    name         = "fleet-audit-archive"
+    expires_days = 1
+  }
+}
+
 variable "compression_format" {
   default = "UNCOMPRESSED"
 }
