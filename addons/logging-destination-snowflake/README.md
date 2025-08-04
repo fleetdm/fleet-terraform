@@ -11,10 +11,7 @@ This addon configures AWS Kinesis Firehose to send Fleet's osquery logs to Snowf
 
 ```hcl
 module "snowflake-logging" {
-  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-snowflake?ref=tf-mod-addon-logging-destination-snowflake-v1.0.0"
-
-module "snowflake-logging" {
-  source = "github.com/fleetdm/fleet-terraform/addons/logging-destination-snowflake?depth=1&ref=logging-destination-snowflake"
+  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-snowflake?depth=1&ref=tf-mod-addon-logging-destination-snowflake-v1.0.0"
 
   s3_bucket_config = {
     name_prefix  = "fleet-snowflake-failure"
