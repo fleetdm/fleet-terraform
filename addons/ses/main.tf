@@ -16,11 +16,15 @@ resource "aws_ses_domain_dkim" "default" {
   domain = aws_ses_domain_identity.default.domain
 }
 
+resource "aws_ses_domain_mail_from" "default" {
+  domain           = aws_ses_domain_identity.default.domain
+  mail_from_domain = "mail.${aws_ses_domain_identity.default.domain}"
+}
+
 ###MX RECORD###
 resource "aws_route53_record" "mx_record" {
-  count   = var.custom_domain != "" ? 1 : 0
   zone_id = var.zone_id
-  name    = var.custom_domain
+  name    = aws_ses_domain_mail_from.default.mail_from_domain
   type    = "MX"
   ttl     = "600"
   records = ["10 feedback-smtp.${data.aws_region.current.region}.amazonses.com"]
@@ -43,7 +47,8 @@ resource "aws_route53_record" "spf_domain" {
   name     = each.key
   type     = "TXT"
   ttl      = "600"
-  records  = each.key == aws_ses_domain_identity.default.domain && var.custom_domain == "" ? flatten([["v=spf1 include:amazonses.com -all"], var.extra_txt_records]) : each.key == aws_ses_domain_identity.default.domain && var.custom_domain != "" ? flatten([["v=spf1 include:${var.custom_domain} -all"], var.extra_txt_records]) : ["v=spf1 include:amazonses.com -all"]
+  #records  = each.key == aws_ses_domain_identity.default.domain ? flatten([["v=spf1 include:amazonses.com -all"], var.extra_txt_records]) : ["v=spf1 include:amazonses.com -all"]
+  records  = each.key == aws_ses_domain_identity.default.domain ? flatten([["v=spf1 include:amazonses.com -all"], var.extra_txt_records]) : ["v=spf1 include:mail.${aws_ses_domain_identity.default.domain} -all"]
 }
 
 resource "aws_route53_record" "dmarc_domain" {

@@ -13,9 +13,3 @@ variable "extra_txt_records" {
   description = "Extra TXT records that have to match the same name as the Fleet instance"
   default     = []
 }
-
-variable "custom_domain" {
-  type        = string
-  description = "Custom domain to add an MX record for."
-  default     = ""
-}
