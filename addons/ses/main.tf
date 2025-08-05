@@ -1,7 +1,7 @@
 locals {
   spf_domains = [
     aws_ses_domain_identity.default.domain,
-    "_amazonses.${aws_ses_domain_identity.default.domain}"
+    # "_amazonses.${aws_ses_domain_identity.default.domain}"
   ]
   dmarc_domain = "_dmarc.${aws_ses_domain_identity.default.domain}"
 }
