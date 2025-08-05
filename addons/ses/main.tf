@@ -6,12 +6,24 @@ locals {
   dmarc_domain = "_dmarc.${aws_ses_domain_identity.default.domain}"
 }
 
+data "aws_region" "current" {}
+
 resource "aws_ses_domain_identity" "default" {
   domain = var.domain
 }
 
 resource "aws_ses_domain_dkim" "default" {
   domain = aws_ses_domain_identity.default.domain
+}
+
+###MX RECORD###
+resource "aws_route53_record" "mx_record" {
+  count   = var.custom_domain != "" ? 1 : 0
+  zone_id = var.zone_id
+  name    = var.custom_domain
+  type    = "CNAME"
+  ttl     = "600"
+  records = ["10 feedback-smtp.${data.aws_region.current.region}.amazonses.com"]
 }
 
 ###DKIM VERIFICATION#######
@@ -25,14 +37,13 @@ resource "aws_route53_record" "amazonses_dkim_record" {
   records = ["${element(aws_ses_domain_dkim.default.dkim_tokens, count.index)}.dkim.amazonses.com"]
 }
 
-
 resource "aws_route53_record" "spf_domain" {
   for_each = toset(local.spf_domains)
   zone_id  = var.zone_id
   name     = each.key
   type     = "TXT"
   ttl      = "600"
-  records  = each.key == aws_ses_domain_identity.default.domain ? flatten([["v=spf1 include:amazonses.com -all"], var.extra_txt_records]) : ["v=spf1 include:amazonses.com -all"]
+  records  = each.key == aws_ses_domain_identity.default.domain && var.custom_domain == "" ? flatten([["v=spf1 include:amazonses.com -all"], var.extra_txt_records]) : each.key == aws_ses_domain_identity.default.domain && var.custom_domain != "" ? flatten([["v=spf1 include:${var.custom_domain} -all"], var.extra_txt_records]) : ["v=spf1 include:amazonses.com -all"]
 }
 
 resource "aws_route53_record" "dmarc_domain" {
