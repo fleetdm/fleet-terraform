@@ -21,7 +21,7 @@ resource "aws_route53_record" "mx_record" {
   count   = var.custom_domain != "" ? 1 : 0
   zone_id = var.zone_id
   name    = var.custom_domain
-  type    = "CNAME"
+  type    = "MX"
   ttl     = "600"
   records = ["10 feedback-smtp.${data.aws_region.current.region}.amazonses.com"]
 }
