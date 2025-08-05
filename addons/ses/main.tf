@@ -21,6 +21,14 @@ resource "aws_ses_domain_mail_from" "default" {
   mail_from_domain = "mail.${aws_ses_domain_identity.default.domain}"
 }
 
+resource "aws_route53_record" "spf_domain_custom_mail_from" {
+  zone_id  = var.zone_id
+  name     = "mail.${aws_ses_domain_identity.default.domain}"
+  type     = "TXT"
+  ttl      = "600"
+  records  = ["v=spf1 include:amazonses.com -all"]
+}
+
 ###MX RECORD###
 resource "aws_route53_record" "mx_record" {
   zone_id = var.zone_id
@@ -47,8 +55,7 @@ resource "aws_route53_record" "spf_domain" {
   name     = each.key
   type     = "TXT"
   ttl      = "600"
-  #records  = each.key == aws_ses_domain_identity.default.domain ? flatten([["v=spf1 include:amazonses.com -all"], var.extra_txt_records]) : ["v=spf1 include:amazonses.com -all"]
-  records  = each.key == aws_ses_domain_identity.default.domain ? flatten([["v=spf1 include:amazonses.com -all"], var.extra_txt_records]) : ["v=spf1 include:mail.${aws_ses_domain_identity.default.domain} -all"]
+  records  = each.key == aws_ses_domain_identity.default.domain ? flatten([["v=spf1 include:amazonses.com -all"], var.extra_txt_records]) : ["v=spf1 include:amazonses.com -all"]
 }
 
 resource "aws_route53_record" "dmarc_domain" {
