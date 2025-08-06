@@ -15,9 +15,13 @@ variable "extra_txt_records" {
 }
 
 variable "custom_mail_from" {
-  type        = object({
-    enabled   = optional(bool, false)
+  type = object({
+    enabled       = optional(bool, false)
     domain_prefix = optional(string, "")
   })
+  default = {
+    enabled       = false
+    domain_prefix = ""
+  }
   description = "Custom MAIL FROM domain settings"
 }
