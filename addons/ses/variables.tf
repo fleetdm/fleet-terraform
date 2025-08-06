@@ -20,5 +20,4 @@ variable "custom_mail_from" {
     domain_prefix = optional(string, "")
   })
   description = "Custom MAIL FROM domain settings"
-  default     = ""
 }
