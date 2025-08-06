@@ -1,9 +1,9 @@
 locals {
-  spf_domains = concat([
+  spf_domains = compact(concat([
     aws_ses_domain_identity.default.domain,
     "_amazonses.${aws_ses_domain_identity.default.domain}",
-    var.custom_mail_from.enabled == true ? "${var.custom_mail_from.domain_prefix}.${aws_ses_domain_identity.default.domain}" : ""
-  ])
+    var.custom_mail_from.enabled == true ? "${var.custom_mail_from.domain_prefix}.${aws_ses_domain_identity.default.domain}" : null
+  ]))
   dmarc_domain = "_dmarc.${aws_ses_domain_identity.default.domain}"
 }
 
