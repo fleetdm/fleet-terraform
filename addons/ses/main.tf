@@ -1,8 +1,9 @@
 locals {
-  spf_domains = [
+  spf_domains = concat([
     aws_ses_domain_identity.default.domain,
-    "_amazonses.${aws_ses_domain_identity.default.domain}"
-  ]
+    "_amazonses.${aws_ses_domain_identity.default.domain}",
+    var.custom_mail_from.enabled == true ? var.custom_mail_from.domain_prefix : null
+  ])
   dmarc_domain = "_dmarc.${aws_ses_domain_identity.default.domain}"
 }
 
@@ -16,23 +17,18 @@ resource "aws_ses_domain_dkim" "default" {
   domain = aws_ses_domain_identity.default.domain
 }
 
+### CUSTOM MAIL FROM SETTINGS ###
+
 resource "aws_ses_domain_mail_from" "default" {
+  count            = var.custom_mail_from.enabled == true ? 1 : 0
   domain           = aws_ses_domain_identity.default.domain
-  mail_from_domain = "mail.${aws_ses_domain_identity.default.domain}"
+  mail_from_domain = "${var.custom_mail_from.domain_prefix}.${aws_ses_domain_identity.default.domain}"
 }
 
-resource "aws_route53_record" "spf_domain_custom_mail_from" {
-  zone_id  = var.zone_id
-  name     = "mail.${aws_ses_domain_identity.default.domain}"
-  type     = "TXT"
-  ttl      = "600"
-  records  = ["v=spf1 include:amazonses.com -all"]
-}
-
-###MX RECORD###
 resource "aws_route53_record" "mx_record" {
+  count   = var.custom_mail_from.enabled == true ? 1 : 0
   zone_id = var.zone_id
-  name    = aws_ses_domain_mail_from.default.mail_from_domain
+  name    = aws_ses_domain_mail_from.default.mail_from_domain[count.index]
   type    = "MX"
   ttl     = "600"
   records = ["10 feedback-smtp.${data.aws_region.current.region}.amazonses.com"]
