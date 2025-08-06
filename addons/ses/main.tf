@@ -28,7 +28,7 @@ resource "aws_ses_domain_mail_from" "default" {
 resource "aws_route53_record" "mx_record" {
   count   = var.custom_mail_from.enabled == true ? 1 : 0
   zone_id = var.zone_id
-  name    = aws_ses_domain_mail_from.default.mail_from_domain[count.index]
+  name    = aws_ses_domain_mail_from.default[count.index].mail_from_domain
   type    = "MX"
   ttl     = "600"
   records = ["10 feedback-smtp.${data.aws_region.current.region}.amazonses.com"]
