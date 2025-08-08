@@ -148,7 +148,7 @@ resource "aws_ecs_task_definition" "saml_auth_proxy" {
           logDriver = "awslogs"
           options = var.logging_options != null ? var.logging_options : {
             awslogs-group         = "${var.customer_prefix}-saml-auth-proxy"
-            awslogs-region        = data.aws_region.current.name
+            awslogs-region        = data.aws_region.current.region
             awslogs-stream-prefix = "saml-auth-proxy"
           }
         }

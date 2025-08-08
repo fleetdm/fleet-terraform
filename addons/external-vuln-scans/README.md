@@ -16,7 +16,7 @@ No requirements.
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 5.11.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.8.0 |
 
 ## Modules
 
@@ -34,7 +34,7 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| <a name="input_awslogs_config"></a> [awslogs\_config](#input\_awslogs\_config) | n/a | <pre>object({<br>    group  = string<br>    region = string<br>    prefix = string<br>  })</pre> | n/a | yes |
+| <a name="input_awslogs_config"></a> [awslogs\_config](#input\_awslogs\_config) | n/a | <pre>object({<br/>    group  = string<br/>    region = string<br/>    prefix = string<br/>  })</pre> | n/a | yes |
 | <a name="input_customer_prefix"></a> [customer\_prefix](#input\_customer\_prefix) | n/a | `string` | `"fleet"` | no |
 | <a name="input_ecs_cluster"></a> [ecs\_cluster](#input\_ecs\_cluster) | The ecs cluster module that is created by the byo-db module | `any` | n/a | yes |
 | <a name="input_execution_iam_role_arn"></a> [execution\_iam\_role\_arn](#input\_execution\_iam\_role\_arn) | The ARN of the fleet execution role, this is necessary to pass role from ecs events | `any` | n/a | yes |

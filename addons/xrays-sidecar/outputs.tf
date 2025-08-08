@@ -20,7 +20,7 @@ output "fleet_sidecars" {
         "options" : {
           "awslogs-create-group" : "True",
           "awslogs-group" : "/ecs/ecs-aws-otel-sidecar-collector",
-          "awslogs-region" : data.aws_region.current.name,
+          "awslogs-region" : data.aws_region.current.region,
           "awslogs-stream-prefix" : "ecs"
         }
       }

@@ -229,7 +229,7 @@ resource "aws_ecs_task_definition" "mdmproxy" {
         logDriver = "awslogs"
         options = {
           awslogs-group         = var.awslogs_config.group
-          awslogs-region        = var.awslogs_config.region == null ? data.aws_region.current.name : var.awslogs_config.region
+          awslogs-region        = var.awslogs_config.region == null ? data.aws_region.current.region : var.awslogs_config.region
           awslogs-stream-prefix = "${var.awslogs_config.prefix}-mdmproxy"
         }
       }
