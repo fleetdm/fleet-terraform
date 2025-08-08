@@ -121,7 +121,7 @@ No requirements.
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | n/a |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.8.0 |
 
 ## Modules
 
@@ -149,11 +149,11 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| <a name="input_compression_format"></a> [compression\_format](#input\_compression\_format) | Compression format for the Firehose delivery stream | `string` | `"GZIP"` | no |
+| <a name="input_compression_format"></a> [compression\_format](#input\_compression\_format) | Compression format for the Firehose delivery stream | `string` | `"UNCOMPRESSED"` | no |
 | <a name="input_datadog_api_key"></a> [datadog\_api\_key](#input\_datadog\_api\_key) | Datadog API key for authentication | `string` | n/a | yes |
-| <a name="input_datadog_url"></a> [datadog\_url](#input\_datadog\_url) | Datadog HTTP API endpoint URL | `string` | `"https://aws-kinesis-http-intake.logs.datadoghq.com/v1/input"` | no |
-| <a name="input_log_destinations"></a> [log\_destinations](#input\_log\_destinations) | A map of configurations for Datadog Firehose delivery streams. | <pre>map(object({<br>    name                  = string<br>    buffering_size        = number<br>    buffering_interval    = number<br>    s3_buffering_size     = number<br>    s3_buffering_interval = number<br>    compression_type      = string<br>    common_attributes = optional(list(object({<br>      name  = string<br>      value = string<br>    })), [])<br>  }))</pre> | <pre>{<br>  "audit": {<br>    "buffering_interval": 60,<br>    "buffering_size": 1,<br>    "common_attributes": [],<br>    "compression_type": "GZIP",<br>    "name": "fleet-audit-datadog",<br>    "s3_buffering_interval": 400,<br>    "s3_buffering_size": 10<br>  },<br>  "results": {<br>    "buffering_interval": 60,<br>    "buffering_size": 1,<br>    "common_attributes": [],<br>    "compression_type": "GZIP",<br>    "name": "fleet-osquery-results-datadog",<br>    "s3_buffering_interval": 400,<br>    "s3_buffering_size": 10<br>  },<br>  "status": {<br>    "buffering_interval": 60,<br>    "buffering_size": 1,<br>    "common_attributes": [],<br>    "compression_type": "GZIP",<br>    "name": "fleet-osquery-status-datadog",<br>    "s3_buffering_interval": 400,<br>    "s3_buffering_size": 10<br>  }<br>}</pre> | no |
-| <a name="input_s3_bucket_config"></a> [s3\_bucket\_config](#input\_s3\_bucket\_config) | Configuration for the S3 bucket used to store failed Datadog delivery attempts | <pre>object({<br>    name_prefix  = optional(string, "fleet-datadog-failure")<br>    expires_days = optional(number, 1)<br>  })</pre> | <pre>{<br>  "expires_days": 1,<br>  "name_prefix": "fleet-datadog-failure"<br>}</pre> | no |
+| <a name="input_datadog_url"></a> [datadog\_url](#input\_datadog\_url) | Datadog HTTP API endpoint URL | `string` | n/a | yes |
+| <a name="input_log_destinations"></a> [log\_destinations](#input\_log\_destinations) | A map of configurations for Datadog Firehose delivery streams. | <pre>map(object({<br/>    name                  = string<br/>    buffering_size        = number<br/>    buffering_interval    = number<br/>    s3_buffering_size     = number<br/>    s3_buffering_interval = number<br/>    content_encoding      = string<br/>    common_attributes = optional(list(object({<br/>      name  = string<br/>      value = string<br/>    })), [])<br/>  }))</pre> | <pre>{<br/>  "audit": {<br/>    "buffering_interval": 60,<br/>    "buffering_size": 2,<br/>    "common_attributes": [],<br/>    "content_encoding": "NONE",<br/>    "name": "fleet-audit-datadog",<br/>    "s3_buffering_interval": 400,<br/>    "s3_buffering_size": 10<br/>  },<br/>  "results": {<br/>    "buffering_interval": 60,<br/>    "buffering_size": 2,<br/>    "common_attributes": [],<br/>    "content_encoding": "NONE",<br/>    "name": "fleet-osquery-results-datadog",<br/>    "s3_buffering_interval": 400,<br/>    "s3_buffering_size": 10<br/>  },<br/>  "status": {<br/>    "buffering_interval": 60,<br/>    "buffering_size": 2,<br/>    "common_attributes": [],<br/>    "content_encoding": "NONE",<br/>    "name": "fleet-osquery-status-datadog",<br/>    "s3_buffering_interval": 400,<br/>    "s3_buffering_size": 10<br/>  }<br/>}</pre> | no |
+| <a name="input_s3_bucket_config"></a> [s3\_bucket\_config](#input\_s3\_bucket\_config) | Configuration for the S3 bucket used to store failed Datadog delivery attempts | <pre>object({<br/>    name_prefix  = optional(string, "fleet-datadog-failure")<br/>    expires_days = optional(number, 1)<br/>  })</pre> | <pre>{<br/>  "expires_days": 1,<br/>  "name_prefix": "fleet-datadog-failure"<br/>}</pre> | no |
 
 ## Outputs
 
