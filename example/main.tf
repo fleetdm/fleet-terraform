@@ -15,8 +15,14 @@ terraform {
   }
 }
 
+# Configure the AWS Provider
+provider "aws" {
+  region = "us-east-2"
+}
+
 locals {
-  # Change these to match your environment.
+  # Change these to match your environment. Create or use a fully
+  # qualified domain (fqdn) and a VPC in AWS.
   domain_name = "fleet.example.com"
   vpc_name    = "fleet-vpc"
   # This creates a subdomain in AWS to manage DNS Records.
