@@ -21,3 +21,12 @@ variable "allowed_addresses" {
   type    = list(string)
   default = []
 }
+
+variable "bypass_urls" {
+  description = <<EOT
+Optional list of regex patterns for URL paths that bypass the IP allowlist WAF rule.
+The patterns must be valid AWS WAF regex strings.
+EOT
+  type    = list(string)
+  default = []
+}

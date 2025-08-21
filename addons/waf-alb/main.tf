@@ -80,8 +80,30 @@ resource "aws_wafv2_rule_group" "allowed" {
     }
 
     statement {
-      ip_set_reference_statement {
-        arn = aws_wafv2_ip_set.allowed[0].arn
+      or_statement {
+        # Dynamic bypass regex statements
+        dynamic "statement" {
+          for_each = length(var.bypass_urls) > 0 ? [1] : []
+          content {
+            regex_pattern_set_reference_statement {
+              arn = aws_wafv2_regex_pattern_set.bypass_urls[0].arn
+
+              field_to_match {
+                uri_path {}
+              }
+
+              text_transformation {
+                priority = 0
+                type     = "NONE"
+              }
+            }
+          }
+        }
+        statement {
+          ip_set_reference_statement {
+            arn = aws_wafv2_ip_set.allowed[0].arn
+          }
+        }
       }
     }
 
@@ -150,6 +172,20 @@ resource "aws_wafv2_ip_set" "allowed" {
   addresses          = var.allowed_addresses
 }
 
+resource "aws_wafv2_regex_pattern_set" "bypass_urls" {
+  # Only works for allowlists
+  count = length(var.bypass_urls) > 0 && var.waf_type == "allowlist" ? 1 : 0
+
+  name  = var.name
+  scope = "REGIONAL"
+
+  dynamic "regular_expression" {
+    for_each     = toset(var.bypass_urls)
+    content {
+      regex_string = regular_expression.value
+    }
+  }
+}
 
 resource "aws_wafv2_web_acl_association" "main" {
   resource_arn = var.lb_arn
