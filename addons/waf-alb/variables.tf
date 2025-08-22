@@ -22,6 +22,12 @@ variable "allowed_addresses" {
   default = []
 }
 
+variable "capacity" {
+  description = "The capacity required to handle the rules."
+  type        = number
+  default     = 2
+}
+
 variable "bypass_urls" {
   description = <<EOT
 Optional list of regex patterns for URL paths that bypass the IP allowlist WAF rule.

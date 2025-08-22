@@ -6,7 +6,7 @@ resource "aws_wafv2_rule_group" "blocked" {
   count    = var.waf_type == "blocklist" ? 1 : 0
   name     = var.name
   scope    = "REGIONAL"
-  capacity = 2
+  capacity = var.capacity
 
   rule {
     name     = "countries"
@@ -69,7 +69,7 @@ resource "aws_wafv2_rule_group" "allowed" {
   count    = var.waf_type == "allowlist" ? 1 : 0
   name     = var.name
   scope    = "REGIONAL"
-  capacity = 2
+  capacity = var.capacity
 
   rule {
     name     = "specific"
