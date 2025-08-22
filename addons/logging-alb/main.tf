@@ -28,6 +28,7 @@ locals {
       }]
   }], var.extra_kms_policies)
 
+  s3_path_prefix = coalesce(var.alt_path_prefix, var.prefix)
 }
 
 
@@ -263,7 +264,7 @@ resource "aws_glue_catalog_table" "partitioned_alb_logs" {
   table_type    = "EXTERNAL_TABLE"
 
   storage_descriptor {
-    location      = "s3://${module.s3_bucket_for_logs.s3_bucket_id}/${var.prefix}/AWSLogs/${data.aws_caller_identity.current.account_id}/elasticloadbalancing/${data.aws_region.current.region}/"
+    location      = "s3://${module.s3_bucket_for_logs.s3_bucket_id}/${local.s3_path_prefix}/AWSLogs/${data.aws_caller_identity.current.account_id}/elasticloadbalancing/${data.aws_region.current.region}/"
     input_format  = "org.apache.hadoop.mapred.TextInputFormat"
     output_format = "org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat"
 
@@ -427,6 +428,6 @@ resource "aws_glue_catalog_table" "partitioned_alb_logs" {
     "projection.day.format"        = "yyyy/MM/dd"
     "projection.day.interval"      = "1"
     "projection.day.interval.unit" = "DAYS"
-    "storage.location.template"    = "s3://${module.s3_bucket_for_logs.s3_bucket_id}/${var.prefix}/AWSLogs/${data.aws_caller_identity.current.account_id}/elasticloadbalancing/${data.aws_region.current.region}/${"$"}{day}"
+    "storage.location.template"    = "s3://${module.s3_bucket_for_logs.s3_bucket_id}/${local.s3_path_prefix}/AWSLogs/${data.aws_caller_identity.current.account_id}/elasticloadbalancing/${data.aws_region.current.region}/${"$"}{day}"
   }
 }

@@ -3,6 +3,12 @@ variable "prefix" {
   default = "fleet"
 }
 
+variable "alt_path_prefix" {
+  description = "Used if the prefix inside of the s3 bucket doesn't match the name of the bucket prefix"
+  type        = string
+  default     = null
+}
+
 variable "enable_athena" {
   type    = bool
   default = true
