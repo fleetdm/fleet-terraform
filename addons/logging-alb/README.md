@@ -52,7 +52,7 @@ No requirements.
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.8.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.9.0 |
 
 ## Modules
 
@@ -67,6 +67,7 @@ No requirements.
 |------|------|
 | [aws_athena_database.logs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/athena_database) | resource |
 | [aws_athena_workgroup.logs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/athena_workgroup) | resource |
+| [aws_glue_catalog_table.partitioned_alb_logs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/glue_catalog_table) | resource |
 | [aws_kms_alias.logs_alias](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kms_alias) | resource |
 | [aws_kms_key.logs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kms_key) | resource |
 | [aws_caller_identity.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/caller_identity) | data source |
@@ -79,6 +80,7 @@ No requirements.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
+| <a name="input_alt_path_prefix"></a> [alt\_path\_prefix](#input\_alt\_path\_prefix) | Used if the prefix inside of the s3 bucket doesn't match the name of the bucket prefix | `string` | `null` | no |
 | <a name="input_enable_athena"></a> [enable\_athena](#input\_enable\_athena) | n/a | `bool` | `true` | no |
 | <a name="input_extra_kms_policies"></a> [extra\_kms\_policies](#input\_extra\_kms\_policies) | n/a | `list(any)` | `[]` | no |
 | <a name="input_extra_s3_athena_policies"></a> [extra\_s3\_athena\_policies](#input\_extra\_s3\_athena\_policies) | n/a | `list(any)` | `[]` | no |
