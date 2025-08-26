@@ -322,5 +322,6 @@ variable "alb_config" {
     https_listener_rules = optional(any, [])
     tls_policy           = optional(string, "ELBSecurityPolicy-TLS13-1-2-2021-06")
     idle_timeout         = optional(number, 905)
+    internal             = optional(bool, false)
   })
 }
