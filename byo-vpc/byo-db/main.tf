@@ -95,7 +95,12 @@ module "alb" {
         target_group_key = "tg-0"
       }
       rules = { for idx, rule in var.alb_config.https_listener_rules :
-        "rule-${idx}" => rule
+        "rule-${idx}" => merge(rule, {
+          conditions = [for condition in rule.conditions : {
+            for k, v in condition :
+            "${trimsuffix(k, "s")}" => { values = v }
+          }]
+        })
       }
     }
   }
