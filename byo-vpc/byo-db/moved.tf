@@ -118,4 +118,52 @@ moved {
   to   = module.alb.aws_lb_listener_rule.this["https/rule-19"]
 }
 
+moved {
+  from = module.alb.aws_lb_listener_rule.https_listener_rule[20]
+  to   = module.alb.aws_lb_listener_rule.this["https/rule-20"]
+}
 
+moved {
+  from = module.alb.aws_lb_listener_rule.https_listener_rule[21]
+  to   = module.alb.aws_lb_listener_rule.this["https/rule-21"]
+}
+
+moved {
+  from = module.alb.aws_lb_listener_rule.https_listener_rule[22]
+  to   = module.alb.aws_lb_listener_rule.this["https/rule-22"]
+}
+
+moved {
+  from = module.alb.aws_lb_listener_rule.https_listener_rule[23]
+  to   = module.alb.aws_lb_listener_rule.this["https/rule-23"]
+}
+
+moved {
+  from = module.alb.aws_lb_listener_rule.https_listener_rule[24]
+  to   = module.alb.aws_lb_listener_rule.this["https/rule-24"]
+}
+
+moved {
+  from = module.alb.aws_lb_listener_rule.https_listener_rule[25]
+  to   = module.alb.aws_lb_listener_rule.this["https/rule-25"]
+}
+
+moved {
+  from = module.alb.aws_lb_listener_rule.https_listener_rule[26]
+  to   = module.alb.aws_lb_listener_rule.this["https/rule-26"]
+}
+
+moved {
+  from = module.alb.aws_lb_listener_rule.https_listener_rule[27]
+  to   = module.alb.aws_lb_listener_rule.this["https/rule-27"]
+}
+
+moved {
+  from = module.alb.aws_lb_listener_rule.https_listener_rule[28]
+  to   = module.alb.aws_lb_listener_rule.this["https/rule-28"]
+}
+
+moved {
+  from = module.alb.aws_lb_listener_rule.https_listener_rule[29]
+  to   = module.alb.aws_lb_listener_rule.this["https/rule-29"]
+}
