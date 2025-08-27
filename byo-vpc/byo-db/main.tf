@@ -145,23 +145,3 @@ resource "aws_security_group" "alb" {
     ipv6_cidr_blocks = var.alb_config.egress_ipv6_cidrs
   }
 }
-
-moved {
-  from = module.alb.aws_lb_listener.frontend_http_tcp[0]
-  to   = module.alb.aws_lb_listener.this["http"]
-}
-
-moved {
-  from = module.alb.aws_lb_listener.frontend_https[0]
-  to   = module.alb.aws_lb_listener.this["https"]
-}
-
-moved {
-  from = module.alb.aws_lb_target_group.main[0]
-  to   = module.alb.aws_lb_target_group.this["tg-0"]
-}
-
-moved {
-  from = module.alb.aws_lb_target_group.main[1]
-  to   = module.alb.aws_lb_target_group.this["tg-1"]
-}
