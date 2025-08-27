@@ -6,14 +6,14 @@ moved {
 moved {
   from = module.alb.aws_lb_listener.frontend_https[0]
   to   = module.alb.aws_lb_listener.this["https"]
-} 
-  
+}
+
 moved {
   from = module.alb.aws_lb_target_group.main[0]
   to   = module.alb.aws_lb_target_group.this["tg-0"]
-} 
-  
-moved {                                 
+}
+
+moved {
   from = module.alb.aws_lb_target_group.main[1]
   to   = module.alb.aws_lb_target_group.this["tg-1"]
 }
