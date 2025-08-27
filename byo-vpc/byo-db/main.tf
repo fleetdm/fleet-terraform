@@ -32,7 +32,9 @@ locals {
     }
   ]
   target_groups = { for idx, tg in concat(local.fleet_target_group, var.alb_config.extra_target_groups) :
-    "tg-${idx}" => tg
+    "tg-${idx}" => merge(tg, {
+      create_attachment = try(tg.create_attachment, false)
+    })
   }
 }
 
@@ -100,6 +102,9 @@ module "alb" {
             for k, v in condition :
             "${trimsuffix(k, "s")}" => { values = v }
           }]
+          actions = [for action in rule.actions : merge(action, {
+            target_group_key = try(action.target_group_key, try("tg-${action.target_group_index}", null))
+          })]
         })
       }
     }
@@ -154,4 +159,9 @@ moved {
 moved {
   from = module.alb.aws_lb_target_group.main[0]
   to   = module.alb.aws_lb_target_group.this["tg-0"]
+}
+
+moved {
+  from = module.alb.aws_lb_target_group.main[1]
+  to   = module.alb.aws_lb_target_group.this["tg-1"]
 }
