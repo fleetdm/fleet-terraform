@@ -76,6 +76,8 @@ module "alb" {
 
   target_groups = local.target_groups
 
+  xff_header_processing_mode = var.alb_config.xff_header_processing_mode
+
   listeners = {
     http = {
       port        = 80
@@ -87,7 +89,7 @@ module "alb" {
         status_code = "HTTP_301"
       }
     }
-    https = {
+    https = merge({
       # Require TLS 1.2 as earlier versions are insecure
       ssl_policy      = var.alb_config.tls_policy
       port            = 443
@@ -107,7 +109,7 @@ module "alb" {
           })]
         })
       }
-    }
+    }, var.alb_config.https_overrides)
   }
   tags = {
     Name = var.alb_config.name

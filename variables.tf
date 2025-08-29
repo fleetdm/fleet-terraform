@@ -462,17 +462,19 @@ variable "migration_config" {
 
 variable "alb_config" {
   type = object({
-    name                 = optional(string, "fleet")
-    security_groups      = optional(list(string), [])
-    access_logs          = optional(map(string), {})
-    allowed_cidrs        = optional(list(string), ["0.0.0.0/0"])
-    allowed_ipv6_cidrs   = optional(list(string), ["::/0"])
-    egress_cidrs         = optional(list(string), ["0.0.0.0/0"])
-    egress_ipv6_cidrs    = optional(list(string), ["::/0"])
-    extra_target_groups  = optional(any, [])
-    https_listener_rules = optional(any, [])
-    tls_policy           = optional(string, "ELBSecurityPolicy-TLS13-1-2-2021-06")
-    idle_timeout         = optional(number, 905)
+    name                       = optional(string, "fleet")
+    security_groups            = optional(list(string), [])
+    access_logs                = optional(map(string), {})
+    allowed_cidrs              = optional(list(string), ["0.0.0.0/0"])
+    allowed_ipv6_cidrs         = optional(list(string), ["::/0"])
+    egress_cidrs               = optional(list(string), ["0.0.0.0/0"])
+    egress_ipv6_cidrs          = optional(list(string), ["::/0"])
+    extra_target_groups        = optional(any, [])
+    https_listener_rules       = optional(any, [])
+    https_overrides            = optional(any, {})
+    xff_header_processing_mode = optional(string, null)
+    tls_policy                 = optional(string, "ELBSecurityPolicy-TLS13-1-2-2021-06")
+    idle_timeout               = optional(number, 905)
   })
   default = {}
 }
