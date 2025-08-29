@@ -1,7 +1,7 @@
 locals {
   fleet_config = merge(var.fleet_config, {
     loadbalancer = {
-      arn = module.alb.target_group_arns[0]
+      arn = module.alb.target_groups["tg-0"].arn
     },
     networking = merge(var.fleet_config.networking, {
       subnets         = var.fleet_config.networking.subnets
@@ -14,7 +14,28 @@ locals {
       }
     })
   })
-
+  fleet_target_group = [
+    {
+      name              = var.alb_config.name
+      backend_protocol  = "HTTP"
+      backend_port      = 80
+      target_type       = "ip"
+      create_attachment = false
+      health_check = {
+        path                = "/healthz"
+        matcher             = "200"
+        timeout             = 10
+        interval            = 15
+        healthy_threshold   = 5
+        unhealthy_threshold = 5
+      }
+    }
+  ]
+  target_groups = { for idx, tg in concat(local.fleet_target_group, var.alb_config.extra_target_groups) :
+    "tg-${idx}" => merge(tg, {
+      create_attachment = try(tg.create_attachment, false)
+    })
+  }
 }
 
 module "ecs" {
@@ -41,7 +62,7 @@ module "cluster" {
 
 module "alb" {
   source  = "terraform-aws-modules/alb/aws"
-  version = "8.3.0"
+  version = "9.17.0"
 
   name = var.alb_config.name
 
@@ -53,39 +74,12 @@ module "alb" {
   access_logs     = var.alb_config.access_logs
   idle_timeout    = var.alb_config.idle_timeout
 
-  target_groups = concat([
-    {
-      name             = var.alb_config.name
-      backend_protocol = "HTTP"
-      backend_port     = 80
-      target_type      = "ip"
-      health_check = {
-        path                = "/healthz"
-        matcher             = "200"
-        timeout             = 10
-        interval            = 15
-        healthy_threshold   = 5
-        unhealthy_threshold = 5
-      }
-    }
-  ], var.alb_config.extra_target_groups)
+  target_groups = local.target_groups
 
-  # Require TLS 1.2 as earlier versions are insecure
-  listener_ssl_policy_default = var.alb_config.tls_policy
+  xff_header_processing_mode = var.alb_config.xff_header_processing_mode
 
-  https_listeners = [
-    {
-      port               = 443
-      protocol           = "HTTPS"
-      certificate_arn    = var.alb_config.certificate_arn
-      target_group_index = 0
-    }
-  ]
-
-  https_listener_rules = var.alb_config.https_listener_rules
-
-  http_tcp_listeners = [
-    {
+  listeners = {
+    http = {
       port        = 80
       protocol    = "HTTP"
       action_type = "redirect"
@@ -95,7 +89,31 @@ module "alb" {
         status_code = "HTTP_301"
       }
     }
-  ]
+    https = merge({
+      # Require TLS 1.2 as earlier versions are insecure
+      ssl_policy      = var.alb_config.tls_policy
+      port            = 443
+      protocol        = "HTTPS"
+      certificate_arn = var.alb_config.certificate_arn
+      forward = {
+        target_group_key = "tg-0"
+      }
+      rules = { for idx, rule in var.alb_config.https_listener_rules :
+        "rule-${idx}" => merge(rule, {
+          conditions = [for condition in rule.conditions : {
+            for k, v in condition :
+            "${trimsuffix(k, "s")}" => { values = v }
+          }]
+          actions = [for action in rule.actions : merge(action, {
+            target_group_key = try(action.target_group_key, try("tg-${action.target_group_index}", null))
+          })]
+        })
+      }
+    }, var.alb_config.https_overrides)
+  }
+  tags = {
+    Name = var.alb_config.name
+  }
 }
 
 resource "aws_security_group" "alb" {
