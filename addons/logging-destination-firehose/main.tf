@@ -20,7 +20,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "osquery-results" {
     expiration {
       days = var.osquery_results_s3_bucket.expires_days
     }
-    filter {}
   }
 }
 
@@ -60,7 +59,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "osquery-status" {
     expiration {
       days = var.osquery_status_s3_bucket.expires_days
     }
-    filter {}
   }
 }
 
