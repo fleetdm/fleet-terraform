@@ -63,12 +63,14 @@ module "fleet-service" {
   }
   ingress = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
   timeout = "300s"
+
   service_scaling = {
-    min_instance_count = 0
+    min_instance_count = var.fleet_config.min_instance_count
   }
+
   template_scaling = {
-    min_instance_count = 0
-    max_instance_count = 0
+    min_instance_count = 0 # Google suggests using service-level minimum instance count
+    max_instance_count = var.fleet_config.max_instance_count
   }
 
   containers = [

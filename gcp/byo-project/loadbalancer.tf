@@ -26,9 +26,9 @@ module "fleet_lb" {
   # Backend Configuration
   backends = {
     default = {
-      description             = "Backend for Fleet Cloud Run service"
-      enable_cdn              = false # Set to true if you want Cloud CDN
-      protocol                = "HTTP"
+      description = "Backend for Fleet Cloud Run service"
+      enable_cdn  = false # Set to true if you want Cloud CDN
+      protocol    = "HTTP"
       groups = [
         {
           group = google_compute_region_network_endpoint_group.neg.id
