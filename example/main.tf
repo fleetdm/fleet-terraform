@@ -10,7 +10,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "5.36.0"
+      version = "6.11.0"
     }
   }
 }
@@ -233,7 +233,7 @@ module "fleet" {
 # doesn't directly support all the features required.  the aws cli is invoked via a null-resource.
 
 module "migrations" {
-  source                   = "github.com/fleetdm/fleet-terraform/addons/migrations?depth=1&ref=tf-mod-addon-migrations-v2.0.2"
+  source                   = "github.com/fleetdm/fleet-terraform/addons/migrations?depth=1&ref=tf-mod-addon-migrations-v2.1.0"
   ecs_cluster              = module.fleet.byo-vpc.byo-db.byo-ecs.service.cluster
   task_definition          = module.fleet.byo-vpc.byo-db.byo-ecs.task_definition.family
   task_definition_revision = module.fleet.byo-vpc.byo-db.byo-ecs.task_definition.revision
