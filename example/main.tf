@@ -55,10 +55,25 @@ locals {
     FLEET_REDIS_MAX_OPEN_CONNS = "500"
     FLEET_REDIS_MAX_IDLE_CONNS = "500"
   }
+  # Used in the optional allowlist below
+  # Import allowlist from text file
+  # allowlist_cidrs = split("\n", chomp(file("${path.module}/allowlist.txt")))
+
+  # Only 5 IPs allowed per rule
+  # https_listener_rules = [for i in range(0, length(local.allowlist_cidrs), 5) : {
+  #   priority             = i / 5 + 5
+  #   actions = [{
+  #     type               = "forward"
+  #     target_group_index = 0
+  #   }]
+  #   conditions = [{
+  #     source_ips = slice(local.allowlist_cidrs, i, min(i + 5, length(local.allowlist_cidrs)))
+  #   }]
+  # }]
 }
 
 module "fleet" {
-  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.16.3"
+  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.18.0"
   certificate_arn = module.acm.acm_certificate_arn
 
   vpc = {
@@ -127,6 +142,88 @@ module "fleet" {
     # Script execution can run for up to 300s plus overhead.
     # Ensure the load balancer does not 5XX before we have results.
     idle_timeout = 905
+    # Optionally Remove X-Forwarded-For header
+    # xff_header_processing_mode = "remove"
+    # See https://github.com/terraform-aws-modules/terraform-aws-alb/blob/v9.17.0/examples/complete-alb/main.tf#L383-L393.
+    # All listener configs on the https listener can be overridden, but the following are the primary intent to be configurable.
+    # https_overrides = {
+    #   routing_http_response_server_enabled                                = false
+    #   routing_http_response_strict_transport_security_header_value        = "max-age=31536000; includeSubDomains; preload"
+    #   routing_http_response_access_control_allow_origin_header_value      = "https://example.com"
+    #   routing_http_response_access_control_allow_methods_header_value     = "TRACE,GET"
+    #   routing_http_response_access_control_allow_headers_header_value     = "Accept-Language,Content-Language"
+    #   routing_http_response_access_control_allow_credentials_header_value = "true"
+    #   routing_http_response_access_control_expose_headers_header_value    = "Cache-Control"
+    #   routing_http_response_access_control_max_age_header_value           = 86400
+    #   routing_http_response_content_security_policy_header_value          = "*"
+    #   routing_http_response_x_content_type_options_header_value           = "nosniff"
+    #   routing_http_response_x_frame_options_header_value                  = "SAMEORIGIN"
+    # }
+    # Optional rules to allowlist only osquery/orbit traffic and allowed IPs.
+    # https_listener_rules = concat([{
+    #   priority             = 9000
+    #   actions = [{
+    #     type         = "fixed-response"
+    #     content_type = "text/html"
+    #     status_code  = "403"
+    #     message_body = "<h1><center>403 Forbidden</center></h1>"
+    #   }]
+    #   conditions = [{
+    #     path_patterns = ["*"]
+    #   }]
+    #   }, {
+    #   priority             = 1
+    #   actions = [{
+    #     type               = "forward"
+    #     target_group_index = 0
+    #   }]
+    #   conditions = [{
+    #     path_patterns = [
+    #       "/api/osquery/*",
+    #       "/api/*/osquery/*",
+    #       "/api/*/orbit/*",
+    #     ]
+    #   }]
+    #   }, {
+    #   priority             = 2
+    #   actions = [{
+    #     type               = "forward"
+    #     target_group_index = 0
+    #   }]
+    #   conditions = [{
+    #     path_patterns = [
+    #       "/api/*/fleet/device/*",
+    #       "/mdm/*",
+    #       "/api/mdm/apple/enroll",
+    #     ]
+    #   }]
+    #   }, {
+    #   priority             = 3
+    #   actions = [{
+    #     type               = "forward"
+    #     target_group_index = 0
+    #   }]
+    #   conditions = [{
+    #     path_patterns = [
+    #       "/device/*",
+    #       "/api/*/fleet/mdm/*",
+    #       "/assets/*",
+    #     ]
+    #   }]
+    #   }, {
+    #   priority             = 4
+    #   actions = [{
+    #     type               = "forward"
+    #     target_group_index = 0
+    #   }]
+    #   conditions = [{
+    #     path_patterns = [
+    #       "/api/mdm/microsoft/*",
+    #       "/api/fleet/device/ping"
+    #     ]
+    #   }]
+    # }], local.https_listener_rules)
+
   }
 }
 
