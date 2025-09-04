@@ -53,6 +53,7 @@ data "aws_iam_policy_document" "software_installers_kms" {
 }
 
 resource "aws_kms_key_policy" "software_installers" {
+  count  = var.s3_kms_key_id != null ? 1 : 0
   key_id = var.s3_kms_key_id
   policy = data.aws_iam_policy_document.software_installers_kms.json
 }

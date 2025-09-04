@@ -119,14 +119,14 @@ resource "aws_iam_role_policy_attachment" "main" {
 }
 
 resource "aws_iam_role_policy_attachment" "extras" {
-  for_each   = toset(var.fleet_config.extra_iam_policies)
-  policy_arn = each.value
+  count      = length(var.fleet_config.extra_iam_policies)
+  policy_arn = var.fleet_config.extra_iam_policies[count.index]
   role       = aws_iam_role.main[0].name
 }
 
 resource "aws_iam_role_policy_attachment" "execution_extras" {
-  for_each   = toset(var.fleet_config.extra_execution_iam_policies)
-  policy_arn = each.value
+  count      = length(var.fleet_config.extra_execution_iam_policies)
+  policy_arn = var.fleet_config.extra_execution_iam_policies[count.index]
   role       = aws_iam_role.execution.name
 }
 
