@@ -324,5 +324,7 @@ variable "alb_config" {
     xff_header_processing_mode = optional(string, null)
     tls_policy                 = optional(string, "ELBSecurityPolicy-TLS13-1-2-2021-06")
     idle_timeout               = optional(number, 905)
+    internal                   = optional(bool, false)
+    enable_deletion_protection = optional(bool, true)
   })
 }

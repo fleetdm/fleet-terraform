@@ -22,6 +22,7 @@ variable "s3_bucket" {
 variable "s3_kms_key_id" {
   description = "KMS key id used to encrypt the s3 bucket"
   type        = string
+  default     = null
 }
 
 variable "enable_logging" {
