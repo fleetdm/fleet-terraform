@@ -14,7 +14,6 @@ resource "aws_secretsmanager_secret" "enroll_secret" {
 }
 
 resource "aws_secretsmanager_secret_version" "enroll_secret" {
-  count         = var.enroll_secret == null ? 0 : 1
   secret_id     = aws_secretsmanager_secret.enroll_secret.id
   secret_string = var.enroll_secret
 }
@@ -22,7 +21,7 @@ resource "aws_secretsmanager_secret_version" "enroll_secret" {
 data "aws_secretsmanager_secret_version" "enroll_secret" {
   secret_id = aws_secretsmanager_secret.enroll_secret.id
   depends_on = [
-    resource.aws_secretsmanager_secret_version.enroll_secret[0]
+    resource.aws_secretsmanager_secret_version.enroll_secret
   ]
 }
 
