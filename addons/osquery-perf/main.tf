@@ -20,7 +20,11 @@ resource "aws_secretsmanager_secret_version" "enroll_secret" {
 }
 
 data "aws_secretsmanager_secret_version" "enroll_secret" {
+  count     = var.enroll_secret == null ? 0 : 1
   secret_id = aws_secretsmanager_secret.enroll_secret.id
+  depends_on = [
+    resource.aws_secretsmanager_secret_version.enroll_secret[0]
+  ]
 }
 
 resource "aws_ecs_task_definition" "osquery_perf" {
@@ -56,7 +60,7 @@ resource "aws_ecs_task_definition" "osquery_perf" {
         workingDirectory = "/go",
         command = concat([
           "/go/osquery-perf",
-          "-enroll_secret", data.aws_secretsmanager_secret_version.enroll_secret.secret_string,
+          "-enroll_secret", var.enroll_secret == null ? "" : data.aws_secretsmanager_secret_version.enroll_secret[0].secret_string,
           "-host_count", "500",
           "-server_url", var.server_url,
           "--policy_pass_prob", "0.5",
