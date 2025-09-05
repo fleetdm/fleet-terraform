@@ -74,6 +74,7 @@ module "alb" {
   access_logs     = var.alb_config.access_logs
   idle_timeout    = var.alb_config.idle_timeout
   internal        = var.alb_config.internal
+  enable_deletion_protection = var.alb_config.enable_deletion_protection
 
   target_groups = local.target_groups
 
