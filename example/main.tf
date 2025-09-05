@@ -73,7 +73,7 @@ locals {
 }
 
 module "fleet" {
-  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.18.0"
+  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.18.1"
   certificate_arn = module.acm.acm_certificate_arn
 
   vpc = {
@@ -142,6 +142,8 @@ module "fleet" {
     # Script execution can run for up to 300s plus overhead.
     # Ensure the load balancer does not 5XX before we have results.
     idle_timeout = 905
+    # Optionally deploy load balancer as an internal load balancer
+    # internal = true
     # Optionally Remove X-Forwarded-For header
     # xff_header_processing_mode = "remove"
     # See https://github.com/terraform-aws-modules/terraform-aws-alb/blob/v9.17.0/examples/complete-alb/main.tf#L383-L393.
@@ -223,7 +225,6 @@ module "fleet" {
     #     ]
     #   }]
     # }], local.https_listener_rules)
-
   }
 }
 
