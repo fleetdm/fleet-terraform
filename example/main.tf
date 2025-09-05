@@ -144,6 +144,8 @@ module "fleet" {
     idle_timeout = 905
     # Optionally deploy load balancer as an internal load balancer
     # internal = true
+    # optionally set deletion protection on (true) or off (false)
+    # enable_deletion_protection = true
     # Optionally Remove X-Forwarded-For header
     # xff_header_processing_mode = "remove"
     # See https://github.com/terraform-aws-modules/terraform-aws-alb/blob/v9.17.0/examples/complete-alb/main.tf#L383-L393.
