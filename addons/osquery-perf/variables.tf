@@ -53,6 +53,7 @@ variable "subnets" {
 }
 
 variable "enroll_secret" {
-  type    = string
-  default = null
+  type        = string
+  description = "ARN of the AWS Secret Version containing the enroll secret"
+  default     = null
 }
