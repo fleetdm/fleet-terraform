@@ -1,3 +1,8 @@
+variable "prefix" {
+  type = string
+  default = ""
+}
+
 variable "osquery_results_s3_bucket" {
   type = object({
     name         = optional(string, "fleet-osquery-results-archive")

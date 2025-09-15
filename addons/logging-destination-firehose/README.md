@@ -9,7 +9,7 @@ No requirements.
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.3.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.13.0 |
 
 ## Modules
 
@@ -59,6 +59,7 @@ No modules.
 | <a name="input_compression_format"></a> [compression\_format](#input\_compression\_format) | n/a | `string` | `"UNCOMPRESSED"` | no |
 | <a name="input_osquery_results_s3_bucket"></a> [osquery\_results\_s3\_bucket](#input\_osquery\_results\_s3\_bucket) | n/a | <pre>object({<br/>    name         = optional(string, "fleet-osquery-results-archive")<br/>    expires_days = optional(number, 1)<br/>  })</pre> | <pre>{<br/>  "expires_days": 1,<br/>  "name": "fleet-osquery-results-archive"<br/>}</pre> | no |
 | <a name="input_osquery_status_s3_bucket"></a> [osquery\_status\_s3\_bucket](#input\_osquery\_status\_s3\_bucket) | n/a | <pre>object({<br/>    name         = optional(string, "fleet-osquery-status-archive")<br/>    expires_days = optional(number, 1)<br/>  })</pre> | <pre>{<br/>  "expires_days": 1,<br/>  "name": "fleet-osquery-status-archive"<br/>}</pre> | no |
+| <a name="input_prefix"></a> [prefix](#input\_prefix) | n/a | `string` | `""` | no |
 
 ## Outputs
 
