@@ -167,17 +167,17 @@ data "aws_iam_policy_document" "audit_policy_doc" {
 }
 
 resource "aws_iam_policy" "firehose-results" {
-  name   = "${var.prefix}osquery_results_firehose_policy"
+  name   = var.prefix == "" ? "osquery_results_firehose_policy" : "${var.prefix}_osquery_results_firehose_policy"
   policy = data.aws_iam_policy_document.osquery_results_policy_doc.json
 }
 
 resource "aws_iam_policy" "firehose-status" {
-  name   = "${var.prefix}osquery_status_firehose_policy"
+  name   = var.prefix == "" ? "osquery_status_firehose_policy" : "${var.prefix}_osquery_status_firehose_policy"
   policy = data.aws_iam_policy_document.osquery_status_policy_doc.json
 }
 
 resource "aws_iam_policy" "firehose-audit" {
-  name   = "${var.prefix}audit_firehose_policy"
+  name   = var.prefix == "" ? "audit_firehose_policy" : "${var.prefix}_audit_firehose_policy"
   policy = data.aws_iam_policy_document.audit_policy_doc.json
 }
 
