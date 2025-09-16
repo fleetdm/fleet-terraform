@@ -54,6 +54,12 @@ variable "subnets" {
 
 variable "enroll_secret" {
   type        = string
+  description = "Value of the enroll secret to be created, if enroll_secret_arn is not passed in"
+  default     = null
+}
+
+variable "enroll_secret_arn" {
+  type        = string
   description = "ARN of the AWS Secret Version containing the enroll secret"
   default     = null
 }

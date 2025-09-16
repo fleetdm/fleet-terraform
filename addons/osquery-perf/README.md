@@ -2,15 +2,18 @@
 This addon adds osquery-perf hosts to the Fleet installation.
 These are generally used for loadtesting or other testing purposes.  See https://github.com/fleetdm/fleet/tree/main/cmd/osquery-perf to learn more about osquery-perf itself.
 
-This addon creates an AWS Secrets Manager secret that will be used to store the enroll secret that the osquery-perf hosts use to enroll into Fleet.
+This addon:
+1. Creates an AWS Secrets Manager secret that will be used to store the enroll secret that the osquery-perf hosts use to enroll into Fleet. AND
+2. Optionally takes a string, `enroll_secret` (string), to create an AWS Secrets Manager secret version, in the AWS Secrets Manager Secret created by the addon. If not specified directly to the module, the secret will need to have its `SecretString` populated with the enroll secret manually once everything is setup in order for the osquery-perf hosts to connect. OR
+3. Optionally takes a AWS Secrets Manager secret ARN, `enroll_secret_arn` (string), for an already existing Secrets Manager secret.
 
-The addon additionally optionally takes an enroll secret to pass into its Secrets Manager secret.  If not specified directly to the module, the secret will need to have its `SecretString` populated with the enroll secret manually once everything is setup in order for the osquery-perf hosts to connect.
+If both an `enroll_secret` and an `enroll_secret_arn` are defined, the module will prioritize the `enroll_secret`.
 
 Below is an example implementation of the module:
 
 ```
 module "osquery_perf" {
-  source                     = "github.com/fleetdm/fleet-terraform//addons/osquery-perf?ref=tf-mod-addon-osquery-perf-v1.1.0"
+  source                     = "github.com/fleetdm/fleet-terraform//addons/osquery-perf?ref=tf-mod-addon-osquery-perf-v1.2.0"
   customer_prefix            = "fleet"
   ecs_cluster                = module.main.byo-vpc.byo-db.byo-ecs.service.cluster
   subnets                    = module.main.byo-vpc.byo-db.byo-ecs.service.network_configuration[0].subnets
@@ -21,7 +24,11 @@ module "osquery_perf" {
   osquery_perf_image         = local.osquery_perf_image
   extra_flags                = ["--os_templates", "mac10.14.6,ubuntu_22.04,windows_11"]
   logging_options            = module.main.byo-vpc.byo-db.byo-ecs.logging_config
-  enroll_secret              = "mGNJvwKhs4PIa6ZNxMiXqqBfXKO67n2Y"
+  # Optional - One of enroll_secret or enroll_secret_arn can be used, but neither are required.
+  #            If neither are passed in, you will need to populate the secret version manually,
+  #            in the secret that is created by the addon.
+  # enroll_secret            = "mGNJvwKhs4PIa6ZNxMiXqqBfXKO67n2Y"
+  # enroll_secret_arn        = "arn:aws:secretsmanager:<region>:<account-id>:secret:<secret-name>"
 }
 ```
 
@@ -59,7 +66,8 @@ No modules.
 | <a name="input_ecs_cluster"></a> [ecs\_cluster](#input\_ecs\_cluster) | n/a | `string` | n/a | yes |
 | <a name="input_ecs_execution_iam_role_arn"></a> [ecs\_execution\_iam\_role\_arn](#input\_ecs\_execution\_iam\_role\_arn) | n/a | `string` | n/a | yes |
 | <a name="input_ecs_iam_role_arn"></a> [ecs\_iam\_role\_arn](#input\_ecs\_iam\_role\_arn) | n/a | `string` | n/a | yes |
-| <a name="input_enroll_secret"></a> [enroll\_secret](#input\_enroll\_secret) | n/a | `string` | `null` | no |
+| <a name="input_enroll_secret"></a> [enroll\_secret](#input\_enroll\_secret) | Value of the enroll secret to be created, if enroll\_secret\_arn is not passed in | `string` | `null` | no |
+| <a name="input_enroll_secret_arn"></a> [enroll\_secret\_arn](#input\_enroll\_secret\_arn) | ARN of the AWS Secret Version containing the enroll secret | `string` | `null` | no |
 | <a name="input_extra_flags"></a> [extra\_flags](#input\_extra\_flags) | n/a | `list(string)` | `[]` | no |
 | <a name="input_loadtest_containers"></a> [loadtest\_containers](#input\_loadtest\_containers) | n/a | `number` | `1` | no |
 | <a name="input_logging_options"></a> [logging\_options](#input\_logging\_options) | n/a | <pre>object({<br/>    awslogs-group         = string<br/>    awslogs-region        = string<br/>    awslogs-stream-prefix = string<br/>  })</pre> | n/a | yes |
@@ -70,4 +78,7 @@ No modules.
 
 ## Outputs
 
-No outputs.
+| Name | Description |
+|------|-------------|
+| <a name="output_osquery_perf_enroll_secret_id"></a> [osquery\_perf\_enroll\_secret\_id](#output\_osquery\_perf\_enroll\_secret\_id) | n/a |
+| <a name="output_osquery_perf_enroll_secret_name"></a> [osquery\_perf\_enroll\_secret\_name](#output\_osquery\_perf\_enroll\_secret\_name) | n/a |
