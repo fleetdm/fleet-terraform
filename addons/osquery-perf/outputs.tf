@@ -1,7 +1,7 @@
 output "osquery_perf_enroll_secret_name" {
-    value = aws_secretsmanager_secret.enroll_secret.name
+    value = var.enroll_secret_arn != null ? null : aws_secretsmanager_secret.enroll_secret[0].name
 }
 
 output "osquery_perf_enroll_secret_id" {
-    value = aws_secretsmanager_secret.enroll_secret.id
+    value = var.enroll_secret_arn != null ? null : aws_secretsmanager_secret.enroll_secret[0].id
 }
