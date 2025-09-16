@@ -7,7 +7,7 @@ This addon:
 2. Optionally takes a string, `enroll_secret` (string), to create an AWS Secrets Manager secret version, in the AWS Secrets Manager Secret created by the addon. If not specified directly to the module, the secret will need to have its `SecretString` populated with the enroll secret manually once everything is setup in order for the osquery-perf hosts to connect. OR
 3. Optionally takes a AWS Secrets Manager secret ARN, `enroll_secret_arn` (string), for an already existing Secrets Manager secret.
 
-If both an `enroll_secret` and an `enroll_secret_arn` are defined, the module will prioritize the `enroll_secret`.
+If both an `enroll_secret` and an `enroll_secret_arn` are defined, the module will prioritize the `enroll_secret_arn`.
 
 Below is an example implementation of the module:
 
