@@ -1,17 +1,17 @@
 resource "aws_kms_key" "enroll_secret" {
-  count                   = var.enroll_secret_arn == null ? 1 : 0 
+  count                   = var.enroll_secret_arn == null ? 1 : 0
   deletion_window_in_days = 10
   enable_key_rotation     = true
 }
 
 resource "aws_kms_alias" "enroll_secret" {
-  count         = var.enroll_secret_arn == null ? 1 : 0 
+  count         = var.enroll_secret_arn == null ? 1 : 0
   name_prefix   = "alias/${var.customer_prefix}-enroll-secret-key"
   target_key_id = aws_kms_key.enroll_secret[0].key_id
 }
 
 resource "aws_secretsmanager_secret" "enroll_secret" {
-  count       = var.enroll_secret_arn == null ? 1 : 0 
+  count       = var.enroll_secret_arn == null ? 1 : 0
   name_prefix = "${var.customer_prefix}-enroll-secret"
   kms_key_id  = aws_kms_key.enroll_secret[0].arn
 }
@@ -23,7 +23,7 @@ resource "aws_secretsmanager_secret_version" "enroll_secret" {
 }
 
 data "aws_secretsmanager_secret_version" "enroll_secret" {
-  secret_id = var.enroll_secret_arn != null ? var.enroll_secret_arn : aws_secretsmanager_secret.enroll_secret[0].id 
+  secret_id = var.enroll_secret_arn == null ? aws_secretsmanager_secret.enroll_secret[0].id : var.enroll_secret_arn
 }
 
 resource "aws_ecs_task_definition" "osquery_perf" {

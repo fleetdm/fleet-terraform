@@ -8,6 +8,7 @@ This addon:
 3. Optionally takes a AWS Secrets Manager secret ARN, `enroll_secret_arn` (string), for an already existing Secrets Manager secret.
 
 If both an `enroll_secret` and an `enroll_secret_arn` are defined, the module will prioritize the `enroll_secret_arn`.
+If neither an `enroll_secret` or an `enroll_secret_arn` are defined, the module will create a placeholder secret, you will need to add a `secret_version` manually and `terraform apply` one more time.
 
 Below is an example implementation of the module:
 
