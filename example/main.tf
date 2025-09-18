@@ -73,7 +73,7 @@ locals {
 }
 
 module "fleet" {
-  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.18.1"
+  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.18.0"
   certificate_arn = module.acm.acm_certificate_arn
 
   vpc = {
@@ -99,7 +99,7 @@ module "fleet" {
     cpu = 512
     extra_environment_variables = merge(
       local.fleet_environment_variables,
-      # uncomment if using a3 carves
+      # uncomment if using s3 carves
       # module.osquery-carve.fleet_extra_environment_variables
       # uncomment if using firehose
       # module.firehose-logging.fleet_extra_environment_variables
@@ -245,6 +245,10 @@ module "migrations" {
   ecs_service              = module.fleet.byo-vpc.byo-db.byo-ecs.service.name
   desired_count            = module.fleet.byo-vpc.byo-db.byo-ecs.appautoscaling_target.min_capacity
   min_capacity             = module.fleet.byo-vpc.byo-db.byo-ecs.appautoscaling_target.min_capacity
+  
+  depends_on = [
+    module.fleet, 
+  ]
 }
 
 # Enable if using s3 for carves
@@ -257,7 +261,7 @@ module "migrations" {
 
 # Uncomment if using firehose logging destination
 # module "firehose-logging" {
-#   source = "github.com/fleetdm/fleet-terraform/addons/logging-destination-firehose?depth=1&ref=tf-mod-addon-logging-destination-firehose-v1.2.1"
+#   source = "github.com/fleetdm/fleet-terraform/addons/logging-destination-firehose?depth=1&ref=tf-mod-addon-logging-destination-firehose-v1.2.4"
 #   osquery_results_s3_bucket = {
 #     name = local.osquery_results_bucket_name
 #   }
