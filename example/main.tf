@@ -104,9 +104,12 @@ module "fleet" {
       # uncomment if using firehose
       # module.firehose-logging.fleet_extra_environment_variables
     )
-    # Uncomment if enabling mdm module below.
-    # extra_secrets = module.mdm.extra_secrets
-    # extra_execution_iam_policies = module.mdm.extra_execution_iam_policies
+    extra_secrets = concat(
+      module.mdm.extra_secrets,
+    )
+    extra_execution_iam_policies = concat(
+      module.mdm.extra_execution_iam_policies,
+    )
     # extra_iam_policies = concat(
     # uncomment if using a3 carves
     # module.osquery-carve.fleet_extra_iam_policies,
@@ -270,48 +273,14 @@ module "migrations" {
 #   }
 # }
 
-## MDM
-
-# MDM Secrets must be populated with JSON data including the payload from the certs, keys, challenge, etc.
-# These can be populated via terraform with a secret-version, or manually after terraform is applied.
-# Note: Services will not start if the mdm module is enabled and the secrets are applied but not populated.
-
-
-## MDM Secret payload
-
-# See https://github.com/fleetdm/fleet-terraform/blob/tf-mod-addon-mdm-v2.0.0/addons/mdm/README.md#abm
-# Per that document, both Windows and Mac will use the same SCEP secret under the hood.  Currently only
-# the Windows MDM secrets still use this as the all Mac MDM is managed via the Fleet UI and is therefore
-# disabled in the module.
-
-
-# module "mdm" {
-#   source             = "github.com/fleetdm/fleet-terraform/addons/mdm?depth=1&ref=tf-mod-addon-mdm-v2.0.0"
-#   apn_secret_name    = null
-#   scep_secret_name   = "fleet-scep"
-#   # Set abm_secret_name = null if customer is not using dep
-#   abm_secret_name    = null
-#   enable_apple_mdm   = false
-#   enable_windows_mdm = true
-# }
-
-# If you want to supply the MDM secrets via terraform, I recommend that you do not store the secrets in the clear
-# on the device that applies the terraform.  For the example here, terraform will create a KMS key, which will then
-# be used to encrypt the secrets. The included mdm-secrets.tf file will then use the KMS key to dercrypt the secrets
-# on the filesystem to generate the
-
-# resource "aws_kms_key" "fleet_data_key" {
-#   description = "key used to encrypt sensitive data stored in terraform"
-# }
-#
-# resource "aws_kms_alias" "alias" {
-#   name          = "alias/fleet-terraform-encrypted"
-#   target_key_id = aws_kms_key.fleet_data_key.id
-# }
-#
-# output "kms_key_id" {
-#   value = aws_kms_key.fleet_data_key.id
-# }
+module "mdm" {
+  source             = "github.com/fleetdm/fleet-terraform/addons/mdm?depth=1&ref=tf-mod-addon-mdm-v2.0.0"
+  apn_secret_name    = null
+  scep_secret_name   = "fleet-scep"
+  abm_secret_name    = null
+  enable_apple_mdm   = false
+  enable_windows_mdm = true
+}
 
 module "acm" {
   source  = "terraform-aws-modules/acm/aws"
