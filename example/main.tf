@@ -273,6 +273,13 @@ module "migrations" {
 #   }
 # }
 
+## MDM Secret payload
+
+# See https://github.com/fleetdm/fleet-terraform/blob/tf-mod-addon-mdm-v2.0.0/addons/mdm/README.md#abm
+# Per that document, both Windows and Mac will use the same SCEP secret under the hood.  Currently only
+# the Windows MDM secrets still use this as the all Mac MDM is managed via the Fleet UI and is therefore
+# disabled in the module.
+
 module "mdm" {
   source             = "github.com/fleetdm/fleet-terraform/addons/mdm?depth=1&ref=tf-mod-addon-mdm-v2.0.0"
   apn_secret_name    = null

@@ -3,13 +3,12 @@ resource "tls_private_key" "scep_key" {
   rsa_bits  = 4096
 }
 
-# Fill out the subject details for the certificate
 resource "tls_self_signed_cert" "scep_cert" {
   private_key_pem = tls_private_key.scep_key.private_key_pem
 
   subject {
-    common_name  = "Example Root CA"
-    organization = "Example Organization."
+    common_name  = "Fleet Root CA"
+    organization = "Fleet."
     country      = "US"
   }
 

@@ -7,7 +7,12 @@ This code provides some example usage of the Fleet Terraform module, including h
  - any extra settings to be passed to Fleet via ENV var.
 
 To deploy:
+
 1. `terraform apply`
+
+If using a new route53 zone:
+
+- From the output, obtain the NS records created for the zone and add them to the parent DNS zone
 
 ## Requirements
 
