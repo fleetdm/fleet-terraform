@@ -85,11 +85,6 @@ module "rds" {
   cluster_tags = var.rds_config.cluster_tags
 }
 
-data "aws_subnet" "redis" {
-  for_each = toset(var.redis_config.subnets)
-  id       = each.value
-}
-
 module "redis" {
   source  = "cloudposse/elasticache-redis/aws"
   version = "0.53.0"
