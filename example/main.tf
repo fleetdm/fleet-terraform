@@ -104,7 +104,7 @@ module "fleet" {
       # uncomment if using firehose
       # module.firehose-logging.fleet_extra_environment_variables
     )
-    extra_secrets = concat(
+    extra_secrets = merge(
       module.mdm.extra_secrets,
     )
     extra_execution_iam_policies = concat(
