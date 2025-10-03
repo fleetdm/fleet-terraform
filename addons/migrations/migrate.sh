@@ -17,9 +17,10 @@ function scale_services(){
 		CAPACITY="${MIN_CAPACITY:?}"
 	fi
 
-  if [ -n "${ADJUST_AUTOSCALING}" ]; then
-    aws application-autoscaling register-scalable-target --region "${REGION:?}" --service-namespace ecs --resource-id "service/${ECS_CLUSTER:?}/${SERVICE_NAME:?}" --scalable-dimension "ecs:service:DesiredCount" --min-capacity "${CAPACITY:?}"
-  fi
+	if [ -n "${ADJUST_AUTOSCALING}" ]; then
+		aws application-autoscaling register-scalable-target --region "${REGION:?}" --service-namespace ecs --resource-id "service/${ECS_CLUSTER:?}/${SERVICE_NAME:?}" --scalable-dimension "ecs:service:DesiredCount" --min-capacity "${CAPACITY:?}" --max-capacity "${COUNT:?}"
+	fi
+	
 	# We are scaling down, make it 0
 	if [ "${UP_DOWN:?}" != "up" ]; then
 		aws ecs update-service --region "${REGION:?}" --cluster "${ECS_CLUSTER:?}" --service "${SERVICE_NAME:?}" --desired-count 0
