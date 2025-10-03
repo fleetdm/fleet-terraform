@@ -102,10 +102,31 @@ module "alb" {
       }
       rules = { for idx, rule in var.alb_config.https_listener_rules :
         "rule-${idx}" => merge(rule, {
-          conditions = [for condition in rule.conditions : {
-            for k, v in condition :
-            "${trimsuffix(k, "s")}" => { values = v }
-          }]
+          conditions = flatten([
+            for condition in rule.conditions : concat(flatten([
+              for key in ["host_headers", "http_request_methods", "path_patterns", "source_ips"]:
+              lookup(condition, key, null) != null ? [{
+                "${trimsuffix(key, "s")}" = {
+                  values = condition[key]
+                }
+              }] : []
+            ]),
+            lookup(condition, "http_headers", null) != null ? [
+              for header in condition.http_headers : {
+                http_header = {
+                  http_header_name = header.http_header_name
+                  values           = header.values
+                }
+              }]: [],
+            lookup(condition, "query_strings", null) != null ? [{
+              query_string = [
+                for qs in condition.query_strings : {
+                  key = qs.key
+                  value = qs.value
+                }
+              ]
+            }]: [],
+          )])
           actions = [for action in rule.actions : merge(action, {
             target_group_key = try(action.target_group_key, try("tg-${action.target_group_index}", null))
           })]
