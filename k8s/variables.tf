@@ -226,10 +226,27 @@ variable "fleet" {
             json = optional(bool, false)
             disable_banner = optional(bool, false)
         })
+        software_installers = object({
+            s3 = object({
+                bucket_name = optional(string, "")
+                prefix = optional(string, "")
+                endpoint_url = optional(string, "")
+                force_s3_path_style = optional(bool, false)
+                region = optional(string, "")
+                secret_name = optional(string, "")
+                access_key_id = optional(string, "")
+                secret_key = optional(string, "s3-software-installers")
+                sts_assume_role_arn = optional(string, "")
+            })
+        })
         carving = object({
             s3 = object({
                 bucket_name = optional(string, "")
                 prefix = optional(string, "")
+                endpoint_url = optional(string, "")
+                force_s3_path_style = optional(bool, false)
+                region = optional(string, "")
+                secret_name = optional(string, "")
                 access_key_id = optional(string, "")
                 secret_key = optional(string, "s3-bucket")
                 sts_assume_role_arn = optional(string, "")

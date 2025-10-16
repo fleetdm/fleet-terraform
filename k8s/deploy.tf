@@ -85,9 +85,86 @@ resource "kubernetes_deployment" "fleet" {
                     }
 
                     dynamic "env" {
+                        for_each = local.fleet.software_installers.s3.bucket_name != "" ? [ 
+                            { name = "FLEET_S3_SOFTWARE_INSTALLERS_BUCKET", value = local.fleet.software_installers.s3.bucket_name },
+                            { name = "FLEET_S3_SOFTWARE_INSTALLERS_PREFIX", value = local.fleet.software_installers.s3.prefix },
+                            { name = "FLEET_S3_SOFTWARE_INSTALLERS_ENDPOINT_URL", value = local.fleet.software_installers.s3.endpoint_url },
+                            { name = "FLEET_S3_SOFTWARE_INSTALLERS_FORCE_S3_PATH_STYLE", value = local.fleet.software_installers.s3.force_s3_path_style },
+                            { name = "FLEET_S3_SOFTWARE_INSTALLERS_REGION", value = local.fleet.software_installers.s3.region }
+                        ] : []
+
+                        content {
+                            name = env.value.name
+                            value = env.value.value
+                        }
+                    }
+
+                    dynamic "env" {
+                        for_each = local.fleet.software_installers.s3.access_key_id != "" ? [ 
+                            { 
+                                name = "FLEET_S3_SOFTWARE_INSTALLERS_ACCESS_KEY_ID", 
+                                value_from = {
+                                    secret_key_ref = {
+                                        name = local.fleet.software_installers.s3.secret_name
+                                        key =  local.fleet.software_installers.s3.secret_key
+                                    }
+                                }
+                            }
+                        ] : []
+
+                        content {
+                            name = env.value.name
+                            value_from {
+                                secret_key_ref {
+                                    name = env.value.value_from.secret_key_ref.name
+                                    key = env.value.value_from.secret_key_ref.key
+                                }
+                            }
+                        }
+                    }
+
+                    dynamic "env" {
+                        for_each = local.fleet.software_installers.s3.access_key_id != "" ? [ 
+                            { 
+                                name = "FLEET_S3_SOFTWARE_INSTALLERS_SECRET_ACCESS_KEY", 
+                                value_from = {
+                                    secret_key_ref = {
+                                        name = local.fleet.software_installers.s3.secret_name
+                                        key =  local.fleet.software_installers.s3.secret_key
+                                    }
+                                }
+                            }
+                        ] : []
+
+                        content {
+                            name = env.value.name
+                            value_from {
+                                secret_key_ref {
+                                    name = env.value.value_from.secret_key_ref.name
+                                    key = env.value.value_from.secret_key_ref.key
+                                }
+                            }
+                        }
+                    }
+
+                    dynamic "env" {
+                        for_each = local.fleet.software_installers.s3.access_key_id == "" ? [ 
+                            { name = "FLEET_S3_SOFTWARE_INSTALLERS_STS_ASSUME_ROLE_ARN", value = local.fleet.software_installers.s3.sts_assume_role_arn }
+                        ] : []
+
+                        content {
+                            name = env.value.name
+                            value = env.value.value
+                        }
+                    }
+
+                    dynamic "env" {
                         for_each = local.fleet.carving.s3.bucket_name != "" ? [ 
                             { name = "FLEET_S3_BUCKET", value = local.fleet.carving.s3.bucket_name },
-                            { name = "FLEET_S3_PREFIX", value = local.fleet.carving.s3.prefix }
+                            { name = "FLEET_S3_PREFIX", value = local.fleet.carving.s3.prefix },
+                            { name = "FLEET_S3_ENDPOINT_URL", value = local.fleet.carving.s3.endpoint_url },
+                            { name = "FLEET_S3_FORCE_S3_PATH_STYLE", value = local.fleet.carving.s3.force_s3_path_style },
+                            { name = "FLEET_S3_CARVES_REGION", value = local.fleet.carving.s3.region }
                         ] : []
 
                         content {
@@ -99,10 +176,34 @@ resource "kubernetes_deployment" "fleet" {
                     dynamic "env" {
                         for_each = local.fleet.carving.s3.access_key_id != "" ? [ 
                             { 
+                                name = "FLEET_S3_ACCESS_KEY_ID", 
+                                value_from = {
+                                    secret_key_ref = {
+                                        name = local.fleet.software_installers.s3.secret_name
+                                        key =  local.fleet.software_installers.s3.secret_key
+                                    }
+                                }
+                            }
+                        ] : []
+
+                        content {
+                            name = env.value.name
+                            value_from {
+                                secret_key_ref {
+                                    name = env.value.value_from.secret_key_ref.name
+                                    key = env.value.value_from.secret_key_ref.key
+                                }
+                            }
+                        }
+                    }
+
+                    dynamic "env" {
+                        for_each = local.fleet.carving.s3.access_key_id != "" ? [ 
+                            { 
                                 name = "FLEET_S3_SECRET_ACCESS_KEY", 
                                 value_from = {
                                     secret_key_ref = {
-                                        name = local.fleet.secret_name
+                                        name = local.fleet.carving.s3.secret_name
                                         key =  local.fleet.carving.s3.secret_key
                                     }
                                 }
@@ -122,7 +223,7 @@ resource "kubernetes_deployment" "fleet" {
 
                     dynamic "env" {
                         for_each = local.fleet.carving.s3.access_key_id == "" ? [ 
-                            { name = "FLEET_S3_STS_ASSUME_ROLE_ARN", value = local.fleet.carving.s3.secret_key }
+                            { name = "FLEET_S3_STS_ASSUME_ROLE_ARN", value = local.fleet.carving.s3.sts_assume_role_arn }
                         ] : []
 
                         content {
