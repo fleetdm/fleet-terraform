@@ -179,8 +179,8 @@ resource "kubernetes_deployment" "fleet" {
                                 name = "FLEET_S3_ACCESS_KEY_ID", 
                                 value_from = {
                                     secret_key_ref = {
-                                        name = local.fleet.software_installers.s3.secret_name
-                                        key =  local.fleet.software_installers.s3.access_key_id_secret_key
+                                        name = local.fleet.carving.s3.secret_name
+                                        key =  local.fleet.carving.s3.access_key_id_secret_key
                                     }
                                 }
                             }
