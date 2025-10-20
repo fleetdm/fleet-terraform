@@ -254,15 +254,17 @@ func checkCrons(db *sql.DB, snsClient *sns.Client) (err error) {
 			log.Printf("Ignoring cron job: %s", row.name)
 			continue
 		}
+		
+		if row.num_errors == 0 {
+			continue
+		}
 
-		if row.num_errors > 0 {
-			log.Printf("*** %s job had errors (runs: %d, errors: %d), alerting! (errors %s)", row.name, row.num_occurences, row.num_errors, row.most_recent_error.String)
-			if row.num_occurences == 1 {
-				sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors during its last run:\n%s", row.name, row.updated_at.String(), row.most_recent_error.String), "cronJobFailure", snsClient)
-			} else {
-				sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors in %d of the previous %d runs; the most recent is:\n%s", row.name, row.last_updated_at.String(), row.num_errors, row.num_occurences, row.most_recent_error.String), "cronJobFailure", snsClient)
-			}
-		} 
+		log.Printf("*** %s job had errors (runs: %d, errors: %d), alerting! (errors %s)", row.name, row.num_occurences, row.num_errors, row.most_recent_error.String)
+		if row.num_occurences == 1 {
+			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors during its last run:\n%s", row.name, row.updated_at.String(), row.most_recent_error.String), "cronJobFailure", snsClient)
+		} else {
+			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors in %d of the previous %d runs; the most recent is:\n%s", row.name, row.last_updated_at.String(), row.num_errors, row.num_occurences, row.most_recent_error.String), "cronJobFailure", snsClient)
+		}
 	}
 
 	return nil
