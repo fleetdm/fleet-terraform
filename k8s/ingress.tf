@@ -1,23 +1,23 @@
-resource "kubernetes_ingress_v1" "fleet-ingress"{
+resource "kubernetes_ingress_v1" "fleet-ingress" {
   count = local.ingress.enabled ? 1 : 0
   metadata {
-    name = "fleet"
-    namespace = data.kubernetes_namespace.fleet.metadata[0].name
-    labels = local.ingress.labels
+    name        = "fleet"
+    namespace   = data.kubernetes_namespace.fleet.metadata[0].name
+    labels      = local.ingress.labels
     annotations = local.ingress.annotations
   }
   spec {
     ingress_class_name = local.ingress.class_name
 
     dynamic "tls" {
-        for_each = local.ingress.tls.hosts
+      for_each = local.ingress.tls.hosts
 
-        content {
-          hosts = [tls.value]
-          secret_name = local.ingress.tls.secret_name
-        }
+      content {
+        hosts       = [tls.value]
+        secret_name = local.ingress.tls.secret_name
+      }
     }
-    
+
     dynamic "rule" {
       for_each = local.ingress.hosts
 

@@ -1,5 +1,5 @@
 data "kubernetes_namespace" "fleet" {
-  metadata {  
+  metadata {
     name = local.namespace
   }
 }
