@@ -262,9 +262,7 @@ func checkCrons(db *sql.DB, snsClient *sns.Client) (err error) {
 			} else {
 				sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors in %d of the previous %d runs; the most recent is:\n%s", row.name, row.last_updated_at.String(), row.num_errors, row.num_occurences, row.most_recent_error.String), "cronJobFailure", snsClient)
 			}
-		} else {
-			continue
-		}
+		} 
 	}
 
 	return nil
