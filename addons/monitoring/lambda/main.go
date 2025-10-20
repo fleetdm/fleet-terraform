@@ -126,7 +126,7 @@ type CronStatsDigestRow struct {
 }
 
 func setupDB(secretsManagerClient *secretsmanager.Client, snsClient *sns.Client) (db *sql.DB, err error) {
-	smClient := secretsmanager
+	smClient := secretsManagerClient
 	// Retrieve the secret
     secretValue, err := smClient.GetSecretValue(context.Background(), &secretsmanager.GetSecretValueInput{
         SecretId: aws.String(options.MySQLSMSecret),
