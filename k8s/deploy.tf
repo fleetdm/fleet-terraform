@@ -283,17 +283,31 @@ resource "kubernetes_deployment" "fleet" {
                         ] : []
 
                         content {
-                            name = local.database_read_replica.enabled ? env.value.name : ""
-                            value = local.database_read_replica.enabled ? env.value.value : ""
+                            name = env.value.name
+                            value = env.value.value
                         }
                     }
 
-                    env {
-                        name = local.database_read_replica.enabled ? "FLEET_MYSQL_READ_REPLICA_PASSWORD" : null
-                        value_from {
-                            secret_key_ref {
-                                name = local.database_read_replica.enabled ? local.database_read_replica.secret_name : null
-                                key = local.database_read_replica.enabled ? local.database_read_replica.password_key : null
+                    dynamic "env" {
+                        for_each = local.database_read_replica.enabled ? [
+                            { 
+                                name = "FLEET_MYSQL_READ_REPLICA_PASSWORD", 
+                                value_from = {
+                                    secret_key_ref = {
+                                        name = local.database_read_replica.secret_name
+                                        key =  local.database_read_replica.password_key
+                                    }
+                                }
+                            }
+                        ] : []
+
+                        content {
+                            name = env.value.name
+                            value_from {
+                                secret_key_ref {
+                                    name = env.value.value_from.secret_key_ref.name
+                                    key = env.value.value_from.secret_key_ref.key
+                                }
                             }
                         }
                     }
@@ -308,8 +322,8 @@ resource "kubernetes_deployment" "fleet" {
                         ] : []
 
                         content {
-                            name = local.database_read_replica.enabled && local.database.tls.enabled ? env.value.name : ""
-                            value = local.database_read_replica.enabled && local.database.tls.enabled ? env.value.value : ""
+                            name = env.value.name
+                            value = ocal.database.tls.enabled
                         }
                     }
 
