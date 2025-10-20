@@ -5,7 +5,7 @@ module "fleet" {
     hostname = "fleet.localhost.local"
     replicas = "3"
     image_repository = "fleetdm/fleet"
-    image_tag = "v4.72.0"
+    image_tag = "v4.75.0"
     /*
         Example:
         image_pull_secrets = [
@@ -357,7 +357,7 @@ module "fleet" {
             }   
         }
     */
-    # database_read_replica = {}
+    database_read_replica = {}
 
     cache = {
         enabled = false
