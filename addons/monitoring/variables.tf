@@ -80,6 +80,7 @@ variable "cron_monitoring" {
     delay_tolerance            = string
     run_interval               = string
     log_retention_in_days      = optional(number, 7)
+    ignore_list                = optional(list(string), [])
   })
   default = null
 }

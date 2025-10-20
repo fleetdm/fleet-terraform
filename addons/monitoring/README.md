@@ -76,6 +76,8 @@ module "monitoring" {
     # Interval format for: https://docs.aws.amazon.com/scheduler/latest/UserGuide/schedule-types.html#rate-based
     run_interval          = "1 hour"
     log_retention_in_days = 365
+    # Cron List of Names to Ignore (see below for valid values)
+    ignore_list = []
   }
 }
 ```
@@ -100,6 +102,27 @@ Valid targets for `sns_topic_arns_map`:
 
 If you want to publish to all, use `default_sns_topic_arns` instead and include your notification ARNs there.
 
+# Cron Names
+
+ - apple\_mdm\_apns\_pusher
+ - apple\_mdm\_dep\_profile\_assigner
+ - apple\_mdm\_iphone\_ipad\_refetcher
+ - apple\_mdm\_iphone\_ipad\_reviver
+ - automations
+ - batch\_activity\_completion\_checker
+ - calendar
+ - cleanups\_then\_aggregation
+ - host\_vitals\_label\_membership
+ - integrations
+ - maintained\_apps
+ - mdm\_service\_discovery
+ - mdm\_windows\_profile\_manager
+ - refresh\_vpp\_app\_versions
+ - scheduled\_batch\_activities
+ - upcoming\_activities\_maintenance
+ - usage\_statistics
+ - vulnerabilities
+
 ## Requirements
 
 No requirements.
@@ -109,7 +132,7 @@ No requirements.
 | Name | Version |
 |------|---------|
 | <a name="provider_archive"></a> [archive](#provider\_archive) | 2.7.1 |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 5.97.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.17.0 |
 | <a name="provider_null"></a> [null](#provider\_null) | 3.2.4 |
 
 ## Modules
@@ -156,7 +179,7 @@ No modules.
 |------|-------------|------|---------|:--------:|
 | <a name="input_acm_certificate_arn"></a> [acm\_certificate\_arn](#input\_acm\_certificate\_arn) | n/a | `string` | `null` | no |
 | <a name="input_albs"></a> [albs](#input\_albs) | n/a | <pre>list(object({<br/>    name                    = string<br/>    arn_suffix              = string<br/>    target_group_name       = string<br/>    target_group_arn_suffix = string<br/>    min_containers          = optional(string, 1)<br/>    ecs_service_name        = string<br/>    alert_thresholds = optional(<br/>      object({<br/>        HTTPCode_ELB_5XX_Count = object({<br/>          period    = number<br/>          threshold = number<br/>        })<br/>        HTTPCode_Target_5XX_Count = object({<br/>          period    = number<br/>          threshold = number<br/>        })<br/>      }),<br/>      {<br/>        HTTPCode_ELB_5XX_Count = {<br/>          period    = 120<br/>          threshold = 0<br/>        },<br/>        HTTPCode_Target_5XX_Count = {<br/>          period    = 120<br/>          threshold = 0<br/>        }<br/>      }<br/>    )<br/>  }))</pre> | `[]` | no |
-| <a name="input_cron_monitoring"></a> [cron\_monitoring](#input\_cron\_monitoring) | n/a | <pre>object({<br/>    mysql_host                 = string<br/>    mysql_database             = string<br/>    mysql_user                 = string<br/>    mysql_password_secret_name = string<br/>    vpc_id                     = string<br/>    subnet_ids                 = list(string)<br/>    rds_security_group_id      = string<br/>    delay_tolerance            = string<br/>    run_interval               = string<br/>    log_retention_in_days      = optional(number, 7)<br/>  })</pre> | `null` | no |
+| <a name="input_cron_monitoring"></a> [cron\_monitoring](#input\_cron\_monitoring) | n/a | <pre>object({<br/>    mysql_host                 = string<br/>    mysql_database             = string<br/>    mysql_user                 = string<br/>    mysql_password_secret_name = string<br/>    vpc_id                     = string<br/>    subnet_ids                 = list(string)<br/>    rds_security_group_id      = string<br/>    delay_tolerance            = string<br/>    run_interval               = string<br/>    log_retention_in_days      = optional(number, 7)<br/>    ignore_list                = optional(list(string), [])<br/>  })</pre> | `null` | no |
 | <a name="input_customer_prefix"></a> [customer\_prefix](#input\_customer\_prefix) | n/a | `string` | `"fleet"` | no |
 | <a name="input_default_sns_topic_arns"></a> [default\_sns\_topic\_arns](#input\_default\_sns\_topic\_arns) | n/a | `list(string)` | `[]` | no |
 | <a name="input_fleet_ecs_service_name"></a> [fleet\_ecs\_service\_name](#input\_fleet\_ecs\_service\_name) | n/a | `string` | `null` | no |

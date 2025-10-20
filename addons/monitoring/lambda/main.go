@@ -24,16 +24,16 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/secretsmanager"
-	"github.com/aws/aws-sdk-go/service/sns"
-	"github.com/aws/aws-secretsmanager-caching-go/secretcache"
+    "github.com/aws/aws-sdk-go-v2/aws"
+    "github.com/aws/aws-sdk-go-v2/config"
+    "github.com/aws/aws-sdk-go-v2/service/sns"
+    "github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/go-sql-driver/mysql"
 	flags "github.com/jessevdk/go-flags"
 )
@@ -56,14 +56,16 @@ type OptionsStruct struct {
 	CronDelayTolerance         string `long:"cron-delay-tolerance" env:"CRON_DELAY_TOLERANCE" default:"2h"`
 	CronMonitorInterval        string `long:"monitor-run-interval" env:"CRON_MONITOR_RUN_INTERVAL" default:"1 hour"`
 	AwsEndpointUrl             string `long:"aws-endpoint-url" env:"AWS_ENDPOINT_URL"`
+	CronIgnoreList             string `long:"cron-ignore-list" env:"CRON_IGNORE_LIST"`
 }
 
 var (
 	options   = OptionsStruct{}
 	snsTopics = make(SNSTopicArnsMap)
+	cronIgnoreList []string
 )
 
-func sendSNSMessage(msg string, topic string, sess *session.Session) {
+func sendSNSMessage(msg string, topic string, snsClient *sns.Client) {
 	topicArns, ok := snsTopics[topic]
 	if !ok {
 		log.Printf("No SNS topic ARNs available for topic '%s'", topic)
@@ -72,17 +74,16 @@ func sendSNSMessage(msg string, topic string, sess *session.Session) {
 
 	log.Printf("Sending SNS Message")
 	fullMsg := fmt.Sprintf("Environment: %s\nMessage: %s", options.FleetEnv, msg)
-	svc := sns.New(sess)
 	for _, SNSTopicArn := range strings.Split(topicArns, ",") {
 		log.Printf("Sending '%s' to '%s'", fullMsg, SNSTopicArn)
-		result, err := svc.Publish(&sns.PublishInput{
+		result, err := snsClient.Publish(context.Background(), &sns.PublishInput{
 			Message:  &fullMsg,
 			TopicArn: &SNSTopicArn,
 		})
 		if err != nil {
 			log.Printf(err.Error())
 		}
-		log.Printf(result.GoString())
+		log.Printf(*result.MessageId)
 	}
 }
 
@@ -124,21 +125,29 @@ type CronStatsDigestRow struct {
 	most_recent_error sql.NullString
 }
 
-func setupDB(sess *session.Session) (db *sql.DB, err error) {
-	secretCache, err := secretcache.New()
+func setupDB(snsClient *sns.Client) (db *sql.DB, err error) {
+    awsCfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(options.AWSRegion))
+    if err != nil {
+        log.Printf("unable to load SDK config, %v", err)
+        sendSNSMessage("Unable to initialise SecretsManager helper. Cron status is unknown.", "cronSystem", snsClient)
+        return nil, err
+    }
+
+    smClient := secretsmanager.NewFromConfig(awsCfg)
+
+    secretValue, err := smClient.GetSecretValue(context.Background(), &secretsmanager.GetSecretValueInput{
+        SecretId: aws.String(options.MySQLSMSecret),
+    })
 	if err != nil {
 		log.Printf(err.Error())
-		sendSNSMessage("Unable to initialise SecretsManager helper.  Cron status is unknown.", "cronSystem", sess)
+		sendSNSMessage("Unable to retrieve SecretsManager secret.  Cron status is unknown.", "cronSystem", snsClient)
 		return db, err
 	}
 
-	secretCache.Client = secretsmanager.New(sess)
-	MySQLPassword, err := secretCache.GetSecretString(options.MySQLSMSecret)
-	if err != nil {
-		log.Printf(err.Error())
-		sendSNSMessage("Unable to retrieve SecretsManager secret.  Cron status is unknown.", "cronSystem", sess)
-		return db, err
-	}
+    var MySQLPassword string
+    if secretValue.SecretString != nil {
+        MySQLPassword = *secretValue.SecretString
+    }
 
 	cfg := mysql.Config{
 		User:                 options.MySQLUser,
@@ -153,12 +162,12 @@ func setupDB(sess *session.Session) (db *sql.DB, err error) {
 	db, err = sql.Open("mysql", cfg.FormatDSN())
 	if err != nil {
 		log.Printf(err.Error())
-		sendSNSMessage("Unable to connect to database. Cron status unknown.", "cronSystem", sess)
+		sendSNSMessage("Unable to connect to database. Cron status unknown.", "cronSystem", snsClient)
 		return db, err
 	}
 	if err = db.Ping(); err != nil {
 		log.Printf(err.Error())
-		sendSNSMessage("Unable to connect to database. Cron status unknown.", "cronSystem", sess)
+		sendSNSMessage("Unable to connect to database. Cron status unknown.", "cronSystem", snsClient)
 		return db, err
 	}
 
@@ -168,18 +177,18 @@ func setupDB(sess *session.Session) (db *sql.DB, err error) {
 }
 
 // Check that the cron stats table is reachable, and that no cron jobs have been stuck for > 1 run time.
-func checkDB(db *sql.DB, sess *session.Session) (err error) {
+func checkDB(db *sql.DB, snsClient *sns.Client) (err error) {
 	rows, err := db.Query("SELECT b.name,IFNULL(status, 'missing cron'),IFNULL(updated_at, FROM_UNIXTIME(0)) AS updated_at FROM (SELECT 'vulnerabilities' AS name UNION ALL SELECT 'cleanups_then_aggregation') b LEFT JOIN (SELECT name, status, updated_at FROM cron_stats WHERE id IN (SELECT MAX(id) FROM cron_stats WHERE status = 'completed' GROUP BY name)) a ON a.name = b.name;")
 	defer rows.Close()
 	if err != nil {
 		log.Printf(err.Error())
-		sendSNSMessage("Unable to SELECT cron_stats table.  Unable to continue.", "cronSystem", sess)
+		sendSNSMessage("Unable to SELECT cron_stats table.  Unable to continue.", "cronSystem", snsClient)
 		return err
 	}
 	cronDelayDuration, err := time.ParseDuration(options.CronDelayTolerance)
 	if err != nil {
 		log.Printf(err.Error())
-		sendSNSMessage("Unable to parse cron-delay-tolerance. Check lambda settings.", "cronSystem", sess)
+		sendSNSMessage("Unable to parse cron-delay-tolerance. Check lambda settings.", "cronSystem", snsClient)
 		return err
 	}
 	cronAlertTimestamp := time.Now().Add(-1 * cronDelayDuration)
@@ -187,14 +196,14 @@ func checkDB(db *sql.DB, sess *session.Session) (err error) {
 		var row CronStatsRow
 		if err := rows.Scan(&row.name, &row.status, &row.updated_at); err != nil {
 			log.Printf(err.Error())
-			sendSNSMessage("Error scanning row in cron_stats table.  Unable to continue.", "cronSystem", sess)
+			sendSNSMessage("Error scanning row in cron_stats table.  Unable to continue.", "cronSystem", snsClient)
 			return err
 		}
 		log.Printf("Row %s last updated at %s", row.name, row.updated_at.String())
 		if row.updated_at.Before(cronAlertTimestamp) {
 			log.Printf("*** %s hasn't updated in more than %s, alerting! (status %s)", options.CronDelayTolerance, row.name, row.status)
 			// Fire on the first match and return.  We only need to alert that the crons need looked at, not each cron.
-			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' hasn't updated in more than %s. Last status was '%s' at %s.", row.name, options.CronDelayTolerance, row.status, row.updated_at.String()), "cronSystem", sess)
+			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' hasn't updated in more than %s. Last status was '%s' at %s.", row.name, options.CronDelayTolerance, row.status, row.updated_at.String()), "cronSystem", snsClient)
 			return nil
 		}
 	}
@@ -203,11 +212,11 @@ func checkDB(db *sql.DB, sess *session.Session) (err error) {
 }
 
 // Check for errors in cron runs.
-func checkCrons(db *sql.DB, sess *session.Session) (err error) {
+func checkCrons(db *sql.DB, snsClient *sns.Client) (err error) {
 	cronMonitorInterval, err := parseLambdaIntervalToDuration(options.CronMonitorInterval)
 	if err != nil {
 		log.Printf(err.Error())
-		sendSNSMessage("Unable to parse cron-delay-tolerance. Check lambda settings.", "cronSystem", sess)
+		sendSNSMessage("Unable to parse cron-delay-tolerance. Check lambda settings.", "cronSystem", snsClient)
 		return err
 	}
 	cronAlertTimestamp := time.Now().Add(-1 * cronMonitorInterval)
@@ -229,7 +238,7 @@ func checkCrons(db *sql.DB, sess *session.Session) (err error) {
 	`)
 	if err != nil {
 		log.Printf(err.Error())
-		sendSNSMessage("Unable to SELECT cron_stats table.  Unable to continue.", "cronSystem", sess)
+		sendSNSMessage("Unable to SELECT cron_stats table.  Unable to continue.", "cronSystem", snsClient)
 		return err
 	}
 	defer rows.Close()
@@ -237,17 +246,24 @@ func checkCrons(db *sql.DB, sess *session.Session) (err error) {
 		var row CronStatsDigestRow
 		if err := rows.Scan(&row.name, &row.num_occurences, &row.num_errors, &row.last_updated_at, &row.most_recent_error); err != nil {
 			log.Printf(err.Error())
-			sendSNSMessage("Error scanning row in cron_stats table.  Unable to continue.", "cronSystem", sess)
+			sendSNSMessage("Error scanning row in cron_stats table.  Unable to continue.", "cronSystem", snsClient)
 			return err
 		}
+
+		if slices.Contains(cronIgnoreList, row.name) {
+			log.Printf("Ignoring cron job: %s", row.name)
+			continue
+		}
+		
 		if row.num_errors == 0 {
 			continue
 		}
+
 		log.Printf("*** %s job had errors (runs: %d, errors: %d), alerting! (errors %s)", row.name, row.num_occurences, row.num_errors, row.most_recent_error.String)
 		if row.num_occurences == 1 {
-			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors during its last run:\n%s", row.name, row.updated_at.String(), row.most_recent_error.String), "cronJobFailure", sess)
+			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors during its last run:\n%s", row.name, row.updated_at.String(), row.most_recent_error.String), "cronJobFailure", snsClient)
 		} else {
-			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors in %d of the previous %d runs; the most recent is:\n%s", row.name, row.last_updated_at.String(), row.num_errors, row.num_occurences, row.most_recent_error.String), "cronJobFailure", sess)
+			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors in %d of the previous %d runs; the most recent is:\n%s", row.name, row.last_updated_at.String(), row.num_errors, row.num_occurences, row.most_recent_error.String), "cronJobFailure", snsClient)
 		}
 	}
 
@@ -255,19 +271,14 @@ func checkCrons(db *sql.DB, sess *session.Session) (err error) {
 }
 
 func handler(ctx context.Context, name NullEvent) error {
-	awsConfig := aws.NewConfig()
-	awsConfig = awsConfig.WithRegion(options.AWSRegion)
-	if options.AwsEndpointUrl != "" {
-		awsConfig = awsConfig.WithEndpoint(options.AwsEndpointUrl)
+	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(options.AWSRegion))
+	if err != nil {
+		log.Fatalf("unable to load SDK config, %v", err)
 	}
-	sess := session.Must(session.NewSessionWithOptions(
-		session.Options{
-			SharedConfigState: session.SharedConfigEnable,
-			Config:            *awsConfig,
-		},
-	))
 
-	db, err := setupDB(sess)
+	snsClient := sns.NewFromConfig(cfg)
+
+	db, err := setupDB(snsClient)
 	defer func() {
 		if db != nil {
 			db.Close()
@@ -278,8 +289,8 @@ func handler(ctx context.Context, name NullEvent) error {
 		return nil
 	}
 
-	checkDB(db, sess)
-	checkCrons(db, sess)
+	checkDB(db, snsClient)
+	checkCrons(db, snsClient)
 	return nil
 }
 
@@ -294,6 +305,10 @@ func main() {
 		} else {
 			log.Fatal(err)
 		}
+	}
+
+	if options.CronIgnoreList != "" {
+		cronIgnoreList = strings.Split(options.CronIgnoreList, ",")
 	}
 
 	snsTopics["cronSystem"] = options.SNSCronSystemTopicArns
