@@ -128,16 +128,15 @@ func setupDB(secretsManagerClient *secretsmanager.Client) (db *sql.DB, err error
 	secretCache, err := secretcache.New()
 	if err != nil {
 		log.Printf(err.Error())
-		sendSNSMessage("Unable to initialise SecretsManager helper.  Cron status is unknown.", "cronSystem", sess)
+		sendSNSMessage("Unable to initialise SecretsManager helper.  Cron status is unknown.", "cronSystem", nil)
 		return db, err
 	}
 
-	// secretCache.Client = secretsmanager.New(sess)
 	secretCache.Client = secretsManagerClient
 	MySQLPassword, err := secretCache.GetSecretString(options.MySQLSMSecret)
 	if err != nil {
 		log.Printf(err.Error())
-		sendSNSMessage("Unable to retrieve SecretsManager secret.  Cron status is unknown.", "cronSystem", sess)
+		sendSNSMessage("Unable to retrieve SecretsManager secret.  Cron status is unknown.", "cronSystem", nil)
 		return db, err
 	}
 
@@ -154,12 +153,12 @@ func setupDB(secretsManagerClient *secretsmanager.Client) (db *sql.DB, err error
 	db, err = sql.Open("mysql", cfg.FormatDSN())
 	if err != nil {
 		log.Printf(err.Error())
-		sendSNSMessage("Unable to connect to database. Cron status unknown.", "cronSystem", sess)
+		sendSNSMessage("Unable to connect to database. Cron status unknown.", "cronSystem", nil)
 		return db, err
 	}
 	if err = db.Ping(); err != nil {
 		log.Printf(err.Error())
-		sendSNSMessage("Unable to connect to database. Cron status unknown.", "cronSystem", sess)
+		sendSNSMessage("Unable to connect to database. Cron status unknown.", "cronSystem", nil)
 		return db, err
 	}
 
@@ -204,11 +203,11 @@ func checkDB(db *sql.DB, snsClient *sns.Client) (err error) {
 }
 
 // Check for errors in cron runs.
-func checkCrons(db *sql.DB, sess *session.Session) (err error) {
+func checkCrons(db *sql.DB, cfg aws.Config) (err error) {
 	cronMonitorInterval, err := parseLambdaIntervalToDuration(options.CronMonitorInterval)
 	if err != nil {
 		log.Printf(err.Error())
-		sendSNSMessage("Unable to parse cron-delay-tolerance. Check lambda settings.", "cronSystem", sess)
+		sendSNSMessage("Unable to parse cron-delay-tolerance. Check lambda settings.", "cronSystem", cfg)
 		return err
 	}
 	cronAlertTimestamp := time.Now().Add(-1 * cronMonitorInterval)
@@ -230,7 +229,7 @@ func checkCrons(db *sql.DB, sess *session.Session) (err error) {
 	`)
 	if err != nil {
 		log.Printf(err.Error())
-		sendSNSMessage("Unable to SELECT cron_stats table.  Unable to continue.", "cronSystem", sess)
+		sendSNSMessage("Unable to SELECT cron_stats table.  Unable to continue.", "cronSystem", cfg)
 		return err
 	}
 	defer rows.Close()
@@ -238,7 +237,7 @@ func checkCrons(db *sql.DB, sess *session.Session) (err error) {
 		var row CronStatsDigestRow
 		if err := rows.Scan(&row.name, &row.num_occurences, &row.num_errors, &row.last_updated_at, &row.most_recent_error); err != nil {
 			log.Printf(err.Error())
-			sendSNSMessage("Error scanning row in cron_stats table.  Unable to continue.", "cronSystem", sess)
+			sendSNSMessage("Error scanning row in cron_stats table.  Unable to continue.", "cronSystem", cfg)
 			return err
 		}
 
@@ -252,9 +251,9 @@ func checkCrons(db *sql.DB, sess *session.Session) (err error) {
 		}
 		log.Printf("*** %s job had errors (runs: %d, errors: %d), alerting! (errors %s)", row.name, row.num_occurences, row.num_errors, row.most_recent_error.String)
 		if row.num_occurences == 1 {
-			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors during its last run:\n%s", row.name, row.updated_at.String(), row.most_recent_error.String), "cronJobFailure", sess)
+			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors during its last run:\n%s", row.name, row.updated_at.String(), row.most_recent_error.String), "cronJobFailure", cfg)
 		} else {
-			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors in %d of the previous %d runs; the most recent is:\n%s", row.name, row.last_updated_at.String(), row.num_errors, row.num_occurences, row.most_recent_error.String), "cronJobFailure", sess)
+			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors in %d of the previous %d runs; the most recent is:\n%s", row.name, row.last_updated_at.String(), row.num_errors, row.num_occurences, row.most_recent_error.String), "cronJobFailure", cfg)
 		}
 	}
 
