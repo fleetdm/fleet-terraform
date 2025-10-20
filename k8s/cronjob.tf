@@ -139,8 +139,8 @@ resource "kubernetes_cron_job_v1" "fleet_vuln_processing_cron_job" {
                                 name = local.database_read_replica.enabled ? "FLEET_MYSQL_READ_REPLICA_PASSWORD" : null
                                 value_from {
                                     secret_key_ref {
-                                        name = local.database_read_replica.secret_name
-                                        key = local.database_read_replica.password_key
+                                        name = local.database_read_replica.enabled ? local.database_read_replica.secret_name : null
+                                        key = local.database_read_replica.enabled ? local.database_read_replica.password_key : null
                                     }
                                 }
                             }
