@@ -119,7 +119,7 @@ resource "kubernetes_cron_job_v1" "fleet_vuln_processing_cron_job" {
                             }
 
                             dynamic "env" {
-                                for_each = [ 
+                                for_each = local.database_read_replica.enabled ? [ 
                                     { name = "FLEET_MYSQL_READ_REPLICA_ADDRESS", value = local.database_read_replica.address },
                                     { name = "FLEET_MYSQL_READ_REPLICA_DATABASE", value = local.database_read_replica.database },
                                     { name = "FLEET_MYSQL_READ_REPLICA_USERNAME", value = local.database_read_replica.username },
@@ -127,7 +127,7 @@ resource "kubernetes_cron_job_v1" "fleet_vuln_processing_cron_job" {
                                     { name = "FLEET_MYSQL_READ_REPLICA_MAX_OPEN_CONNS", value = local.database_read_replica.max_open_conns },
                                     { name = "FLEET_MYSQL_READ_REPLICA_MAX_IDLE_CONNS", value = local.database_read_replica.max_idle_conns },
                                     { name = "FLEET_MYSQL_READ_REPLICA_CONN_MAX_LIFETIME", value = local.database_read_replica.conn_max_lifetime }
-                                ]
+                                ] : []
 
                                 content {
                                     name = env.value.name
@@ -136,7 +136,7 @@ resource "kubernetes_cron_job_v1" "fleet_vuln_processing_cron_job" {
                             }
 
                             env {
-                                name = "FLEET_MYSQL_READ_REPLICA_PASSWORD"
+                                name = local.database_read_replica.enabled ? "FLEET_MYSQL_READ_REPLICA_PASSWORD" : null
                                 value_from {
                                     secret_key_ref {
                                         name = local.database_read_replica.secret_name
@@ -146,7 +146,7 @@ resource "kubernetes_cron_job_v1" "fleet_vuln_processing_cron_job" {
                             }
 
                             dynamic "env" {
-                                for_each = local.database.tls.enabled ? [
+                                for_each = local.database_read_replica.enabled && local.database.tls.enabled ? [
                                     { name = "FLEET_MYSQL_READ_REPLICA_TLS_CA", value = "/secrets/mysql/${local.database_read_replica.tls.ca_cert_key}" },
                                     { name = "FLEET_MYSQL_READ_REPLICA_TLS_CERT", value = "/secrets/mysql/${local.database_read_replica.tls.cert_secret_key}" },
                                     { name = "FLEET_MYSQL_READ_REPLICA_TLS_KEY", value = "/secrets/mysql/${local.database_read_replica.tls.key_key}" },
