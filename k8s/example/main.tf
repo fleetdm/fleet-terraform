@@ -193,7 +193,7 @@ module "fleet" {
                 force_s3_path_style = false
                 region = ""
                 secret_name = ""
-                access_key_id_secret_key = ""
+                access_key_id = ""
                 secret_key = "s3-software-installers"
                 sts_assume_role_arn = ""
             }
@@ -206,7 +206,7 @@ module "fleet" {
                 force_s3_path_style = false
                 region = ""
                 secret_name = ""
-                access_key_id_secret_key = ""
+                access_key_id = ""
                 secret_key = "s3-bucket"
                 sts_assume_role_arn = ""
             }
