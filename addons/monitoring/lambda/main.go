@@ -126,7 +126,6 @@ type CronStatsDigestRow struct {
 }
 
 func setupDB(snsClient *sns.Client) (db *sql.DB, err error) {
-	// Load AWS config
     awsCfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(options.AWSRegion))
     if err != nil {
         log.Printf("unable to load SDK config, %v", err)
@@ -134,10 +133,8 @@ func setupDB(snsClient *sns.Client) (db *sql.DB, err error) {
         return nil, err
     }
 
-    // Create the Secrets Manager client
     smClient := secretsmanager.NewFromConfig(awsCfg)
 
-	// Retrieve the secret
     secretValue, err := smClient.GetSecretValue(context.Background(), &secretsmanager.GetSecretValueInput{
         SecretId: aws.String(options.MySQLSMSecret),
     })
@@ -147,7 +144,6 @@ func setupDB(snsClient *sns.Client) (db *sql.DB, err error) {
 		return db, err
 	}
 
-    // Extract the password from the secret value (assuming it's stored as plain text)
     var MySQLPassword string
     if secretValue.SecretString != nil {
         MySQLPassword = *secretValue.SecretString
@@ -259,9 +255,6 @@ func checkCrons(db *sql.DB, snsClient *sns.Client) (err error) {
 			continue
 		}
 
-		// if row.num_errors == 0 {
-		// 	continue
-		// }
 		if row.num_errors > 0 {
 			log.Printf("*** %s job had errors (runs: %d, errors: %d), alerting! (errors %s)", row.name, row.num_occurences, row.num_errors, row.most_recent_error.String)
 			if row.num_occurences == 1 {
@@ -269,6 +262,8 @@ func checkCrons(db *sql.DB, snsClient *sns.Client) (err error) {
 			} else {
 				sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors in %d of the previous %d runs; the most recent is:\n%s", row.name, row.last_updated_at.String(), row.num_errors, row.num_occurences, row.most_recent_error.String), "cronJobFailure", snsClient)
 			}
+		} else {
+			continue
 		}
 	}
 
