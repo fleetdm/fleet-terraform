@@ -24,6 +24,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -55,7 +56,7 @@ type OptionsStruct struct {
 	CronDelayTolerance         string `long:"cron-delay-tolerance" env:"CRON_DELAY_TOLERANCE" default:"2h"`
 	CronMonitorInterval        string `long:"monitor-run-interval" env:"CRON_MONITOR_RUN_INTERVAL" default:"1 hour"`
 	AwsEndpointUrl             string `long:"aws-endpoint-url" env:"AWS_ENDPOINT_URL"`
-	CronIgnoreList             list `long:"cron-ignore-list" env:"CRON_IGNORE_LIST"`
+	CronIgnoreList             string `long:"cron-ignore-list" env:"CRON_IGNORE_LIST"`
 }
 
 var (
@@ -75,14 +76,14 @@ func sendSNSMessage(msg string, topic string, snsClient *sns.Client) {
 	fullMsg := fmt.Sprintf("Environment: %s\nMessage: %s", options.FleetEnv, msg)
 	for _, SNSTopicArn := range strings.Split(topicArns, ",") {
 		log.Printf("Sending '%s' to '%s'", fullMsg, SNSTopicArn)
-		result, err := snsClient.Publish(&sns.PublishInput{
+		result, err := snsClient.Publish(context.Background(), &sns.PublishInput{
 			Message:  &fullMsg,
 			TopicArn: &SNSTopicArn,
 		})
 		if err != nil {
 			log.Printf(err.Error())
 		}
-		log.Printf(result.GoString())
+		log.Printf(*result.MessageId)
 	}
 }
 
@@ -124,21 +125,23 @@ type CronStatsDigestRow struct {
 	most_recent_error sql.NullString
 }
 
-func setupDB(secretsManagerClient *secretsmanager.Client) (db *sql.DB, err error) {
-	secretCache, err := secretcache.New()
+func setupDB(secretsManagerClient *secretsmanager.Client, snsClient *sns.Client) (db *sql.DB, err error) {
+	smClient := secretsmanager
+	// Retrieve the secret
+    secretValue, err := smClient.GetSecretValue(context.Background(), &secretsmanager.GetSecretValueInput{
+        SecretId: aws.String(options.MySQLSMSecret),
+    })
 	if err != nil {
 		log.Printf(err.Error())
-		sendSNSMessage("Unable to initialise SecretsManager helper.  Cron status is unknown.", "cronSystem", nil)
+		sendSNSMessage("Unable to retrieve SecretsManager secret.  Cron status is unknown.", "cronSystem", snsClient)
 		return db, err
 	}
 
-	secretCache.Client = secretsManagerClient
-	MySQLPassword, err := secretCache.GetSecretString(options.MySQLSMSecret)
-	if err != nil {
-		log.Printf(err.Error())
-		sendSNSMessage("Unable to retrieve SecretsManager secret.  Cron status is unknown.", "cronSystem", nil)
-		return db, err
-	}
+    // Extract the password from the secret value (assuming it's stored as plain text)
+    var MySQLPassword string
+    if secretValue.SecretString != nil {
+        MySQLPassword = *secretValue.SecretString
+    }
 
 	cfg := mysql.Config{
 		User:                 options.MySQLUser,
@@ -153,12 +156,12 @@ func setupDB(secretsManagerClient *secretsmanager.Client) (db *sql.DB, err error
 	db, err = sql.Open("mysql", cfg.FormatDSN())
 	if err != nil {
 		log.Printf(err.Error())
-		sendSNSMessage("Unable to connect to database. Cron status unknown.", "cronSystem", nil)
+		sendSNSMessage("Unable to connect to database. Cron status unknown.", "cronSystem", snsClient)
 		return db, err
 	}
 	if err = db.Ping(); err != nil {
 		log.Printf(err.Error())
-		sendSNSMessage("Unable to connect to database. Cron status unknown.", "cronSystem", nil)
+		sendSNSMessage("Unable to connect to database. Cron status unknown.", "cronSystem", snsClient)
 		return db, err
 	}
 
@@ -203,11 +206,11 @@ func checkDB(db *sql.DB, snsClient *sns.Client) (err error) {
 }
 
 // Check for errors in cron runs.
-func checkCrons(db *sql.DB, cfg aws.Config) (err error) {
+func checkCrons(db *sql.DB, snsClient *sns.Client) (err error) {
 	cronMonitorInterval, err := parseLambdaIntervalToDuration(options.CronMonitorInterval)
 	if err != nil {
 		log.Printf(err.Error())
-		sendSNSMessage("Unable to parse cron-delay-tolerance. Check lambda settings.", "cronSystem", cfg)
+		sendSNSMessage("Unable to parse cron-delay-tolerance. Check lambda settings.", "cronSystem", snsClient)
 		return err
 	}
 	cronAlertTimestamp := time.Now().Add(-1 * cronMonitorInterval)
@@ -229,7 +232,7 @@ func checkCrons(db *sql.DB, cfg aws.Config) (err error) {
 	`)
 	if err != nil {
 		log.Printf(err.Error())
-		sendSNSMessage("Unable to SELECT cron_stats table.  Unable to continue.", "cronSystem", cfg)
+		sendSNSMessage("Unable to SELECT cron_stats table.  Unable to continue.", "cronSystem", snsClient)
 		return err
 	}
 	defer rows.Close()
@@ -237,7 +240,7 @@ func checkCrons(db *sql.DB, cfg aws.Config) (err error) {
 		var row CronStatsDigestRow
 		if err := rows.Scan(&row.name, &row.num_occurences, &row.num_errors, &row.last_updated_at, &row.most_recent_error); err != nil {
 			log.Printf(err.Error())
-			sendSNSMessage("Error scanning row in cron_stats table.  Unable to continue.", "cronSystem", cfg)
+			sendSNSMessage("Error scanning row in cron_stats table.  Unable to continue.", "cronSystem", snsClient)
 			return err
 		}
 
@@ -251,9 +254,9 @@ func checkCrons(db *sql.DB, cfg aws.Config) (err error) {
 		}
 		log.Printf("*** %s job had errors (runs: %d, errors: %d), alerting! (errors %s)", row.name, row.num_occurences, row.num_errors, row.most_recent_error.String)
 		if row.num_occurences == 1 {
-			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors during its last run:\n%s", row.name, row.updated_at.String(), row.most_recent_error.String), "cronJobFailure", cfg)
+			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors during its last run:\n%s", row.name, row.updated_at.String(), row.most_recent_error.String), "cronJobFailure", snsClient)
 		} else {
-			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors in %d of the previous %d runs; the most recent is:\n%s", row.name, row.last_updated_at.String(), row.num_errors, row.num_occurences, row.most_recent_error.String), "cronJobFailure", cfg)
+			sendSNSMessage(fmt.Sprintf("Fleet cron '%s' (last updated %s) raised errors in %d of the previous %d runs; the most recent is:\n%s", row.name, row.last_updated_at.String(), row.num_errors, row.num_occurences, row.most_recent_error.String), "cronJobFailure", snsClient)
 		}
 	}
 
@@ -269,7 +272,7 @@ func handler(ctx context.Context, name NullEvent) error {
 	snsClient := sns.NewFromConfig(cfg)
 	secretsManagerClient := secretsmanager.NewFromConfig(cfg)
 
-	db, err := setupDB(secretsManagerClient)
+	db, err := setupDB(secretsManagerClient, snsClient)
 	defer func() {
 		if db != nil {
 			db.Close()
