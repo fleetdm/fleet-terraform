@@ -24,7 +24,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"golang.org/x/tools/container/slices"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -244,7 +244,7 @@ func checkCrons(db *sql.DB, snsClient *sns.Client) (err error) {
 			return err
 		}
 
-		if slices.contains(cronIgnoreList, row.name) {
+		if slices.Contains(cronIgnoreList, row.name) {
 			log.Printf("Ignoring cron job: %s", row.name)
 			continue
 		}
