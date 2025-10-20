@@ -127,15 +127,15 @@ type CronStatsDigestRow struct {
 
 func setupDB(snsClient *sns.Client) (db *sql.DB, err error) {
 	// Load AWS config
-    cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(options.AWSRegion))
+    awsCfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(options.AWSRegion))
     if err != nil {
         log.Printf("unable to load SDK config, %v", err)
-        sendSNSMessage("Unable to initialise SecretsManager helper. Cron status is unknown.", "cronSystem")
+        sendSNSMessage("Unable to initialise SecretsManager helper. Cron status is unknown.", "cronSystem", snsClient)
         return nil, err
     }
 
     // Create the Secrets Manager client
-    smClient := secretsmanager.NewFromConfig(cfg)
+    smClient := secretsmanager.NewFromConfig(awsCfg)
 
 	// Retrieve the secret
     secretValue, err := smClient.GetSecretValue(context.Background(), &secretsmanager.GetSecretValueInput{
@@ -280,7 +280,6 @@ func handler(ctx context.Context, name NullEvent) error {
 	}
 
 	snsClient := sns.NewFromConfig(cfg)
-	secretsManagerClient := secretsmanager.NewFromConfig(cfg)
 
 	db, err := setupDB(snsClient)
 	defer func() {
