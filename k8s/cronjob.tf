@@ -127,7 +127,7 @@ resource "kubernetes_cron_job_v1" "fleet_vuln_processing_cron_job" {
                                     { name = "FLEET_MYSQL_READ_REPLICA_MAX_OPEN_CONNS", value = local.database_read_replica.max_open_conns },
                                     { name = "FLEET_MYSQL_READ_REPLICA_MAX_IDLE_CONNS", value = local.database_read_replica.max_idle_conns },
                                     { name = "FLEET_MYSQL_READ_REPLICA_CONN_MAX_LIFETIME", value = local.database_read_replica.conn_max_lifetime }
-                                ] : null
+                                ] : []
 
                                 content {
                                     name = env.value.name
@@ -152,7 +152,7 @@ resource "kubernetes_cron_job_v1" "fleet_vuln_processing_cron_job" {
                                     { name = "FLEET_MYSQL_READ_REPLICA_TLS_KEY", value = "/secrets/mysql/${local.database_read_replica.tls.key_key}" },
                                     { name = "FLEET_MYSQL_READ_REPLICA_TLS_CONFIG", value = local.database_read_replica.tls.config },
                                     { name = "FLEET_MYSQL_READ_REPLICA_TLS_SERVER_NAME", value = local.database_read_replica.tls.server_name }
-                                ] : null
+                                ] : []
 
                                 content {
                                     name = env.value.name

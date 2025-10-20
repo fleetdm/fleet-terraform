@@ -357,7 +357,7 @@ module "fleet" {
             }   
         }
     */
-    database_read_replica = {}
+    # database_read_replica = {}
 
     cache = {
         enabled = false
