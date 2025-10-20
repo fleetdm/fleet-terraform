@@ -56,11 +56,13 @@ type OptionsStruct struct {
 	CronDelayTolerance         string `long:"cron-delay-tolerance" env:"CRON_DELAY_TOLERANCE" default:"2h"`
 	CronMonitorInterval        string `long:"monitor-run-interval" env:"CRON_MONITOR_RUN_INTERVAL" default:"1 hour"`
 	AwsEndpointUrl             string `long:"aws-endpoint-url" env:"AWS_ENDPOINT_URL"`
+	CronIgnoreList             list `long:"cron-ignore-list" env:"CRON_IGNORE_LIST"`
 }
 
 var (
 	options   = OptionsStruct{}
 	snsTopics = make(SNSTopicArnsMap)
+	cronIgnoreList []string
 )
 
 func sendSNSMessage(msg string, topic string, sess *session.Session) {
@@ -240,6 +242,12 @@ func checkCrons(db *sql.DB, sess *session.Session) (err error) {
 			sendSNSMessage("Error scanning row in cron_stats table.  Unable to continue.", "cronSystem", sess)
 			return err
 		}
+
+		if contains(cronIgnoreList, row.name) {
+			log.Printf("Ignoring cron job: %s", row.name)
+			continue
+		}
+
 		if row.num_errors == 0 {
 			continue
 		}
@@ -294,6 +302,10 @@ func main() {
 		} else {
 			log.Fatal(err)
 		}
+	}
+
+	if options.CronIgnoreList != "" {
+		cronIgnoreList = strings.Split(options.CronIgnoreList, ",")
 	}
 
 	snsTopics["cronSystem"] = options.SNSCronSystemTopicArns
