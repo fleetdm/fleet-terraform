@@ -283,8 +283,8 @@ resource "kubernetes_deployment" "fleet" {
                         ] : []
 
                         content {
-                            name = env.value.name
-                            value = env.value.value
+                            name = local.database_read_replica.enabled ? env.value.name : ""
+                            value = local.database_read_replica.enabled ? env.value.value : ""
                         }
                     }
 
@@ -308,8 +308,8 @@ resource "kubernetes_deployment" "fleet" {
                         ] : []
 
                         content {
-                            name = env.value.name
-                            value = env.value.value
+                            name = local.database_read_replica.enabled && local.database.tls.enabled ? env.value.name : ""
+                            value = local.database_read_replica.enabled && local.database.tls.enabled ? env.value.value : ""
                         }
                     }
 

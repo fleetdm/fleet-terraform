@@ -130,8 +130,8 @@ resource "kubernetes_cron_job_v1" "fleet_vuln_processing_cron_job" {
                                 ] : []
 
                                 content {
-                                    name = env.value.name
-                                    value = env.value.value
+                                    name = local.database_read_replica.enabled ? env.value.name : ""
+                                    value = local.database_read_replica.enabled ? env.value.value : ""
                                 }
                             }
 
@@ -155,8 +155,8 @@ resource "kubernetes_cron_job_v1" "fleet_vuln_processing_cron_job" {
                                 ] : []
 
                                 content {
-                                    name = env.value.name
-                                    value = env.value.value
+                                    name = local.database_read_replica.enabled && local.database.tls.enabled ? env.value.name : ""
+                                    value = local.database_read_replica.enabled && local.database.tls.enabled ? env.value.value : ""
                                 }
                             }
 
