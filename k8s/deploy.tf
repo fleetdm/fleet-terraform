@@ -105,8 +105,6 @@ resource "kubernetes_deployment" "fleet" {
                         ] : []
 
                         content {
-
-                        content {
                             name = env.value.name
                             value = env.value.value
                         }
@@ -166,8 +164,6 @@ resource "kubernetes_deployment" "fleet" {
                         for_each = local.fleet.carving.s3.access_key_id != "" ? [ 
                             { name = "FLEET_S3_ACCESS_KEY_ID", value = local.fleet.carving.s3.access_key_id }
                         ] : []
-
-                        content {
 
                         content {
                             name = env.value.name
