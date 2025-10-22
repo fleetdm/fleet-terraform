@@ -6,19 +6,22 @@ function scale_services(){
 	SERVICE_NAME="${2:?}" # Take service name as an argument
 	ADJUST_AUTOSCALING="${3:-}"
 	COUNT="${4:-1}"
+	MAX_CAPACITY="${5:-1}"
 
 	# Set the minimum capacity and desired count in the cluster to 0 to scale down or to the original size to scale back to normal.
 
 	# This is a bit hacky, but the update-service has to happen first when scaling up and second when scaling down.
 	# Assume scaling down unless "up".
 	CAPACITY=0
+	CAPACITY_MAX=0
 	if [ "${UP_DOWN:?}" = "up" ]; then
 		aws ecs update-service --region "${REGION:?}" --cluster "${ECS_CLUSTER:?}" --service "${SERVICE_NAME:?}" --desired-count "${COUNT:?}"
 		CAPACITY="${MIN_CAPACITY:?}"
+		CAPACITY_MAX="${MAX_CAPACITY}"
 	fi
 
 	if [ -n "${ADJUST_AUTOSCALING}" ]; then
-		aws application-autoscaling register-scalable-target --region "${REGION:?}" --service-namespace ecs --resource-id "service/${ECS_CLUSTER:?}/${SERVICE_NAME:?}" --scalable-dimension "ecs:service:DesiredCount" --min-capacity "${CAPACITY:?}" --max-capacity "${COUNT:?}"
+		aws application-autoscaling register-scalable-target --region "${REGION:?}" --service-namespace ecs --resource-id "service/${ECS_CLUSTER:?}/${SERVICE_NAME:?}" --scalable-dimension "ecs:service:DesiredCount" --min-capacity "${CAPACITY:?}" --max-capacity "${CAPACITY_MAX:?}"
 	fi
 	
 	# We are scaling down, make it 0
@@ -55,7 +58,7 @@ if [ -n "${ASSUME_ROLE_ARN:-}" ]; then
   export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
 fi
 
-scale_services down "${ECS_SERVICE:?}" true "${DESIRED_COUNT}"
+scale_services down "${ECS_SERVICE:?}" true "${DESIRED_COUNT}" "${MAX_CAPACITY}"
 
 if [ -n "${VULN_SERVICE}" ]; then
   scale_services down "${VULN_SERVICE:?}"
@@ -67,7 +70,7 @@ TASK_ARN="$(aws ecs run-task --region "${REGION:?}" --cluster "${ECS_CLUSTER:?}"
 # Wait for completion
 aws ecs wait tasks-stopped --region "${REGION:?}" --cluster="${ECS_CLUSTER:?}" --tasks="${TASK_ARN:?}"
 
-scale_services up "${ECS_SERVICE:?}" true "${DESIRED_COUNT}"
+scale_services up "${ECS_SERVICE:?}" true "${DESIRED_COUNT}" "${MAX_CAPACITY}"
 
 if [ -n "${VULN_SERVICE}" ]; then
   scale_services up "${VULN_SERVICE:?}"

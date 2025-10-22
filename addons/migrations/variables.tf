@@ -13,6 +13,11 @@ variable "min_capacity" {
   nullable = false
 }
 
+variable "max_capacity" {
+  type     = number
+  nullable = false
+}
+
 variable "desired_count" {
   type     = number
   nullable = false
