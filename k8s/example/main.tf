@@ -1,5 +1,5 @@
 module "fleet" {
-  source = "git::https://github.com/fleetdm/fleet-terraform//k8s?depth=1&ref=tf-mod-k8s-v1.2.0"
+  source = "git::https://github.com/fleetdm/fleet-terraform//k8s?depth=1&ref=tf-mod-k8s-v1.1.3"
 
   namespace        = "fleet"
   hostname         = "fleet.localhost.local"
@@ -192,7 +192,6 @@ module "fleet" {
         endpoint_url        = ""
         force_s3_path_style = false
         region              = ""
-        secret_name         = ""
         access_key_id       = ""
         secret_key          = "s3-software-installers"
         sts_assume_role_arn = ""
@@ -205,7 +204,6 @@ module "fleet" {
         endpoint_url        = ""
         force_s3_path_style = false
         region              = ""
-        secret_name         = ""
         access_key_id       = ""
         secret_key          = "s3-bucket"
         sts_assume_role_arn = ""
