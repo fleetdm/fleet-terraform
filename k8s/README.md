@@ -185,7 +185,7 @@ You will need to create a TLS secret specifically for use by the istio ingress g
 apiVersion: v1
 kind: Secret
 metadata:
-  name: fleet-tls
+  name: fleet
   namespace: <namespace_name>
 type: kubernetes.io/tls
 data:
@@ -195,7 +195,7 @@ data:
     <base64-encoded-tls-cert-here>
 ```
 
-After the secret has been created, you can create your istio ingress `Gateway` and istio `Virtual Service`. In the examble below you should make reference, in the `Gateway` and `VirtualService` to hostname (example: `fleet.example.com`) covered by your TLS certificate stored in the TLS secret created above (example: `fleet-tls`).
+After the secret has been created, you can create your istio ingress `Gateway` and istio `Virtual Service`. In the examble below you should make reference, in the `Gateway` and `VirtualService` to hostname (example: `fleet.example.com`) covered by your TLS certificate stored in the TLS secret created above (example: `fleet`).
 
 ```yaml
 ---
@@ -214,7 +214,7 @@ spec:
       protocol: HTTPS
     tls:
       mode: SIMPLE
-      credentialName: fleet-tls # must be the same as secret
+      credentialName: fleet # must be the same as secret
     hosts:
     - 'fleet.example.com'
 ---
