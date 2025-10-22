@@ -189,8 +189,23 @@ module "fleet" {
             s3 = {
                 bucket_name = ""
                 prefix = ""
+                endpoint_url = ""
+                force_s3_path_style = false
+                region = ""
                 access_key_id = ""
                 secret_key = "s3-bucket"
+                sts_assume_role_arn = ""
+            }
+        }
+        software_installers = {
+            s3 = {
+                bucket_name = ""
+                prefix = ""
+                endpoint_url = ""
+                force_s3_path_style = false
+                region = ""
+                access_key_id = ""
+                secret_key = "s3-software-installers"
                 sts_assume_role_arn = ""
             }
         }
