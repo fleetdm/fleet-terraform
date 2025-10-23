@@ -58,7 +58,7 @@ if [ -n "${ASSUME_ROLE_ARN:-}" ]; then
   export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
 fi
 
-scale_services down "${ECS_SERVICE:?}" true "${DESIRED_COUNT}" "${MAX_CAPACITY}"
+scale_services down "${ECS_SERVICE:?}" true "${DESIRED_COUNT}" ${MAX_CAPACITY}
 
 if [ -n "${VULN_SERVICE}" ]; then
   scale_services down "${VULN_SERVICE:?}"
