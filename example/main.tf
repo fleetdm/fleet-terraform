@@ -256,7 +256,7 @@ module "fleet" {
 # doesn't directly support all the features required.  the aws cli is invoked via a null-resource.
 
 module "migrations" {
-  source                   = "github.com/fleetdm/fleet-terraform/addons/migrations?depth=1&ref=tf-mod-addon-migrations-v2.1.0"
+  source                   = "github.com/fleetdm/fleet-terraform/addons/migrations?depth=1&ref=tf-mod-addon-migrations-v2.2.0"
   ecs_cluster              = module.fleet.byo-vpc.byo-db.byo-ecs.service.cluster
   task_definition          = module.fleet.byo-vpc.byo-db.byo-ecs.task_definition.family
   task_definition_revision = module.fleet.byo-vpc.byo-db.byo-ecs.task_definition.revision
@@ -265,7 +265,8 @@ module "migrations" {
   ecs_service              = module.fleet.byo-vpc.byo-db.byo-ecs.service.name
   desired_count            = module.fleet.byo-vpc.byo-db.byo-ecs.appautoscaling_target.min_capacity
   min_capacity             = module.fleet.byo-vpc.byo-db.byo-ecs.appautoscaling_target.min_capacity
-  
+  max_capacity             = module.fleet.byo-vpc.byo-db.byo-ecs.appautoscaling_target.max_capacity
+   
   depends_on = [
     module.fleet, 
   ]

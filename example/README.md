@@ -33,9 +33,9 @@ If using a new route53 zone:
 | Name | Source | Version |
 |------|--------|---------|
 | <a name="module_acm"></a> [acm](#module\_acm) | terraform-aws-modules/acm/aws | 4.3.1 |
-| <a name="module_fleet"></a> [fleet](#module\_fleet) | github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.18.2 | n/a |
+| <a name="module_fleet"></a> [fleet](#module\_fleet) | github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.18.3 | n/a |
 | <a name="module_mdm"></a> [mdm](#module\_mdm) | github.com/fleetdm/fleet-terraform/addons/mdm?depth=1&ref=tf-mod-addon-mdm-v2.0.0 | n/a |
-| <a name="module_migrations"></a> [migrations](#module\_migrations) | github.com/fleetdm/fleet-terraform/addons/migrations?depth=1&ref=tf-mod-addon-migrations-v2.1.0 | n/a |
+| <a name="module_migrations"></a> [migrations](#module\_migrations) | github.com/fleetdm/fleet-terraform/addons/migrations?depth=1&ref=tf-mod-addon-migrations-v2.2.0 | n/a |
 
 ## Resources
 
