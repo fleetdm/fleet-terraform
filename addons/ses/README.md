@@ -9,7 +9,7 @@ No requirements.
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.7.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.19.0 |
 
 ## Modules
 
@@ -34,6 +34,7 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
+| <a name="input_create_iam_policy"></a> [create\_iam\_policy](#input\_create\_iam\_policy) | Create IAM policy for the SES email sending. (Default: true) | `bool` | `true` | no |
 | <a name="input_custom_mail_from"></a> [custom\_mail\_from](#input\_custom\_mail\_from) | Custom MAIL FROM domain settings | <pre>object({<br/>    enabled       = optional(bool, false)<br/>    domain_prefix = optional(string, "")<br/>  })</pre> | <pre>{<br/>  "domain_prefix": "",<br/>  "enabled": false<br/>}</pre> | no |
 | <a name="input_domain"></a> [domain](#input\_domain) | Domain to use for SES. | `string` | n/a | yes |
 | <a name="input_extra_txt_records"></a> [extra\_txt\_records](#input\_extra\_txt\_records) | Extra TXT records that have to match the same name as the Fleet instance | `list(string)` | `[]` | no |
