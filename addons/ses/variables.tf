@@ -25,3 +25,9 @@ variable "custom_mail_from" {
   }
   description = "Custom MAIL FROM domain settings"
 }
+
+variable "create_iam_policy" {
+  type        = bool
+  default     = true
+  description = "Create IAM policy for the SES email sending. (Default: true)"
+}

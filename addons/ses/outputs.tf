@@ -7,6 +7,6 @@ output "fleet_extra_environment_variables" {
 
 output "fleet_extra_iam_policies" {
   value = [
-    aws_iam_policy.main.arn
+    var.create_iam_policy ? aws_iam_policy.main[0].arn : null
   ]
 }
