@@ -1,0 +1,46 @@
+---
+- name: Enable EPEL repository
+  ansible.builtin.package:
+    name: epel-release
+    state: present
+
+- name: Install nginx and certbot packages
+  ansible.builtin.package:
+    name:
+      - nginx
+      - certbot
+      - python3-certbot-nginx
+    state: present
+
+- name: Ensure nginx configuration directory exists
+  ansible.builtin.file:
+    path: /etc/nginx/conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy Fleet reverse proxy configuration
+  ansible.builtin.template:
+    src: fleet.conf.j2
+    dest: /etc/nginx/conf.d/fleet.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload nginx
+
+- name: Ensure nginx enabled and running
+  ansible.builtin.service:
+    name: nginx
+    state: started
+    enabled: true
+
+- name: Request TLS certificates with certbot
+  ansible.builtin.command: >
+    certbot --nginx --non-interactive --agree-tos --redirect
+    --email {{ tls_email }}
+    {% for domain in tls_domains %}-d {{ domain }} {% endfor %}
+  args:
+    creates: "/etc/letsencrypt/live/{{ tls_domains[0] }}/fullchain.pem"
+  when: tls_domains | length > 0
