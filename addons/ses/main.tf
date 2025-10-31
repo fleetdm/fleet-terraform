@@ -63,10 +63,12 @@ resource "aws_route53_record" "dmarc_domain" {
 }
 
 resource "aws_iam_policy" "main" {
-  policy = data.aws_iam_policy_document.main.json
+  count = var.create_iam_policy ? 1 : 0
+  policy = data.aws_iam_policy_document.main[0].json
 }
 
 data "aws_iam_policy_document" "main" {
+  count = var.create_iam_policy ? 1 : 0
   statement {
     actions = [
       "ses:SendEmail",
