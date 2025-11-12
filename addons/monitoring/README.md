@@ -12,12 +12,12 @@ This includes:
 
 # Preparation
 
-> Note: The documented examples and links in this README may assume use of `module.main` instead of `module.fleet`. The monitoring example configuration can be modified as documented below, if your fleet module is named `fleet` instead of `main`
-> - A search and replace of `module.main` -> `module.fleet`
+> Note: The documented examples and links in this README may assume use of `module.fleet` instead of `module.fleet`. The monitoring example configuration can be modified as documented below, if your fleet module is named `fleet` instead of `main`
+> - A search and replace of `module.fleet` -> `module.fleet`
 
 Some of the for\_each and counts in this module cannot pre-determine the numbers until the `main` fleet module is applied.
 
-You will need to `terraform apply -target module.main` prior to applying monitoring assuming the use of a configuration matching the example at https://github.com/fleetdm/fleet-terraform/blob/main/example/main.tf.
+You will need to `terraform apply -target module.fleet` prior to applying monitoring assuming the use of a configuration matching the example at https://github.com/fleetdm/fleet-terraform/blob/main/example/main.tf.
 
 Multiple alb support was added in order to allow monitoring `saml-auth-proxy`. See https://github.com/fleetdm/fleet-terraform/tree/main/addons/saml-auth-proxy
 
@@ -31,17 +31,17 @@ https://github.com/fleetdm/fleet-terraform/blob/main/example/main.tf for details
 
 ```
 module "monitoring" {
-  source                 = "github.com/fleetdm/fleet-terraform//addons/monitoring?ref=tf-mod-addon-monitoring-v1.7.0"
+  source                 = "github.com/fleetdm/fleet-terraform//addons/monitoring?ref=tf-mod-addon-monitoring-v1.8.0"
   customer_prefix        = local.customer
-  fleet_ecs_service_name = module.main.byo-vpc.byo-db.byo-ecs.service.name
+  fleet_ecs_service_name = module.fleet.byo-vpc.byo-db.byo-ecs.service.name
   albs = [
     {
-      name                    = module.main.byo-vpc.byo-db.alb.lb_dns_name,
-      target_group_name       = module.main.byo-vpc.byo-db.alb.target_group_names[0]
-      target_group_arn_suffix = module.main.byo-vpc.byo-db.alb.target_group_arn_suffixes[0]
-      arn_suffix              = module.main.byo-vpc.byo-db.alb.lb_arn_suffix
-      ecs_service_name        = module.main.byo-vpc.byo-db.byo-ecs.service.name
-      min_containers          = module.main.byo-vpc.byo-db.byo-ecs.appautoscaling_target.min_capacity
+      name                    = module.fleet.byo-vpc.byo-db.alb.lb_dns_name,
+      target_group_name       = module.fleet.byo-vpc.byo-db.alb.target_group_names[0]
+      target_group_arn_suffix = module.fleet.byo-vpc.byo-db.alb.target_group_arn_suffixes[0]
+      arn_suffix              = module.fleet.byo-vpc.byo-db.alb.lb_arn_suffix
+      ecs_service_name        = module.fleet.byo-vpc.byo-db.byo-ecs.service.name
+      min_containers          = module.fleet.byo-vpc.byo-db.byo-ecs.appautoscaling_target.min_capacity
       alert_thresholds = {
         HTTPCode_ELB_5XX_Count = {
           period    = 3600
@@ -55,22 +55,23 @@ module "monitoring" {
     },
   ]
   sns_topic_arns_map = {
+    log_monitoring   = [var.sns_topic_arn]
     alb_httpcode_5xx = [var.sns_topic_arn]
     cron_monitoring  = [var.sns_topic_arn]
     cron_job_failure_monitoring  = [var.sns_another_topic_arn]
   }
-  mysql_cluster_members = module.main.byo-vpc.rds.cluster_members
+  mysql_cluster_members = module.fleet.byo-vpc.rds.cluster_members
   # The cloudposse module seems to have a nested list here.
-  redis_cluster_members = module.main.byo-vpc.redis.member_clusters[0]
+  redis_cluster_members = module.fleet.byo-vpc.redis.member_clusters[0]
   acm_certificate_arn   = module.acm.acm_certificate_arn
   cron_monitoring = {
-    mysql_host                 = module.main.byo-vpc.rds.cluster_reader_endpoint
-    mysql_database             = module.main.byo-vpc.rds.cluster_database_name
-    mysql_user                 = module.main.byo-vpc.rds.cluster_master_username
-    mysql_password_secret_name = module.main.byo-vpc.secrets.secret_ids["${local.customer}-database-password"]
-    rds_security_group_id      = module.main.byo-vpc.rds.security_group_id
-    subnet_ids                 = module.main.vpc.private_subnets
-    vpc_id                     = module.main.vpc.vpc_id
+    mysql_host                 = module.fleet.byo-vpc.rds.cluster_reader_endpoint
+    mysql_database             = module.fleet.byo-vpc.rds.cluster_database_name
+    mysql_user                 = module.fleet.byo-vpc.rds.cluster_master_username
+    mysql_password_secret_name = module.fleet.byo-vpc.secrets.secret_ids["${local.customer}-database-password"]
+    rds_security_group_id      = module.fleet.byo-vpc.rds.security_group_id
+    subnet_ids                 = module.fleet.vpc.private_subnets
+    vpc_id                     = module.fleet.vpc.vpc_id
     # Format of https://pkg.go.dev/time#ParseDuration
     delay_tolerance = "4h"
     # Interval format for: https://docs.aws.amazon.com/scheduler/latest/UserGuide/schedule-types.html#rate-based
@@ -78,6 +79,29 @@ module "monitoring" {
     log_retention_in_days = 365
     # Cron List of Names to Ignore (see below for valid values)
     ignore_list = []
+  }
+  log_monitoring = {
+    invalid-secret = {
+      log_group_name = module.fleet.byo-vpc.byo-db.byo-ecs.logging_config.awslogs-group
+      pattern = "{ $.internal = \"invalid secret\" }"
+      evaluation_periods = 1
+      period             = 3600
+      threshold          = 1
+    }
+    duplicate-identifier = {
+      log_group_name = module.fleet.byo-vpc.byo-db.byo-ecs.logging_config.awslogs-group
+      pattern = "{ $.msg = \"osquery host with duplicate identifier has enrolled in Fleet and will overwrite existing host data\" }"
+      evaluation_periods = 1
+      period             = 3600
+      threshold          = 1
+    }
+    limit-exceeded = {
+      log_group_name = module.fleet.byo-vpc.byo-db.byo-ecs.logging_config.awslogs-group
+      pattern = "{ $.err = \"limit exceeded\" }"
+      evaluation_periods = 1
+      period             = 60
+      threshold          = 1
+    }
   }
 }
 ```
@@ -92,6 +116,7 @@ Valid targets for `sns_topic_arns_map`:
  - backend\_response\_time
  - cron\_monitoring (notifications about failures in the cron scheduler)
  - cron\_job\_failure\_monitoring (notifications about errors in individual cron jobs - defaults to value of `cron_monitoring`)
+ - log\_monitoring
  - rds\_cpu\_untilizaton\_too\_high
  - rds\_db\_event\_subscription
  - redis\_cpu\_engine\_utilization
@@ -132,7 +157,7 @@ No requirements.
 | Name | Version |
 |------|---------|
 | <a name="provider_archive"></a> [archive](#provider\_archive) | 2.7.1 |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.17.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.20.0 |
 | <a name="provider_null"></a> [null](#provider\_null) | 3.2.4 |
 
 ## Modules
@@ -146,10 +171,12 @@ No modules.
 | [aws_cloudwatch_event_rule.cron_monitoring_lambda](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_event_rule) | resource |
 | [aws_cloudwatch_event_target.cron_monitoring_lambda](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_event_target) | resource |
 | [aws_cloudwatch_log_group.cron_monitoring_lambda](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
+| [aws_cloudwatch_log_metric_filter.log_monitoring](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_metric_filter) | resource |
 | [aws_cloudwatch_metric_alarm.acm_certificate_expired](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.alb_healthyhosts](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.cpu_utilization_too_high](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.lb](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
+| [aws_cloudwatch_metric_alarm.log_monitoring](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.redis-current-connections](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.redis-database-memory-percentage](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.redis-replication-lag](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
@@ -183,6 +210,7 @@ No modules.
 | <a name="input_customer_prefix"></a> [customer\_prefix](#input\_customer\_prefix) | n/a | `string` | `"fleet"` | no |
 | <a name="input_default_sns_topic_arns"></a> [default\_sns\_topic\_arns](#input\_default\_sns\_topic\_arns) | n/a | `list(string)` | `[]` | no |
 | <a name="input_fleet_ecs_service_name"></a> [fleet\_ecs\_service\_name](#input\_fleet\_ecs\_service\_name) | n/a | `string` | `null` | no |
+| <a name="input_log_monitoring"></a> [log\_monitoring](#input\_log\_monitoring) | Map of CloudWatch log monitors to create. Key is used as a suffix for resources and metric naming. | <pre>map(object({<br/>    log_group_name     = string<br/>    pattern            = string<br/>    evaluation_periods = number<br/>    period             = number<br/>    threshold          = number<br/>  }))</pre> | `{}` | no |
 | <a name="input_mysql_cluster_members"></a> [mysql\_cluster\_members](#input\_mysql\_cluster\_members) | n/a | `list(string)` | `[]` | no |
 | <a name="input_redis_cluster_members"></a> [redis\_cluster\_members](#input\_redis\_cluster\_members) | n/a | `list(string)` | `[]` | no |
 | <a name="input_sns_topic_arns_map"></a> [sns\_topic\_arns\_map](#input\_sns\_topic\_arns\_map) | n/a | `map(list(string))` | `{}` | no |
