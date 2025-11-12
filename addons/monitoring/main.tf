@@ -40,6 +40,37 @@ locals {
   alb_map = { for k, v in var.albs : k => v }
 }
 
+// Log-based monitoring
+resource "aws_cloudwatch_log_metric_filter" "log_monitoring" {
+  for_each = var.log_monitoring
+
+  name           = "${var.customer_prefix}-log-monitor-${each.key}"
+  log_group_name = each.value.log_group_name
+  pattern        = each.value.pattern
+
+  metric_transformation {
+    name      = "${var.customer_prefix}-${each.key}"
+    namespace = "${var.customer_prefix}-logs"
+    value     = "1"
+    unit      = "Count"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "log_monitoring" {
+  for_each            = var.log_monitoring
+  alarm_name          = "${var.customer_prefix}-log-monitor-${each.key}"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = each.value.evaluation_periods
+  metric_name         = "${var.customer_prefix}-${each.key}"
+  namespace           = "${var.customer_prefix}-logs"
+  period              = each.value.period
+  statistic           = "Sum"
+  threshold           = each.value.threshold
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = lookup(var.sns_topic_arns_map, "log_monitoring", var.default_sns_topic_arns)
+  ok_actions          = lookup(var.sns_topic_arns_map, "log_monitoring", var.default_sns_topic_arns)
+}
+
 
 // ECS Alarms
 resource "aws_cloudwatch_metric_alarm" "alb_healthyhosts" {

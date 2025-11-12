@@ -68,6 +68,18 @@ variable "acm_certificate_arn" {
   default = null
 }
 
+variable "log_monitoring" {
+  description = "Map of CloudWatch log monitors to create. Key is used as a suffix for resources and metric naming."
+  type = map(object({
+    log_group_name     = string
+    pattern            = string
+    evaluation_periods = number
+    period             = number
+    threshold          = number
+  }))
+  default = {}
+}
+
 variable "cron_monitoring" {
   type = object({
     mysql_host                 = string
