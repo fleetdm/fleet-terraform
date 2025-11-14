@@ -1,3 +1,8 @@
+variable "iam_policy_name" {
+  type    = string
+  default = "snowflake-firehose-policy"
+}
+
 variable "s3_bucket_config" {
   type = object({
     name_prefix  = optional(string, "fleet-snowflake-failure")

@@ -55,7 +55,7 @@ data "aws_iam_policy_document" "firehose_policy" {
 }
 
 resource "aws_iam_policy" "firehose" {
-  name   = "snowflake_firehose_policy"
+  name   = var.iam_policy_name
   policy = data.aws_iam_policy_document.firehose_policy.json
 }
 
