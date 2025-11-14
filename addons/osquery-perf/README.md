@@ -14,7 +14,7 @@ Below is an example implementation of the module:
 
 ```
 module "osquery_perf" {
-  source                     = "github.com/fleetdm/fleet-terraform//addons/osquery-perf?ref=tf-mod-addon-osquery-perf-v1.2.0"
+  source                     = "github.com/fleetdm/fleet-terraform//addons/osquery-perf?ref=tf-mod-addon-osquery-perf-v1.2.1"
   customer_prefix            = "fleet"
   ecs_cluster                = module.main.byo-vpc.byo-db.byo-ecs.service.cluster
   subnets                    = module.main.byo-vpc.byo-db.byo-ecs.service.network_configuration[0].subnets
@@ -41,7 +41,7 @@ No requirements.
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.12.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.21.0 |
 
 ## Modules
 
@@ -76,6 +76,7 @@ No modules.
 | <a name="input_security_groups"></a> [security\_groups](#input\_security\_groups) | n/a | `list(string)` | n/a | yes |
 | <a name="input_server_url"></a> [server\_url](#input\_server\_url) | n/a | `string` | n/a | yes |
 | <a name="input_subnets"></a> [subnets](#input\_subnets) | n/a | `list(string)` | n/a | yes |
+| <a name="input_task_size"></a> [task\_size](#input\_task\_size) | n/a | <pre>object({<br/>    cpu    = optional(number, 256)<br/>    memory = optional(number, 1024)<br/>  })</pre> | <pre>{<br/>  "cpu": 256,<br/>  "memory": 1024<br/>}</pre> | no |
 
 ## Outputs
 
