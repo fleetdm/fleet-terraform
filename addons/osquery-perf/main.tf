@@ -32,15 +32,15 @@ resource "aws_ecs_task_definition" "osquery_perf" {
   requires_compatibilities = ["FARGATE"]
   execution_role_arn       = var.ecs_execution_iam_role_arn
   task_role_arn            = var.ecs_iam_role_arn
-  cpu                      = 256
-  memory                   = 1024
+  cpu                      = var.task_size.cpu
+  memory                   = var.task_size.memory
   container_definitions = jsonencode(
     [
       {
         name        = "osquery-perf"
         image       = var.osquery_perf_image
-        cpu         = 256
-        memory      = 512
+        cpu         = var.task_size.cpu
+        memory      = var.task_size.memory
         mountPoints = []
         volumesFrom = []
         essential   = true
