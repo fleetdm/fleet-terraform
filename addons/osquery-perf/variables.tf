@@ -4,6 +4,18 @@ variable "customer_prefix" {
   default     = "fleet"
 }
 
+variable "task_size" {
+  type = object({
+    cpu    = optional(number, 256)
+    memory = optional(number, 1024)
+  })
+
+  default = {
+    cpu    = 256
+    memory = 1024
+  }
+}
+
 variable "ecs_cluster" {
   type = string
 }
