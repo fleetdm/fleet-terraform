@@ -11,10 +11,35 @@ locals {
       listener_rules = {}
     }
   }
-  mtls_subdomains = merge(local.mtls_subdomain_defaults, coalesce(var.alb_config.mtls_subdomains, {}))
+  provided_mtls_subdomains = coalesce(var.alb_config.mtls_subdomains, {})
+  mtls_subdomains = {
+    for key, defaults in local.mtls_subdomain_defaults :
+    key => merge(defaults, lookup(local.provided_mtls_subdomains, key, defaults))
+  }
   mtls_subdomain_labels = { for key in keys(local.mtls_subdomains) :
     key => replace(key, "_", "-")
   }
+  okta_special_path = "/api/fleet/conditional_access/idp/sso"
+  my_device_path_sets = [
+    [
+      "/device/*",
+      "/api/*/fleet/device/*",
+      "/assets/*",
+    ],
+    [
+      "/api/*/fleet/device/*/migrate_mdm",
+      "/api/*/fleet/device/*/rotate_encryption_key",
+    ],
+    [
+      "/api/*/fleet/device/*/debug/errors",
+      "/api/*/fleet/device/*/desktop",
+    ],
+    [
+      "/api/*/fleet/device/*/refetch",
+      "/api/*/fleet/device/*/transparency",
+      "/api/fleet/device/ping",
+    ],
+  ]
   fleet_config = merge(var.fleet_config, {
     loadbalancer = {
       arn = module.alb.target_groups["tg-0"].arn
@@ -82,17 +107,21 @@ locals {
     for subdomain, config in local.mtls_subdomains :
     subdomain => coalesce(config.domain_prefix, local.mtls_subdomain_labels[subdomain])
   }
+  mtls_host_patterns = {
+    for subdomain, prefix in local.mtls_domain_prefixes :
+    subdomain => "${prefix}*"
+  }
   mtls_okta_forward_rule = local.mtls_subdomains["okta"].enabled ? [{
     key = "${local.mtls_subdomain_labels["okta"]}-domain"
     conditions = [
       {
         host_header = {
-          values = ["${local.mtls_domain_prefixes["okta"]}*"]
+          values = [local.mtls_host_patterns["okta"]]
         }
       },
       {
         path_pattern = {
-          values = ["/api/fleet/conditional_access/idp/sso"]
+          values = [local.okta_special_path]
         }
       }
     ]
@@ -101,40 +130,102 @@ locals {
       target_group_key = "${local.mtls_subdomain_labels["okta"]}-https-tg-0"
     }]
   }] : []
+  mtls_okta_deny_rule = local.mtls_subdomains["okta"].enabled ? [{
+    key = "${local.mtls_subdomain_labels["okta"]}-deny"
+    conditions = [{
+      host_header = {
+        values = [local.mtls_host_patterns["okta"]]
+      }
+    }]
+    actions = [{
+      type = "fixed-response"
+      fixed_response = {
+        content_type = "text/plain"
+        message_body = "Not Found"
+        status_code  = "404"
+      }
+    }]
+  }] : []
   mtls_okta_redirect_rule = local.mtls_subdomains["okta"].enabled ? [{
     key = "${local.mtls_subdomain_labels["okta"]}-redirect"
     conditions = [{
       path_pattern = {
-        values = ["/api/fleet/conditional_access/idp/sso"]
+        values = [local.okta_special_path]
       }
     }]
     actions = [{
       type = "redirect"
       redirect = {
-        host        = "${local.mtls_subdomain_labels["okta"]}.#{host}"
-        path        = "/api/fleet/conditional_access/idp/sso"
+        host        = "${local.mtls_domain_prefixes["okta"]}.#{host}"
+        path        = local.okta_special_path
         protocol    = "HTTPS"
         status_code = "HTTP_302"
       }
     }]
   }] : []
-  mtls_other_domain_rules = [
-    for subdomain in local.enabled_mtls_subdomains : {
-      key = "${local.mtls_subdomain_labels[subdomain]}-domain"
-      conditions = [{
-        host_header = {
-          values = ["${local.mtls_domain_prefixes[subdomain]}*"]
+  mtls_my_device_forward_rules = local.mtls_subdomains["my_device"].enabled ? [
+    for idx, paths in local.my_device_path_sets : {
+      key = "${local.mtls_subdomain_labels["my_device"]}-paths-${idx}"
+      conditions = [
+        {
+          host_header = {
+            values = [local.mtls_host_patterns["my_device"]]
+          }
+        },
+        {
+          path_pattern = {
+            values = paths
+          }
         }
-      }]
+      ]
       actions = [{
         type             = "forward"
-        target_group_key = "${local.mtls_subdomain_labels[subdomain]}-https-tg-0"
+        target_group_key = "${local.mtls_subdomain_labels["my_device"]}-https-tg-0"
       }]
-    } if subdomain != "okta"
-  ]
-  mtls_domain_rule_sequence = concat(local.mtls_okta_forward_rule, local.mtls_okta_redirect_rule, local.mtls_other_domain_rules)
+    }
+  ] : []
+  mtls_my_device_deny_rule = local.mtls_subdomains["my_device"].enabled ? [{
+    key = "${local.mtls_subdomain_labels["my_device"]}-deny"
+    conditions = [{
+      host_header = {
+        values = [local.mtls_host_patterns["my_device"]]
+      }
+    }]
+    actions = [{
+      type = "fixed-response"
+      fixed_response = {
+        content_type = "text/plain"
+        message_body = "Not Found"
+        status_code  = "404"
+      }
+    }]
+  }] : []
+  mtls_my_device_redirect_rule = local.mtls_subdomains["my_device"].enabled ? [{
+    key = "${local.mtls_subdomain_labels["my_device"]}-redirect"
+    conditions = [{
+      path_pattern = {
+        values = ["/device/*"]
+      }
+    }]
+    actions = [{
+      type = "redirect"
+      redirect = {
+        host        = "${local.mtls_domain_prefixes["my_device"]}.#{host}"
+        protocol    = "HTTPS"
+        status_code = "HTTP_302"
+      }
+    }]
+  }] : []
+  mtls_rule_sequence = concat(
+    local.mtls_okta_forward_rule,
+    local.mtls_okta_deny_rule,
+    local.mtls_okta_redirect_rule,
+    local.mtls_my_device_forward_rules,
+    local.mtls_my_device_deny_rule,
+    local.mtls_my_device_redirect_rule,
+  )
   mtls_domain_rules = {
-    for idx, rule in local.mtls_domain_rule_sequence :
+    for idx, rule in local.mtls_rule_sequence :
     rule.key => merge(rule, { priority = idx + 1 })
   }
   mtls_custom_listener_rule_maps = [
