@@ -42,16 +42,6 @@ locals {
     loadbalancer = {
       arn = module.alb.target_groups["tg-0"].arn
     },
-    extra_load_balancers = concat(
-      coalesce(var.fleet_config.extra_load_balancers, []),
-      [
-        for subdomain, config in local.mtls_subdomains : {
-          target_group_arn = module.alb.target_groups["${local.mtls_subdomain_labels[subdomain]}-https-tg-0"].arn
-          container_name   = "fleet"
-          container_port   = 8080
-        } if config.enabled
-      ]
-    ),
     networking = merge(var.fleet_config.networking, {
       subnets         = var.fleet_config.networking.subnets
       security_groups = var.fleet_config.networking.security_groups
@@ -81,23 +71,11 @@ locals {
     }
   ]
   target_group_sources = concat(local.fleet_target_group, coalesce(var.alb_config.extra_target_groups, []))
-  base_target_groups = { for idx, tg in local.target_group_sources :
+  target_groups = { for idx, tg in local.target_group_sources :
     "tg-${idx}" => merge(tg, {
       create_attachment = try(tg.create_attachment, false)
     })
   }
-  mtls_target_group_entries = flatten([
-    for subdomain, config in local.mtls_subdomains : config.enabled ? [
-      for idx, tg in local.target_group_sources : {
-        key = "${local.mtls_subdomain_labels[subdomain]}-https-tg-${idx}"
-        value = merge(tg, {
-          create_attachment = try(tg.create_attachment, false)
-        })
-      }
-    ] : []
-  ])
-  mtls_target_groups = { for tg in local.mtls_target_group_entries : tg.key => tg.value }
-  target_groups      = merge(local.base_target_groups, local.mtls_target_groups)
   enabled_mtls_subdomains = [
     for subdomain, config in local.mtls_subdomains : subdomain if config.enabled
   ]
@@ -125,7 +103,7 @@ locals {
     ]
     actions = [{
       type             = "forward"
-      target_group_key = "${local.mtls_subdomain_labels["okta"]}-https-tg-0"
+      target_group_key = "tg-0"
     }]
   }] : []
   mtls_okta_deny_rule = local.mtls_subdomains["okta"].enabled ? [{
@@ -136,12 +114,10 @@ locals {
       }
     }]
     actions = [{
-      type = "fixed-response"
-      fixed_response = {
-        content_type = "text/plain"
-        message_body = "Not Found"
-        status_code  = "404"
-      }
+      type         = "fixed-response"
+      content_type = "text/plain"
+      message_body = "Not Found"
+      status_code  = "404"
     }]
   }] : []
   mtls_okta_redirect_rule = local.mtls_subdomains["okta"].enabled ? [{
@@ -152,13 +128,11 @@ locals {
       }
     }]
     actions = [{
-      type = "redirect"
-      redirect = {
-        host        = "${local.mtls_domain_prefixes["okta"]}.#{host}"
-        path        = local.okta_special_path
-        protocol    = "HTTPS"
-        status_code = "HTTP_302"
-      }
+      type        = "redirect"
+      host        = "${local.mtls_domain_prefixes["okta"]}.#{host}"
+      path        = local.okta_special_path
+      protocol    = "HTTPS"
+      status_code = "HTTP_302"
     }]
   }] : []
   mtls_my_device_forward_rules = local.mtls_subdomains["my_device"].enabled ? [
@@ -178,7 +152,7 @@ locals {
       ]
       actions = [{
         type             = "forward"
-        target_group_key = "${local.mtls_subdomain_labels["my_device"]}-https-tg-0"
+        target_group_key = "tg-0"
       }]
     }
   ] : []
@@ -190,12 +164,10 @@ locals {
       }
     }]
     actions = [{
-      type = "fixed-response"
-      fixed_response = {
-        content_type = "text/plain"
-        message_body = "Not Found"
-        status_code  = "404"
-      }
+      type         = "fixed-response"
+      content_type = "text/plain"
+      message_body = "Not Found"
+      status_code  = "404"
     }]
   }] : []
   mtls_my_device_redirect_rule = local.mtls_subdomains["my_device"].enabled ? [{
@@ -206,12 +178,10 @@ locals {
       }
     }]
     actions = [{
-      type = "redirect"
-      redirect = {
-        host        = "${local.mtls_domain_prefixes["my_device"]}.#{host}"
-        protocol    = "HTTPS"
-        status_code = "HTTP_302"
-      }
+      type        = "redirect"
+      host        = "${local.mtls_domain_prefixes["my_device"]}.#{host}"
+      protocol    = "HTTPS"
+      status_code = "HTTP_302"
     }]
   }] : []
   mtls_rule_sequence = concat(
