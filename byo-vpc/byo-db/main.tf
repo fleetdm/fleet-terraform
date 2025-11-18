@@ -287,6 +287,9 @@ module "alb" {
       port            = 443
       protocol        = "HTTPS"
       certificate_arn = var.alb_config.certificate_arn
+      mutual_authentication = {
+        mode = "passthrough"
+      }
       forward = {
         target_group_key = "tg-0"
       }
