@@ -85,14 +85,14 @@ locals {
   }
   mtls_host_patterns = {
     for subdomain, prefix in local.mtls_domain_prefixes :
-    subdomain => "${prefix}*"
+    subdomain => ["^${replace(prefix, ".", "\\.")}.*"]
   }
   mtls_okta_forward_rule = local.mtls_subdomains["okta"].enabled ? [{
     key = "${local.mtls_subdomain_labels["okta"]}-domain"
     conditions = [
       {
         host_header = {
-          values = [local.mtls_host_patterns["okta"]]
+          regex_values = local.mtls_host_patterns["okta"]
         }
       },
       {
@@ -110,7 +110,7 @@ locals {
     key = "${local.mtls_subdomain_labels["okta"]}-deny"
     conditions = [{
       host_header = {
-        values = [local.mtls_host_patterns["okta"]]
+        regex_values = local.mtls_host_patterns["okta"]
       }
     }]
     actions = [{
@@ -141,7 +141,7 @@ locals {
       conditions = [
         {
           host_header = {
-            values = [local.mtls_host_patterns["my_device"]]
+            regex_values = local.mtls_host_patterns["my_device"]
           }
         },
         {
@@ -160,7 +160,7 @@ locals {
     key = "${local.mtls_subdomain_labels["my_device"]}-deny"
     conditions = [{
       host_header = {
-        values = [local.mtls_host_patterns["my_device"]]
+        regex_values = local.mtls_host_patterns["my_device"]
       }
     }]
     actions = [{
@@ -222,7 +222,7 @@ module "cluster" {
 
 module "alb" {
   source  = "terraform-aws-modules/alb/aws"
-  version = "9.17.0"
+  version = "10.2.0"
 
   name = var.alb_config.name
 
