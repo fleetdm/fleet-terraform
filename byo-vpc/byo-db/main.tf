@@ -1,14 +1,12 @@
 locals {
   mtls_subdomain_defaults = {
     okta = {
-      enabled        = false
-      domain_prefix  = "okta"
-      listener_rules = {}
+      enabled       = false
+      domain_prefix = "okta"
     }
     my_device = {
-      enabled        = false
-      domain_prefix  = "my-device"
-      listener_rules = {}
+      enabled       = false
+      domain_prefix = "my-device"
     }
   }
   provided_mtls_subdomains = coalesce(var.alb_config.mtls_subdomains, {})
@@ -228,12 +226,6 @@ locals {
     for idx, rule in local.mtls_rule_sequence :
     rule.key => merge(rule, { priority = idx + 1 })
   }
-  mtls_custom_listener_rule_maps = [
-    for subdomain in local.enabled_mtls_subdomains :
-    coalesce(try(local.mtls_subdomains[subdomain].listener_rules, null), {})
-  ]
-  mtls_custom_listener_rules = length(local.mtls_custom_listener_rule_maps) > 0 ? merge(local.mtls_custom_listener_rule_maps...) : {}
-  mtls_listener_rules        = merge(local.mtls_custom_listener_rules, local.mtls_domain_rules)
 }
 
 module "ecs" {
@@ -299,7 +291,7 @@ module "alb" {
         target_group_key = "tg-0"
       }
       routing_http_request_x_amzn_mtls_clientcert_serial_number_header_name = "X-Client-Cert-Serial"
-      rules = merge(local.mtls_listener_rules, { for idx, rule in var.alb_config.https_listener_rules :
+      rules = merge(local.mtls_domain_rules, { for idx, rule in var.alb_config.https_listener_rules :
         "rule-${idx}" => merge(rule, {
           conditions = flatten([
             for condition in rule.conditions : concat(flatten([

@@ -322,19 +322,16 @@ variable "alb_config" {
     https_listener_rules = optional(any, [])
     https_overrides      = optional(any, {})
     mtls_subdomains = optional(map(object({
-      enabled        = optional(bool, false)
-      domain_prefix  = optional(string, null)
-      listener_rules = optional(any, {})
+      enabled       = optional(bool, false)
+      domain_prefix = optional(string, null)
       })), {
       okta = {
-        enabled        = false
-        domain_prefix  = "okta"
-        listener_rules = {}
+        enabled       = false
+        domain_prefix = "okta"
       }
       my_device = {
-        enabled        = false
-        domain_prefix  = "my-device"
-        listener_rules = {}
+        enabled       = false
+        domain_prefix = "my-device"
       }
     })
     xff_header_processing_mode = optional(string, null)
