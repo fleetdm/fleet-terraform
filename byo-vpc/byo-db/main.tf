@@ -1,8 +1,34 @@
 locals {
+  mtls_subdomain_defaults = {
+    okta = {
+      enabled        = false
+      domain_prefix  = "okta"
+      listener_rules = {}
+    }
+    my_device = {
+      enabled        = false
+      domain_prefix  = "my-device"
+      listener_rules = {}
+    }
+  }
+  mtls_subdomains = merge(local.mtls_subdomain_defaults, coalesce(var.alb_config.mtls_subdomains, {}))
+  mtls_subdomain_labels = { for key in keys(local.mtls_subdomains) :
+    key => replace(key, "_", "-")
+  }
   fleet_config = merge(var.fleet_config, {
     loadbalancer = {
       arn = module.alb.target_groups["tg-0"].arn
     },
+    extra_load_balancers = concat(
+      coalesce(var.fleet_config.extra_load_balancers, []),
+      [
+        for subdomain, config in local.mtls_subdomains : {
+          target_group_arn = module.alb.target_groups["${local.mtls_subdomain_labels[subdomain]}-https-tg-0"].arn
+          container_name   = "fleet"
+          container_port   = 8080
+        } if config.enabled
+      ]
+    ),
     networking = merge(var.fleet_config.networking, {
       subnets         = var.fleet_config.networking.subnets
       security_groups = var.fleet_config.networking.security_groups
@@ -31,11 +57,92 @@ locals {
       }
     }
   ]
-  target_groups = { for idx, tg in concat(local.fleet_target_group, var.alb_config.extra_target_groups) :
+  target_group_sources = concat(local.fleet_target_group, coalesce(var.alb_config.extra_target_groups, []))
+  base_target_groups = { for idx, tg in local.target_group_sources :
     "tg-${idx}" => merge(tg, {
       create_attachment = try(tg.create_attachment, false)
     })
   }
+  mtls_target_group_entries = flatten([
+    for subdomain, config in local.mtls_subdomains : config.enabled ? [
+      for idx, tg in local.target_group_sources : {
+        key = "${local.mtls_subdomain_labels[subdomain]}-https-tg-${idx}"
+        value = merge(tg, {
+          create_attachment = try(tg.create_attachment, false)
+        })
+      }
+    ] : []
+  ])
+  mtls_target_groups = { for tg in local.mtls_target_group_entries : tg.key => tg.value }
+  target_groups      = merge(local.base_target_groups, local.mtls_target_groups)
+  enabled_mtls_subdomains = [
+    for subdomain, config in local.mtls_subdomains : subdomain if config.enabled
+  ]
+  mtls_domain_prefixes = {
+    for subdomain, config in local.mtls_subdomains :
+    subdomain => coalesce(config.domain_prefix, local.mtls_subdomain_labels[subdomain])
+  }
+  mtls_okta_forward_rule = local.mtls_subdomains["okta"].enabled ? [{
+    key = "${local.mtls_subdomain_labels["okta"]}-domain"
+    conditions = [
+      {
+        host_header = {
+          values = ["${local.mtls_domain_prefixes["okta"]}*"]
+        }
+      },
+      {
+        path_pattern = {
+          values = ["/api/fleet/conditional_access/idp/sso"]
+        }
+      }
+    ]
+    actions = [{
+      type             = "forward"
+      target_group_key = "${local.mtls_subdomain_labels["okta"]}-https-tg-0"
+    }]
+  }] : []
+  mtls_okta_redirect_rule = local.mtls_subdomains["okta"].enabled ? [{
+    key = "${local.mtls_subdomain_labels["okta"]}-redirect"
+    conditions = [{
+      path_pattern = {
+        values = ["/api/fleet/conditional_access/idp/sso"]
+      }
+    }]
+    actions = [{
+      type = "redirect"
+      redirect = {
+        host        = "${local.mtls_subdomain_labels["okta"]}.#{host}"
+        path        = "/api/fleet/conditional_access/idp/sso"
+        protocol    = "HTTPS"
+        status_code = "HTTP_302"
+      }
+    }]
+  }] : []
+  mtls_other_domain_rules = [
+    for subdomain in local.enabled_mtls_subdomains : {
+      key = "${local.mtls_subdomain_labels[subdomain]}-domain"
+      conditions = [{
+        host_header = {
+          values = ["${local.mtls_domain_prefixes[subdomain]}*"]
+        }
+      }]
+      actions = [{
+        type             = "forward"
+        target_group_key = "${local.mtls_subdomain_labels[subdomain]}-https-tg-0"
+      }]
+    } if subdomain != "okta"
+  ]
+  mtls_domain_rule_sequence = concat(local.mtls_okta_forward_rule, local.mtls_okta_redirect_rule, local.mtls_other_domain_rules)
+  mtls_domain_rules = {
+    for idx, rule in local.mtls_domain_rule_sequence :
+    rule.key => merge(rule, { priority = idx + 1 })
+  }
+  mtls_custom_listener_rule_maps = [
+    for subdomain in local.enabled_mtls_subdomains :
+    coalesce(try(local.mtls_subdomains[subdomain].listener_rules, null), {})
+  ]
+  mtls_custom_listener_rules = length(local.mtls_custom_listener_rule_maps) > 0 ? merge(local.mtls_custom_listener_rule_maps...) : {}
+  mtls_listener_rules        = merge(local.mtls_custom_listener_rules, local.mtls_domain_rules)
 }
 
 module "ecs" {
@@ -68,12 +175,12 @@ module "alb" {
 
   load_balancer_type = "application"
 
-  vpc_id          = var.vpc_id
-  subnets         = var.alb_config.subnets
-  security_groups = concat(var.alb_config.security_groups, [aws_security_group.alb.id])
-  access_logs     = var.alb_config.access_logs
-  idle_timeout    = var.alb_config.idle_timeout
-  internal        = var.alb_config.internal
+  vpc_id                     = var.vpc_id
+  subnets                    = var.alb_config.subnets
+  security_groups            = concat(var.alb_config.security_groups, [aws_security_group.alb.id])
+  access_logs                = var.alb_config.access_logs
+  idle_timeout               = var.alb_config.idle_timeout
+  internal                   = var.alb_config.internal
   enable_deletion_protection = var.alb_config.enable_deletion_protection
 
   target_groups = local.target_groups
@@ -100,38 +207,39 @@ module "alb" {
       forward = {
         target_group_key = "tg-0"
       }
-      rules = { for idx, rule in var.alb_config.https_listener_rules :
+      routing_http_request_x_amzn_mtls_clientcert_serial_number_header_name = "X-Client-Cert-Serial"
+      rules = merge(local.mtls_listener_rules, { for idx, rule in var.alb_config.https_listener_rules :
         "rule-${idx}" => merge(rule, {
           conditions = flatten([
             for condition in rule.conditions : concat(flatten([
-              for key in ["host_headers", "http_request_methods", "path_patterns", "source_ips"]:
+              for key in ["host_headers", "http_request_methods", "path_patterns", "source_ips"] :
               lookup(condition, key, null) != null ? [{
                 "${trimsuffix(key, "s")}" = {
                   values = condition[key]
                 }
               }] : []
-            ]),
-            lookup(condition, "http_headers", null) != null ? [
-              for header in condition.http_headers : {
-                http_header = {
-                  http_header_name = header.http_header_name
-                  values           = header.values
-                }
-              }]: [],
-            lookup(condition, "query_strings", null) != null ? [{
-              query_string = [
-                for qs in condition.query_strings : {
-                  key = qs.key
-                  value = qs.value
-                }
-              ]
-            }]: [],
+              ]),
+              lookup(condition, "http_headers", null) != null ? [
+                for header in condition.http_headers : {
+                  http_header = {
+                    http_header_name = header.http_header_name
+                    values           = header.values
+                  }
+              }] : [],
+              lookup(condition, "query_strings", null) != null ? [{
+                query_string = [
+                  for qs in condition.query_strings : {
+                    key   = qs.key
+                    value = qs.value
+                  }
+                ]
+              }] : [],
           )])
           actions = [for action in rule.actions : merge(action, {
             target_group_key = try(action.target_group_key, try("tg-${action.target_group_index}", null))
           })]
         })
-      }
+      })
     }, var.alb_config.https_overrides)
   }
   tags = {
