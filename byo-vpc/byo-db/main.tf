@@ -102,8 +102,9 @@ locals {
       }
     ]
     actions = [{
-      type             = "forward"
-      target_group_key = "tg-0"
+      forward = {
+        target_group_key = "tg-0"
+      }
     }]
   }] : []
   mtls_okta_deny_rule = local.mtls_subdomains["okta"].enabled ? [{
@@ -114,10 +115,11 @@ locals {
       }
     }]
     actions = [{
-      type         = "fixed-response"
-      content_type = "text/plain"
-      message_body = "Not Found"
-      status_code  = "404"
+      fixed_response = {
+        content_type = "text/plain"
+        message_body = "Not Found"
+        status_code  = "404"
+      }
     }]
   }] : []
   mtls_okta_redirect_rule = local.mtls_subdomains["okta"].enabled ? [{
@@ -128,11 +130,12 @@ locals {
       }
     }]
     actions = [{
-      type        = "redirect"
-      host        = "${local.mtls_domain_prefixes["okta"]}.#{host}"
-      path        = local.okta_special_path
-      protocol    = "HTTPS"
-      status_code = "HTTP_302"
+      redirect = {
+        host        = "${local.mtls_domain_prefixes["okta"]}.#{host}"
+        path        = local.okta_special_path
+        protocol    = "HTTPS"
+        status_code = "HTTP_302"
+      }
     }]
   }] : []
   mtls_my_device_forward_rules = local.mtls_subdomains["my_device"].enabled ? [
@@ -151,8 +154,9 @@ locals {
         }
       ]
       actions = [{
-        type             = "forward"
-        target_group_key = "tg-0"
+        forward = {
+          target_group_key = "tg-0"
+        }
       }]
     }
   ] : []
@@ -164,10 +168,11 @@ locals {
       }
     }]
     actions = [{
-      type         = "fixed-response"
-      content_type = "text/plain"
-      message_body = "Not Found"
-      status_code  = "404"
+      fixed_response = {
+        content_type = "text/plain"
+        message_body = "Not Found"
+        status_code  = "404"
+      }
     }]
   }] : []
   mtls_my_device_redirect_rule = local.mtls_subdomains["my_device"].enabled ? [{
@@ -178,10 +183,11 @@ locals {
       }
     }]
     actions = [{
-      type        = "redirect"
-      host        = "${local.mtls_domain_prefixes["my_device"]}.#{host}"
-      protocol    = "HTTPS"
-      status_code = "HTTP_302"
+      redirect = {
+        host        = "${local.mtls_domain_prefixes["my_device"]}.#{host}"
+        protocol    = "HTTPS"
+        status_code = "HTTP_302"
+      }
     }]
   }] : []
   mtls_rule_sequence = concat(
@@ -192,15 +198,64 @@ locals {
     local.mtls_my_device_deny_rule,
     local.mtls_my_device_redirect_rule,
   )
+  listener_action_keys = [
+    "forward",
+    "fixed_response",
+    "redirect",
+    "weighted_forward",
+    "authenticate_cognito",
+    "authenticate_oidc",
+  ]
+  listener_condition_keys = [
+    "host_header",
+    "http_header",
+    "http_request_method",
+    "path_pattern",
+    "query_string",
+    "source_ip",
+  ]
+  listener_condition_defaults = {
+    host_header         = null
+    http_header         = null
+    http_request_method = null
+    path_pattern        = null
+    query_string        = null
+    source_ip           = null
+  }
+  listener_action_defaults = {
+    order                = null
+    authenticate_cognito = null
+    authenticate_oidc    = null
+    fixed_response       = null
+    forward              = null
+    weighted_forward     = null
+    redirect             = null
+  }
   mtls_domain_rules = {
     for idx, rule in local.mtls_rule_sequence :
-    rule.key => merge(rule, { priority = idx + 1 })
+    rule.key => merge(
+      {
+        priority = idx + 1
+      },
+      {
+        for k, v in rule : k => v if k != "key"
+      },
+      {
+        conditions = [
+          for condition in coalesce(rule.conditions, []) :
+          merge(local.listener_condition_defaults, condition)
+        ]
+        actions = [
+          for action in coalesce(rule.actions, []) :
+          merge(local.listener_action_defaults, action)
+        ]
+      }
+    )
   }
   listeners = {
     http = {
-      port        = 80
-      protocol    = "HTTP"
-      action_type = "redirect"
+      port     = 80
+      protocol = "HTTP"
       redirect = {
         port        = "443"
         protocol    = "HTTPS"
@@ -221,35 +276,201 @@ locals {
       }
       routing_http_request_x_amzn_mtls_clientcert_serial_number_header_name = "X-Client-Cert-Serial"
       rules = merge(local.mtls_domain_rules, { for idx, rule in var.alb_config.https_listener_rules :
-        "rule-${idx}" => merge(rule, {
-          conditions = flatten([
-            for condition in rule.conditions : concat(flatten([
-              for key in ["host_headers", "http_request_methods", "path_patterns", "source_ips"] :
-              lookup(condition, key, null) != null ? [{
-                "${trimsuffix(key, "s")}" = {
-                  values = condition[key]
-                }
-              }] : []
-              ]),
-              lookup(condition, "http_headers", null) != null ? [
-                for header in condition.http_headers : {
-                  http_header = {
-                    http_header_name = header.http_header_name
-                    values           = header.values
+        "rule-${idx}" => merge({
+          for k, v in rule :
+          k => v if k != "key"
+          }, {
+          conditions = [
+            for normalized_condition in flatten([
+              for condition in coalesce(rule.conditions, []) :
+              length([
+                for key in local.listener_condition_keys : key
+                if contains(keys(condition), key)
+              ]) > 0 ?
+              [condition] :
+              concat(flatten([
+                for key in ["host_headers", "http_request_methods", "path_patterns", "source_ips"] :
+                lookup(condition, key, null) != null ? [{
+                  "${trimsuffix(key, "s")}" = {
+                    values = condition[key]
                   }
-              }] : [],
-              lookup(condition, "query_strings", null) != null ? [{
-                query_string = [
-                  for qs in condition.query_strings : {
-                    key   = qs.key
-                    value = qs.value
+                }] : []
+                ]),
+                lookup(condition, "http_headers", null) != null ? [
+                  for header in condition.http_headers : {
+                    http_header = {
+                      http_header_name = header.http_header_name
+                      values           = header.values
+                    }
+                }] : [],
+                lookup(condition, "query_strings", null) != null ? [{
+                  query_string = [
+                    for qs in condition.query_strings : {
+                      key   = qs.key
+                      value = qs.value
+                    }
+                  ]
+                }] : []
+              )
+            ]) : merge(local.listener_condition_defaults, normalized_condition)
+          ]
+          actions = [
+            for action in coalesce(rule.actions, []) :
+            merge(
+              local.listener_action_defaults,
+              length([
+                for key in local.listener_action_keys : key
+                if contains(keys(action), key)
+              ]) > 0 ?
+              merge(
+                { for k, v in { order = lookup(action, "order", null) } : k => v if v != null },
+                contains(keys(action), "forward") ? {
+                  forward = merge(
+                    { for k, v in try(action.forward, {}) : k => v if k != "target_group_index" },
+                    {
+                      for k, v in {
+                        target_group_key = coalesce(
+                          try(action.forward.target_group_key, null),
+                          try("tg-${action.forward.target_group_index}", null)
+                        )
+                      } : k => v if v != null
+                    }
+                  )
+                } : {},
+                contains(keys(action), "weighted_forward") ? {
+                  weighted_forward = merge(
+                    {
+                      for k, v in try(action.weighted_forward, {}) :
+                      k => v if k != "target_groups"
+                    },
+                    try(action.weighted_forward.target_groups, null) != null ? {
+                      target_groups = [
+                        for target_group in try(action.weighted_forward.target_groups, []) : merge(
+                          {
+                            for k, v in target_group :
+                            k => v if k != "target_group_index"
+                          },
+                          {
+                            for k, v in {
+                              target_group_key = coalesce(
+                                try(target_group.target_group_key, null),
+                                try("tg-${target_group.target_group_index}", null)
+                              )
+                            } : k => v if v != null
+                          }
+                        )
+                      ]
+                    } : {}
+                  )
+                } : {},
+                contains(keys(action), "fixed_response") ? {
+                  fixed_response = action.fixed_response
+                } : {},
+                contains(keys(action), "redirect") ? {
+                  redirect = action.redirect
+                } : {},
+                contains(keys(action), "authenticate_cognito") ? {
+                  authenticate_cognito = action.authenticate_cognito
+                } : {},
+                contains(keys(action), "authenticate_oidc") ? {
+                  authenticate_oidc = action.authenticate_oidc
+                } : {}
+              ) :
+              merge(
+                { for k, v in { order = lookup(action, "order", null) } : k => v if v != null },
+                lower(lookup(action, "type", "")) == "forward" ? {
+                  forward = {
+                    for k, v in {
+                      target_group_arn = lookup(action, "target_group_arn", null)
+                      target_group_key = coalesce(
+                        lookup(action, "target_group_key", null),
+                        try("tg-${action.target_group_index}", null)
+                      )
+                    } : k => v if v != null
                   }
-                ]
-              }] : [],
-          )])
-          actions = [for action in rule.actions : merge(action, {
-            target_group_key = try(action.target_group_key, try("tg-${action.target_group_index}", null))
-          })]
+                } : {},
+                lower(lookup(action, "type", "")) == "weighted-forward" ? {
+                  weighted_forward = merge(
+                    {
+                      for k, v in {
+                        stickiness = lookup(action, "stickiness", null)
+                      } : k => v if v != null
+                    },
+                    lookup(action, "target_groups", null) != null ? {
+                      target_groups = [
+                        for target_group in action.target_groups : merge(
+                          {
+                            for k, v in target_group :
+                            k => v if k != "target_group_index"
+                          },
+                          {
+                            for k, v in {
+                              target_group_key = coalesce(
+                                lookup(target_group, "target_group_key", null),
+                                try("tg-${target_group.target_group_index}", null)
+                              )
+                            } : k => v if v != null
+                          }
+                        )
+                      ]
+                    } : {}
+                  )
+                } : {},
+                lower(lookup(action, "type", "")) == "fixed-response" ? {
+                  fixed_response = {
+                    for k, v in {
+                      content_type = lookup(action, "content_type", null)
+                      message_body = lookup(action, "message_body", null)
+                      status_code  = lookup(action, "status_code", null)
+                    } : k => v if v != null
+                  }
+                } : {},
+                lower(lookup(action, "type", "")) == "redirect" ? {
+                  redirect = {
+                    for k, v in {
+                      host        = lookup(action, "host", null)
+                      path        = lookup(action, "path", null)
+                      port        = lookup(action, "port", null)
+                      protocol    = lookup(action, "protocol", null)
+                      query       = lookup(action, "query", null)
+                      status_code = lookup(action, "status_code", null)
+                    } : k => v if v != null
+                  }
+                } : {},
+                lower(lookup(action, "type", "")) == "authenticate-cognito" ? {
+                  authenticate_cognito = {
+                    for k, v in {
+                      authentication_request_extra_params = lookup(action, "authentication_request_extra_params", null)
+                      on_unauthenticated_request          = lookup(action, "on_unauthenticated_request", null)
+                      scope                               = lookup(action, "scope", null)
+                      session_cookie_name                 = lookup(action, "session_cookie_name", null)
+                      session_timeout                     = lookup(action, "session_timeout", null)
+                      user_pool_arn                       = lookup(action, "user_pool_arn", null)
+                      user_pool_client_id                 = lookup(action, "user_pool_client_id", null)
+                      user_pool_domain                    = lookup(action, "user_pool_domain", null)
+                    } : k => v if v != null
+                  }
+                } : {},
+                lower(lookup(action, "type", "")) == "authenticate-oidc" ? {
+                  authenticate_oidc = {
+                    for k, v in {
+                      authentication_request_extra_params = lookup(action, "authentication_request_extra_params", null)
+                      authorization_endpoint              = lookup(action, "authorization_endpoint", null)
+                      client_id                           = lookup(action, "client_id", null)
+                      client_secret                       = lookup(action, "client_secret", null)
+                      issuer                              = lookup(action, "issuer", null)
+                      on_unauthenticated_request          = lookup(action, "on_unauthenticated_request", null)
+                      scope                               = lookup(action, "scope", null)
+                      session_cookie_name                 = lookup(action, "session_cookie_name", null)
+                      session_timeout                     = lookup(action, "session_timeout", null)
+                      token_endpoint                      = lookup(action, "token_endpoint", null)
+                      user_info_endpoint                  = lookup(action, "user_info_endpoint", null)
+                    } : k => v if v != null
+                  }
+                } : {}
+              )
+            )
+          ]
         })
       })
     }, var.alb_config.https_overrides)
@@ -298,16 +519,8 @@ module "alb" {
 
   xff_header_processing_mode = var.alb_config.xff_header_processing_mode
 
-  listeners =    { http = {
-      port        = 80
-      protocol    = "HTTP"
-      action_type = "redirect"
-      redirect = {
-        port        = "443"
-        protocol    = "HTTPS"
-        status_code = "HTTP_301"
-      }
-    }}
+  listeners = local.listeners
+
   tags = {
     Name = var.alb_config.name
   }
