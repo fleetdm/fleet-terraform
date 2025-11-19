@@ -196,50 +196,6 @@ locals {
     for idx, rule in local.mtls_rule_sequence :
     rule.key => merge(rule, { priority = idx + 1 })
   }
-}
-
-module "ecs" {
-  source           = "./byo-ecs"
-  ecs_cluster      = module.cluster.cluster_name
-  fleet_config     = local.fleet_config
-  migration_config = var.migration_config
-  vpc_id           = var.vpc_id
-}
-
-module "cluster" {
-  source  = "terraform-aws-modules/ecs/aws"
-  version = "4.1.2"
-
-  autoscaling_capacity_providers        = var.ecs_cluster.autoscaling_capacity_providers
-  cluster_configuration                 = var.ecs_cluster.cluster_configuration
-  cluster_name                          = var.ecs_cluster.cluster_name
-  cluster_settings                      = var.ecs_cluster.cluster_settings
-  create                                = var.ecs_cluster.create
-  default_capacity_provider_use_fargate = var.ecs_cluster.default_capacity_provider_use_fargate
-  fargate_capacity_providers            = var.ecs_cluster.fargate_capacity_providers
-  tags                                  = var.ecs_cluster.tags
-}
-
-module "alb" {
-  source  = "terraform-aws-modules/alb/aws"
-  version = "10.2.0"
-
-  name = var.alb_config.name
-
-  load_balancer_type = "application"
-
-  vpc_id                     = var.vpc_id
-  subnets                    = var.alb_config.subnets
-  security_groups            = concat(var.alb_config.security_groups, [aws_security_group.alb.id])
-  access_logs                = var.alb_config.access_logs
-  idle_timeout               = var.alb_config.idle_timeout
-  internal                   = var.alb_config.internal
-  enable_deletion_protection = var.alb_config.enable_deletion_protection
-
-  target_groups = local.target_groups
-
-  xff_header_processing_mode = var.alb_config.xff_header_processing_mode
-
   listeners = {
     http = {
       port        = 80
@@ -298,6 +254,60 @@ module "alb" {
       })
     }, var.alb_config.https_overrides)
   }
+}
+
+module "ecs" {
+  source           = "./byo-ecs"
+  ecs_cluster      = module.cluster.cluster_name
+  fleet_config     = local.fleet_config
+  migration_config = var.migration_config
+  vpc_id           = var.vpc_id
+}
+
+module "cluster" {
+  source  = "terraform-aws-modules/ecs/aws"
+  version = "4.1.2"
+
+  autoscaling_capacity_providers        = var.ecs_cluster.autoscaling_capacity_providers
+  cluster_configuration                 = var.ecs_cluster.cluster_configuration
+  cluster_name                          = var.ecs_cluster.cluster_name
+  cluster_settings                      = var.ecs_cluster.cluster_settings
+  create                                = var.ecs_cluster.create
+  default_capacity_provider_use_fargate = var.ecs_cluster.default_capacity_provider_use_fargate
+  fargate_capacity_providers            = var.ecs_cluster.fargate_capacity_providers
+  tags                                  = var.ecs_cluster.tags
+}
+
+module "alb" {
+  source  = "terraform-aws-modules/alb/aws"
+  version = "10.2.0"
+
+  name = var.alb_config.name
+
+  load_balancer_type = "application"
+
+  vpc_id                     = var.vpc_id
+  subnets                    = var.alb_config.subnets
+  security_groups            = concat(var.alb_config.security_groups, [aws_security_group.alb.id])
+  access_logs                = var.alb_config.access_logs
+  idle_timeout               = var.alb_config.idle_timeout
+  internal                   = var.alb_config.internal
+  enable_deletion_protection = var.alb_config.enable_deletion_protection
+
+  target_groups = local.target_groups
+
+  xff_header_processing_mode = var.alb_config.xff_header_processing_mode
+
+  listeners =    { http = {
+      port        = 80
+      protocol    = "HTTP"
+      action_type = "redirect"
+      redirect = {
+        port        = "443"
+        protocol    = "HTTPS"
+        status_code = "HTTP_301"
+      }
+    }}
   tags = {
     Name = var.alb_config.name
   }
@@ -333,4 +343,8 @@ resource "aws_security_group" "alb" {
     cidr_blocks      = var.alb_config.egress_cidrs
     ipv6_cidr_blocks = var.alb_config.egress_ipv6_cidrs
   }
+}
+
+output "listeners" {
+  value = local.listeners
 }
