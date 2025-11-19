@@ -283,18 +283,21 @@ locals {
           conditions = [
             for normalized_condition in flatten([
               for condition in coalesce(rule.conditions, []) :
-              length([
-                for key in local.listener_condition_keys : key
-                if contains(keys(condition), key)
-              ]) > 0 ?
-              [condition] :
-              concat(flatten([
-                for key in ["host_headers", "http_request_methods", "path_patterns", "source_ips"] :
-                lookup(condition, key, null) != null ? [{
-                  "${trimsuffix(key, "s")}" = {
-                    values = condition[key]
-                  }
-                }] : []
+              concat(
+                length([
+                  for key in local.listener_condition_keys : key
+                  if contains(keys(condition), key)
+                  ]) > 0 ? [{
+                  for key in local.listener_condition_keys :
+                  key => lookup(condition, key, null)
+                }] : [],
+                flatten([
+                  for key in ["host_headers", "http_request_methods", "path_patterns", "source_ips"] :
+                  lookup(condition, key, null) != null ? [{
+                    "${trimsuffix(key, "s")}" = {
+                      values = condition[key]
+                    }
+                  }] : []
                 ]),
                 lookup(condition, "http_headers", null) != null ? [
                   for header in condition.http_headers : {
