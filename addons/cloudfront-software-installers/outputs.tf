@@ -7,7 +7,7 @@ output "extra_secrets" {
 }
 
 output "extra_execution_iam_policies" {
-  value = [aws_iam_policy.software_installers_secret.arn]
+  value = [resource.aws_iam_policy.software_installers_secret.arn]
 }
 
 output "cloudfront_arn" {
