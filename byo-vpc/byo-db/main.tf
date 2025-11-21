@@ -48,27 +48,30 @@ locals {
       ingress_sources = {
         cidr_blocks      = var.fleet_config.networking.ingress_sources.cidr_blocks
         ipv6_cidr_blocks = var.fleet_config.networking.ingress_sources.ipv6_cidr_blocks
-        security_groups  = concat(var.fleet_config.networking.ingress_sources.security_groups, [module.alb.security_group_id])
+        security_groups  = concat(var.fleet_config.networking.ingress_sources.security_groups, local.load_balancer_security_group_ids)
         prefix_list_ids  = var.fleet_config.networking.ingress_sources.prefix_list_ids
       }
     })
+    extra_load_balancers = concat(coalesce(var.fleet_config.extra_load_balancers, []), local.mtls_fleet_extra_load_balancers)
   })
-  fleet_target_group = [
-    {
-      name              = var.alb_config.name
-      backend_protocol  = "HTTP"
-      backend_port      = 80
-      target_type       = "ip"
-      create_attachment = false
-      health_check = {
-        path                = "/healthz"
-        matcher             = "200"
-        timeout             = 10
-        interval            = 15
-        healthy_threshold   = 5
-        unhealthy_threshold = 5
-      }
+  fleet_target_group_defaults = {
+    backend_protocol  = "HTTP"
+    backend_port      = 80
+    target_type       = "ip"
+    create_attachment = false
+    health_check = {
+      path                = "/healthz"
+      matcher             = "200"
+      timeout             = 10
+      interval            = 15
+      healthy_threshold   = 5
+      unhealthy_threshold = 5
     }
+  }
+  fleet_target_group = [
+    merge(local.fleet_target_group_defaults, {
+      name = var.alb_config.name
+    })
   ]
   target_group_sources = concat(local.fleet_target_group, coalesce(var.alb_config.extra_target_groups, []))
   target_groups = { for idx, tg in local.target_group_sources :
@@ -86,6 +89,23 @@ locals {
   mtls_host_patterns = {
     for subdomain, prefix in local.mtls_domain_prefixes :
     subdomain => ["^${replace(prefix, ".", "\\.")}.*"]
+  }
+  mtls_target_group_sources = {
+    for subdomain in local.enabled_mtls_subdomains :
+    subdomain => [
+      merge(local.fleet_target_group_defaults, {
+        name = "${var.alb_config.name}-${local.mtls_subdomain_labels[subdomain]}"
+      })
+    ]
+  }
+  mtls_target_groups = {
+    for subdomain, target_groups in local.mtls_target_group_sources :
+    subdomain => {
+      for idx, tg in target_groups :
+      "tg-${idx}" => merge(tg, {
+        create_attachment = try(tg.create_attachment, false)
+      })
+    }
   }
   mtls_okta_forward_rule = local.mtls_subdomains["okta"].enabled ? [{
     key = "${local.mtls_subdomain_labels["okta"]}-domain"
@@ -190,14 +210,14 @@ locals {
       }
     }]
   }] : []
-  mtls_rule_sequence = concat(
-    local.mtls_okta_forward_rule,
-    local.mtls_okta_deny_rule,
+  mtls_redirect_rule_sequence = concat(
     local.mtls_okta_redirect_rule,
-    local.mtls_my_device_forward_rules,
-    local.mtls_my_device_deny_rule,
     local.mtls_my_device_redirect_rule,
   )
+  mtls_load_balancer_rule_sequences = {
+    okta      = concat(local.mtls_okta_forward_rule, local.mtls_okta_deny_rule)
+    my_device = concat(local.mtls_my_device_forward_rules, local.mtls_my_device_deny_rule)
+  }
   listener_action_keys = [
     "forward",
     "fixed_response",
@@ -231,8 +251,8 @@ locals {
     weighted_forward     = null
     redirect             = null
   }
-  mtls_domain_rules = {
-    for idx, rule in local.mtls_rule_sequence :
+  mtls_redirect_rules = {
+    for idx, rule in local.mtls_redirect_rule_sequence :
     rule.key => merge(
       {
         priority = idx + 1
@@ -252,6 +272,31 @@ locals {
       }
     )
   }
+  mtls_load_balancer_rules = {
+    for subdomain, sequence in local.mtls_load_balancer_rule_sequences :
+    subdomain => {
+      for idx, rule in sequence :
+      rule.key => merge(
+        {
+          priority = idx + 1
+        },
+        {
+          for k, v in rule : k => v if k != "key"
+        },
+        {
+          conditions = [
+            for condition in coalesce(rule.conditions, []) :
+            merge(local.listener_condition_defaults, condition)
+          ]
+          actions = [
+            for action in coalesce(rule.actions, []) :
+            merge(local.listener_action_defaults, action)
+          ]
+        }
+      )
+    }
+    if contains(local.enabled_mtls_subdomains, subdomain)
+  }
   listeners = {
     http = {
       port     = 80
@@ -268,14 +313,10 @@ locals {
       port            = 443
       protocol        = "HTTPS"
       certificate_arn = var.alb_config.certificate_arn
-      mutual_authentication = {
-        mode = "passthrough"
-      }
       forward = {
         target_group_key = "tg-0"
       }
-      routing_http_request_x_amzn_mtls_clientcert_serial_number_header_name = "X-Client-Cert-Serial"
-      rules = merge(local.mtls_domain_rules, { for idx, rule in var.alb_config.https_listener_rules :
+      rules = merge(local.mtls_redirect_rules, { for idx, rule in var.alb_config.https_listener_rules :
         "rule-${idx}" => merge({
           for k, v in rule :
           k => v if k != "key"
@@ -478,6 +519,55 @@ locals {
       })
     }, var.alb_config.https_overrides)
   }
+  mtls_load_balancer_listeners = {
+    for subdomain in local.enabled_mtls_subdomains :
+    subdomain => {
+      http = {
+        port     = 80
+        protocol = "HTTP"
+        redirect = {
+          port        = "443"
+          protocol    = "HTTPS"
+          status_code = "HTTP_301"
+        }
+      }
+      https = {
+        ssl_policy      = var.alb_config.tls_policy
+        port            = 443
+        protocol        = "HTTPS"
+        certificate_arn = var.alb_config.certificate_arn
+        mutual_authentication = {
+          mode = "passthrough"
+        }
+        forward = {
+          target_group_key = "tg-0"
+        }
+        routing_http_request_x_amzn_mtls_clientcert_serial_number_header_name = "X-Client-Cert-Serial"
+        rules                                                                 = lookup(local.mtls_load_balancer_rules, subdomain, {})
+      }
+    }
+  }
+  mtls_load_balancers = {
+    for subdomain in local.enabled_mtls_subdomains :
+    subdomain => {
+      name          = "${var.alb_config.name}-${local.mtls_subdomain_labels[subdomain]}"
+      listeners     = local.mtls_load_balancer_listeners[subdomain]
+      target_groups = local.mtls_target_groups[subdomain]
+    }
+  }
+  mtls_fleet_extra_load_balancers = flatten([
+    for alb in values(module.mtls_albs) : [
+      for _, target_group in alb.target_groups : {
+        target_group_arn = target_group.arn
+        container_name   = "fleet"
+        container_port   = 8080
+      }
+    ]
+  ])
+  load_balancer_security_group_ids = compact(concat(
+    [module.alb.security_group_id],
+    [for alb in values(module.mtls_albs) : alb.security_group_id]
+  ))
 }
 
 module "ecs" {
@@ -526,6 +616,35 @@ module "alb" {
 
   tags = {
     Name = var.alb_config.name
+  }
+}
+
+module "mtls_albs" {
+  for_each = local.mtls_load_balancers
+
+  source  = "terraform-aws-modules/alb/aws"
+  version = "10.2.0"
+
+  name = each.value.name
+
+  load_balancer_type = "application"
+
+  vpc_id                     = var.vpc_id
+  subnets                    = var.alb_config.subnets
+  security_groups            = concat(var.alb_config.security_groups, [aws_security_group.alb.id])
+  access_logs                = var.alb_config.access_logs
+  idle_timeout               = var.alb_config.idle_timeout
+  internal                   = var.alb_config.internal
+  enable_deletion_protection = var.alb_config.enable_deletion_protection
+
+  target_groups = each.value.target_groups
+
+  xff_header_processing_mode = var.alb_config.xff_header_processing_mode
+
+  listeners = each.value.listeners
+
+  tags = {
+    Name = each.value.name
   }
 }
 
