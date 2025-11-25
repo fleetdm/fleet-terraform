@@ -198,8 +198,9 @@ locals {
   mtls_my_device_redirect_rule = local.mtls_subdomains["my_device"].enabled ? [{
     key = "${local.mtls_subdomain_labels["my_device"]}-redirect"
     conditions = [{
+      # Only for iOS/iPadOS devices
       path_pattern = {
-        regex_values = ["^/device/([0-9A-Fa-f]{40}|[0-9A-Fa-f]{8}-[0-9A-Fa-f]{16})/"]
+        regex_values = ["^/device/([0-9A-Fa-f]{40}|[0-9A-Fa-f]{8}-[0-9A-Fa-f]{16})(/|$)"]
       }
     }]
     actions = [{
