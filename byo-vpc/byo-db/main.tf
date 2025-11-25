@@ -199,7 +199,7 @@ locals {
     key = "${local.mtls_subdomain_labels["my_device"]}-redirect"
     conditions = [{
       path_pattern = {
-        values = ["/device/*"]
+        regex_values = ["^/device/([0-9A-Fa-f]{40}|[0-9A-Fa-f]{8}-[0-9A-Fa-f]{16})/"]
       }
     }]
     actions = [{
