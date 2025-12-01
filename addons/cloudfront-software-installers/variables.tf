@@ -7,19 +7,17 @@ variable "customer" {
 variable "key_group_id" {
   description = "Cloudfront key group id"
   type = string
-  default = ""
+  default = null
 }
 
 variable "private_key" {
   description = "Private key used for signed URLs"
   type        = string
-  default     = null
 }
 
 variable "public_key" {
   description = "Public key used for signed URLs"
   type        = string
-  default     = null
 }
 
 variable "s3_bucket" {
