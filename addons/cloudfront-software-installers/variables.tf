@@ -6,8 +6,8 @@ variable "customer" {
 
 variable "key_group_id" {
   description = "Cloudfront key group id"
-  type = string
-  default = null
+  type        = string
+  default     = null
 }
 
 variable "private_key" {
