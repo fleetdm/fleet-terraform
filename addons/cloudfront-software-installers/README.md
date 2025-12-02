@@ -164,13 +164,13 @@ No requirements.
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 5.88.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.23.0 |
 
 ## Modules
 
 | Name | Source | Version |
 |------|--------|---------|
-| <a name="module_cloudfront_software_installers"></a> [cloudfront\_software\_installers](#module\_cloudfront\_software\_installers) | terraform-aws-modules/cloudfront/aws | n/a |
+| <a name="module_cloudfront_software_installers"></a> [cloudfront\_software\_installers](#module\_cloudfront\_software\_installers) | terraform-aws-modules/cloudfront/aws | 5.2.0 |
 
 ## Resources
 
@@ -196,12 +196,13 @@ No requirements.
 |------|-------------|------|---------|:--------:|
 | <a name="input_customer"></a> [customer](#input\_customer) | Customer name for the cloudfront instance | `string` | `"fleet"` | no |
 | <a name="input_enable_logging"></a> [enable\_logging](#input\_enable\_logging) | Enable optional logging to s3 | `bool` | `false` | no |
+| <a name="input_key_group_id"></a> [key\_group\_id](#input\_key\_group\_id) | Cloudfront key group id | `string` | `null` | no |
 | <a name="input_logging_s3_bucket"></a> [logging\_s3\_bucket](#input\_logging\_s3\_bucket) | s3 bucket to log to | `string` | `null` | no |
 | <a name="input_logging_s3_prefix"></a> [logging\_s3\_prefix](#input\_logging\_s3\_prefix) | logging s3 bucket prefix | `string` | `"cloudfront"` | no |
 | <a name="input_private_key"></a> [private\_key](#input\_private\_key) | Private key used for signed URLs | `string` | n/a | yes |
 | <a name="input_public_key"></a> [public\_key](#input\_public\_key) | Public key used for signed URLs | `string` | n/a | yes |
 | <a name="input_s3_bucket"></a> [s3\_bucket](#input\_s3\_bucket) | Name of the S3 bucket that Cloudfront will point to | `string` | n/a | yes |
-| <a name="input_s3_kms_key_id"></a> [s3\_kms\_key\_id](#input\_s3\_kms\_key\_id) | KMS key id used to encrypt the s3 bucket | `string` | n/a | yes |
+| <a name="input_s3_kms_key_id"></a> [s3\_kms\_key\_id](#input\_s3\_kms\_key\_id) | KMS key id used to encrypt the s3 bucket | `string` | `null` | no |
 
 ## Outputs
 
