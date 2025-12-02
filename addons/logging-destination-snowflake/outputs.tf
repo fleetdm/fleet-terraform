@@ -18,3 +18,10 @@ output "fleet_extra_iam_policies" {
   ]
   description = "IAM policies required for Fleet to log to Snowflake via Firehose"
 }
+
+output "fleet_s3_snowflake_failure_config" {
+  value = {
+    bucket_name      = aws_s3_bucket.snowflake-failure.bucket
+    s3_object_prefix = var.s3_bucket_config.name_prefix
+  }
+}

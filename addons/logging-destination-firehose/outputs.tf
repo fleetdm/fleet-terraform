@@ -16,3 +16,21 @@ output "fleet_extra_iam_policies" {
     aws_iam_policy.firehose-logging.arn
   ]
 }
+
+output "fleet_s3_firehose_osquery_results_config" {
+  value = {
+    bucket_name      = aws_s3_bucket.osquery-results.bucket
+  }
+}
+
+output "fleet_s3_firehose_osquery_status_config" {
+  value = {
+    bucket_name      = aws_s3_bucket.osquery-status.bucket
+  }
+}
+
+output "fleet_s3_firehose_audit_config" {
+  value = {
+    bucket_name      = aws_s3_bucket.audit.bucket
+  }
+}
