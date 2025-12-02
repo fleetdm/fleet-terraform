@@ -19,18 +19,21 @@ output "fleet_extra_iam_policies" {
 
 output "fleet_s3_firehose_osquery_results_config" {
   value = {
-    bucket_name      = aws_s3_bucket.osquery-results.bucket
+    bucket_name = aws_s3_bucket.osquery-results.bucket
   }
+  description = "S3 bucket details - osquery-results"
 }
 
 output "fleet_s3_firehose_osquery_status_config" {
   value = {
-    bucket_name      = aws_s3_bucket.osquery-status.bucket
+    bucket_name = aws_s3_bucket.osquery-status.bucket
   }
+  description = "S3 bucket details - osquery-status"
 }
 
 output "fleet_s3_firehose_audit_config" {
   value = {
-    bucket_name      = aws_s3_bucket.audit.bucket
+    bucket_name = aws_s3_bucket.audit.bucket
   }
+  description = "S3 bucket details - audit"
 }

@@ -24,4 +24,5 @@ output "fleet_s3_snowflake_failure_config" {
     bucket_name      = aws_s3_bucket.snowflake-failure.bucket
     s3_object_prefix = var.s3_bucket_config.name_prefix
   }
+  description = "S3 bucket details - snowflake-failure"
 }
