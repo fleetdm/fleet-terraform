@@ -71,14 +71,16 @@ resource "aws_iam_policy" "software_installers_secret" {
 }
 
 resource "aws_cloudfront_public_key" "software_installers" {
+  count       = var.key_group_id == null ? 1 : 0
   comment     = "${var.customer} software installers public key"
   encoded_key = var.public_key
   name        = "${var.customer}-software-installers"
 }
 
 resource "aws_cloudfront_key_group" "software_installers" {
+  count   = var.key_group_id == null ? 1 : 0
   comment = "${var.customer} software installers key group"
-  items   = [aws_cloudfront_public_key.software_installers.id]
+  items   = [aws_cloudfront_public_key.software_installers[0].id]
   name    = "${var.customer}-software-installers-group"
 }
 
@@ -92,7 +94,7 @@ resource "aws_secretsmanager_secret_version" "software_installers" {
     FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PRIVATE_KEY   = var.private_key
     FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PUBLC_KEY     = var.public_key
     FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL                       = "https://${module.cloudfront_software_installers.cloudfront_distribution_domain_name}"
-    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PUBLIC_KEY_ID = aws_cloudfront_public_key.software_installers.id
+    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PUBLIC_KEY_ID = var.key_group_id == null ? aws_cloudfront_public_key.software_installers[0].id : var.key_group_id
   })
 }
 
@@ -101,7 +103,8 @@ data "aws_s3_bucket" "logging" {
 }
 
 module "cloudfront_software_installers" {
-  source = "terraform-aws-modules/cloudfront/aws"
+  source  = "terraform-aws-modules/cloudfront/aws"
+  version = "5.2.0"
 
   comment = "${var.customer} software installers"
   enabled = true
@@ -127,7 +130,7 @@ module "cloudfront_software_installers" {
   logging_config = var.enable_logging == true ? {
     bucket = data.aws_s3_bucket.logging.bucket_domain_name
     prefix = var.logging_s3_prefix
-  } : {
+    } : {
     bucket = null
     prefix = null
   }
@@ -147,9 +150,8 @@ module "cloudfront_software_installers" {
     cached_methods     = ["GET", "HEAD"]
     compress           = true
     query_string       = true
-    trusted_key_groups = [aws_cloudfront_key_group.software_installers.id]
+    trusted_key_groups = var.key_group_id != null ? [var.key_group_id] : [aws_cloudfront_key_group.software_installers[0].id]
   }
 
   ordered_cache_behavior = []
-
 }

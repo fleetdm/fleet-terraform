@@ -4,6 +4,12 @@ variable "customer" {
   default     = "fleet"
 }
 
+variable "key_group_id" {
+  description = "Cloudfront key group id"
+  type        = string
+  default     = null
+}
+
 variable "private_key" {
   description = "Private key used for signed URLs"
   type        = string
