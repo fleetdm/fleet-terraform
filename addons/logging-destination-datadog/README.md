@@ -11,7 +11,7 @@ This addon configures AWS Kinesis Firehose to send Fleet's osquery logs to Datad
 
 ```hcl
 module "datadog-logging" {
-  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-datadog?ref=tf-mod-addon-logging-destination-datadog-v1.0.0"
+  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-datadog?ref=tf-mod-addon-logging-destination-datadog-v1.1.1"
 
   datadog_api_key = "your-datadog-api-key"
 
@@ -121,7 +121,7 @@ No requirements.
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.8.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.24.0 |
 
 ## Modules
 
@@ -161,3 +161,4 @@ No modules.
 |------|-------------|
 | <a name="output_fleet_extra_environment_variables"></a> [fleet\_extra\_environment\_variables](#output\_fleet\_extra\_environment\_variables) | Environment variables to configure Fleet to use Datadog logging via Firehose |
 | <a name="output_fleet_extra_iam_policies"></a> [fleet\_extra\_iam\_policies](#output\_fleet\_extra\_iam\_policies) | IAM policies required for Fleet to log to Datadog via Firehose |
+| <a name="output_fleet_s3_datadog_failure_config"></a> [fleet\_s3\_datadog\_failure\_config](#output\_fleet\_s3\_datadog\_failure\_config) | S3 bucket details - datadog-failure |

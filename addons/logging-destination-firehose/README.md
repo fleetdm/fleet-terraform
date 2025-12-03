@@ -9,7 +9,7 @@ No requirements.
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.13.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.24.0 |
 
 ## Modules
 
@@ -67,3 +67,6 @@ No modules.
 |------|-------------|
 | <a name="output_fleet_extra_environment_variables"></a> [fleet\_extra\_environment\_variables](#output\_fleet\_extra\_environment\_variables) | n/a |
 | <a name="output_fleet_extra_iam_policies"></a> [fleet\_extra\_iam\_policies](#output\_fleet\_extra\_iam\_policies) | n/a |
+| <a name="output_fleet_s3_firehose_audit_config"></a> [fleet\_s3\_firehose\_audit\_config](#output\_fleet\_s3\_firehose\_audit\_config) | S3 bucket details - audit |
+| <a name="output_fleet_s3_firehose_osquery_results_config"></a> [fleet\_s3\_firehose\_osquery\_results\_config](#output\_fleet\_s3\_firehose\_osquery\_results\_config) | S3 bucket details - osquery-results |
+| <a name="output_fleet_s3_firehose_osquery_status_config"></a> [fleet\_s3\_firehose\_osquery\_status\_config](#output\_fleet\_s3\_firehose\_osquery\_status\_config) | S3 bucket details - osquery-status |
