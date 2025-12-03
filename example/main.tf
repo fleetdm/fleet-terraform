@@ -282,7 +282,7 @@ module "migrations" {
 
 # Uncomment if using firehose logging destination
 # module "firehose-logging" {
-#   source = "github.com/fleetdm/fleet-terraform/addons/logging-destination-firehose?depth=1&ref=tf-mod-addon-logging-destination-firehose-v1.2.4"
+#   source = "github.com/fleetdm/fleet-terraform/addons/logging-destination-firehose?depth=1&ref=tf-mod-addon-logging-destination-firehose-v1.2.5"
 #   osquery_results_s3_bucket = {
 #     name = local.osquery_results_bucket_name
 #   }

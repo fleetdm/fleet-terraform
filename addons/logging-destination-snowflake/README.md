@@ -11,7 +11,7 @@ This addon configures AWS Kinesis Firehose to send Fleet's osquery logs to Snowf
 
 ```hcl
 module "snowflake-logging" {
-  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-snowflake?depth=1&ref=tf-mod-addon-logging-destination-snowflake-v1.0.1"
+  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-snowflake?depth=1&ref=tf-mod-addon-logging-destination-snowflake-v1.0.2"
 
   s3_bucket_config = {
     name_prefix  = "fleet-snowflake-failure"
@@ -117,7 +117,7 @@ No requirements.
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.4.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.24.0 |
 
 ## Modules
 
@@ -157,3 +157,4 @@ No modules.
 |------|-------------|
 | <a name="output_fleet_extra_environment_variables"></a> [fleet\_extra\_environment\_variables](#output\_fleet\_extra\_environment\_variables) | Environment variables to configure Fleet to use Snowflake logging via Firehose |
 | <a name="output_fleet_extra_iam_policies"></a> [fleet\_extra\_iam\_policies](#output\_fleet\_extra\_iam\_policies) | IAM policies required for Fleet to log to Snowflake via Firehose |
+| <a name="output_fleet_s3_snowflake_failure_config"></a> [fleet\_s3\_snowflake\_failure\_config](#output\_fleet\_s3\_snowflake\_failure\_config) | S3 bucket details - snowflake-failure |
