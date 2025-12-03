@@ -18,3 +18,11 @@ output "fleet_extra_iam_policies" {
   ]
   description = "IAM policies required for Fleet to log to Datadog via Firehose"
 }
+
+output "fleet_s3_datadog_failure_config" {
+  value = {
+    bucket_name      = aws_s3_bucket.datadog-failure.bucket
+    s3_object_prefix = var.s3_bucket_config.name_prefix
+  }
+  description = "S3 bucket details - datadog-failure"
+}
