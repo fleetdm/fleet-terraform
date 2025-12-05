@@ -11,7 +11,7 @@ This addon configures AWS Kinesis Firehose to send Fleet's osquery logs to Splun
 
 ```hcl
 module "splunk-logging" {
-  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-splunk?depth=1&ref=tf-mod-addon-logging-destination-splunk-v1.0.2"
+  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-splunk?depth=1&ref=tf-mod-addon-logging-destination-splunk-v1.0.0"
 
   s3_bucket_config = {
     name_prefix  = "fleet-splunk-failure"
