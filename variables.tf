@@ -83,6 +83,7 @@ variable "rds_config" {
     serverless                      = optional(bool, false)
     serverless_min_capacity         = optional(number, 2)
     serverless_max_capacity         = optional(number, 10)
+    restore_to_point_in_time        = optional(map(string), {})
   })
   default = {
     name                            = "fleet"
@@ -107,6 +108,7 @@ variable "rds_config" {
     serverless                      = false
     serverless_min_capacity         = 2
     serverless_max_capacity         = 10
+    restore_to_point_in_time        = {}
   }
   description = "The config for the terraform-aws-modules/rds-aurora/aws module"
   nullable    = false
