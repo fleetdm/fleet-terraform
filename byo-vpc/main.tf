@@ -79,6 +79,7 @@ module "rds" {
   skip_final_snapshot             = var.rds_config.skip_final_snapshot
   snapshot_identifier             = var.rds_config.snapshot_identifier
   backup_retention_period         = var.rds_config.backup_retention_period
+  restore_to_point_in_time        = var.rds_config.restore_to_point_in_time
 
   preferred_maintenance_window = var.rds_config.preferred_maintenance_window
 
