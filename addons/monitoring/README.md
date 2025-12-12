@@ -68,7 +68,7 @@ module "monitoring" {
     mysql_host                 = module.fleet.byo-vpc.rds.cluster_reader_endpoint
     mysql_database             = module.fleet.byo-vpc.rds.cluster_database_name
     mysql_user                 = module.fleet.byo-vpc.rds.cluster_master_username
-    mysql_password_secret_name = module.fleet.byo-vpc.secrets.secret_ids["${local.customer}-database-password"]
+    mysql_password_secret_name = "${local.customer}-database-password"
     rds_security_group_id      = module.fleet.byo-vpc.rds.security_group_id
     subnet_ids                 = module.fleet.vpc.private_subnets
     vpc_id                     = module.fleet.vpc.vpc_id
@@ -157,7 +157,7 @@ No requirements.
 | Name | Version |
 |------|---------|
 | <a name="provider_archive"></a> [archive](#provider\_archive) | 2.7.1 |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.20.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.26.0 |
 | <a name="provider_null"></a> [null](#provider\_null) | 3.2.4 |
 
 ## Modules
