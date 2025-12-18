@@ -1,24 +1,112 @@
-module "trust_store" {
-  source = "terraform-aws-modules/alb/aws//modules/lb_trust_store"
-  version = "10.4.0"
+data "aws_partition" "current" {}
+data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
 
-  name                             = "my-trust-store"
-  ca_certificates_bundle_s3_bucket = "my-cert-bucket"
-  ca_certificates_bundle_s3_key    = "ca_cert/RootCA.pem"
-  create_trust_store_revocation    = true
-  revocation_lists = {
-    crl_1 = {
-      revocations_s3_bucket = "my-cert-bucket"
-      revocations_s3_key    = "crl/crl_1.pem"
+### Trust store and dependencies
+
+resource "aws_lb_trust_store" "this" {
+
+  ca_certificates_bundle_s3_bucket         = module.lb_trust_store_bucket[0].s3_bucket_id
+  ca_certificates_bundle_s3_key            = var.alb_config.trust_store.ca_certificates_bundle_s3_key
+  ca_certificates_bundle_s3_object_version = var.alb_config.trust_store.ca_certificates_bundle_s3_object_version
+  name                                     = "${var.customer_prefix}-trust-store"
+
+}
+
+resource "aws_lb_trust_store_revocation" "this" {
+  for_each = var.alb_config.trust_store.create_trust_store_revocation && var.alb_config.trust_store.revocation_lists != null ? var.alb_config.trust_store.revocation_lists : {}
+
+  trust_store_arn               = aws_lb_trust_store.this.arn 
+  revocations_s3_bucket         = module.lb_trust_store_bucket[0].s3_bucket_id
+  revocations_s3_key            = each.value.revocations_s3_key
+  revocations_s3_object_version = each.value.revocations_s3_object_version
+}
+
+data "aws_iam_policy_document" "alb_trust_store_restricted" {
+  statement {
+    sid    = "AllowSpecificALBReadTrustStore"
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["elasticloadbalancing.amazonaws.com"]
     }
-    crl_2 = {
-      revocations_s3_bucket = "my-cert-bucket"
-      revocations_s3_key    = "crl/crl_2.pem"
+
+    actions = ["s3:GetObject"]
+
+    # Specify the exact certificate object ARN
+    resources = [
+      "${module.lb_trust_store_bucket.s3_bucket_arn}/*"
+    ]
+
+    # Restrict to the specific ALB and Account
+    condition {
+      test     = "ArnEquals"
+      variable = "aws:SourceArn"
+      values   = [module.okta_mtls_alb.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
     }
   }
 }
 
-module "mtls_albs" {
+module "lb_trust_store_bucket" {
+  source  = "terraform-aws-modules/s3-bucket/aws"
+  version = "5.9.1"
+    
+  bucket = "${var.prefix}-trust-store"
+      
+  # Allow deletion of non-empty bucket
+  force_destroy = true
+
+  attach_deny_insecure_transport_policy = true
+  attach_require_latest_tls_policy      = true
+  policy                                = data.aws_iam_policy_document.alb_trust_store_restricted.json
+  block_public_acls                     = true
+  block_public_policy                   = true
+  ignore_public_acls                    = true
+  restrict_public_buckets               = true
+  acl                                   = "private"
+  control_object_ownership              = true
+  object_ownership                      = "ObjectWriter"
+        
+  server_side_encryption_configuration = {
+    rule = {
+      bucket_key_enabled = true
+      apply_server_side_encryption_by_default = {
+        sse_algorithm = "aws:kms"
+      }
+    }
+  }
+  lifecycle_rule = [
+    {
+      id      = "trust_store"
+      enabled = true
+
+      transition = [
+        {
+          days          = var.s3_transition_days
+          storage_class = "ONEZONE_IA"
+        }
+      ]
+      expiration = {
+        days = var.s3_expiration_days
+      }
+      noncurrent_version_expiration = {
+        newer_noncurrent_versions = var.s3_newer_noncurrent_versions
+        days                      = var.s3_noncurrent_version_expiration_days
+      }
+      filter = []
+    }
+  ]
+}
+
+### ALB
+module "okta_mtls_alb" {
   source  = "terraform-aws-modules/alb/aws"
   version = "10.4.0"
 
