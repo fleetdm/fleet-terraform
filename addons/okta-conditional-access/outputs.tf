@@ -16,3 +16,7 @@ output "redirect_rules" {
     priority = 1
   }
 }
+
+output "lb_trust_store__bucket" {
+  value = module.lb_trust_store_bucket
+}

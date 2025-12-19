@@ -96,6 +96,14 @@ module "lb_trust_store_bucket" {
   ]
 }
 
+resource "aws_s3_object" "trust_store_ca" {
+  count  = var.alb_config.trust_store.ca_certificates_bundle_file != null && var.alb_config.trust_store.ca_certificates_bundle_file != "" ? 1 : 0
+  bucket = module.lb_trust_store_bucket[0].s3_bucket_id
+  key    = var.alb_config.trust_store.ca_certificates_bundle_s3_key
+  source = var.alb_config.trust_store.ca_certificates_bundle_file
+  etag  = filemd5(var.alb_config.trust_store.ca_certificates_bundle_file)
+}
+
 ### ALB
 module "okta_mtls_alb" {
   source  = "terraform-aws-modules/alb/aws"

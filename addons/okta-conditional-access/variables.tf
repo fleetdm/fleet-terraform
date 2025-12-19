@@ -38,6 +38,7 @@ variable "alb_config" {
     trust_store = optional(any, {
       ca_certificates_bundle_s3_key            = "ca.pem"
       ca_certificates_bundle_s3_object_version = null
+      ca_certificates_bundle_file              = null
       create_trust_store_revocation            = false
       trust_store_revocation_lists             = {}
     })
