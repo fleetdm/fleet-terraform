@@ -8,7 +8,7 @@ resource "aws_lb_trust_store" "this" {
 
   ca_certificates_bundle_s3_bucket         = module.lb_trust_store_bucket[0].s3_bucket_id
   ca_certificates_bundle_s3_key            = var.alb_config.trust_store.ca_certificates_bundle_s3_key
-  ca_certificates_bundle_s3_object_version = var.alb_config.trust_store.ca_certificates_bundle_s3_object_version
+  ca_certificates_bundle_s3_object_version = coalesce(var.alb_config.trust_store.ca_certificates_bundle_s3_object_version, null)
   name                                     = "${var.customer_prefix}-trust-store"
 
 }
@@ -16,10 +16,10 @@ resource "aws_lb_trust_store" "this" {
 resource "aws_lb_trust_store_revocation" "this" {
   for_each = var.alb_config.trust_store.create_trust_store_revocation && var.alb_config.trust_store.revocation_lists != null ? var.alb_config.trust_store.revocation_lists : {}
 
-  trust_store_arn               = aws_lb_trust_store.this.arn 
+  trust_store_arn               = aws_lb_trust_store.this.arn
   revocations_s3_bucket         = module.lb_trust_store_bucket[0].s3_bucket_id
   revocations_s3_key            = each.value.revocations_s3_key
-  revocations_s3_object_version = each.value.revocations_s3_object_version
+  revocations_s3_object_version = coalesce(each.value.revocations_s3_object_version, null)
 }
 
 data "aws_iam_policy_document" "alb_trust_store_restricted" {
@@ -57,9 +57,9 @@ data "aws_iam_policy_document" "alb_trust_store_restricted" {
 module "lb_trust_store_bucket" {
   source  = "terraform-aws-modules/s3-bucket/aws"
   version = "5.9.1"
-    
-  bucket = "${var.prefix}-trust-store"
-      
+
+  bucket_prefix = var.trust_store_s3_config.bucket_prefix
+
   # Allow deletion of non-empty bucket
   force_destroy = true
 
@@ -73,7 +73,7 @@ module "lb_trust_store_bucket" {
   acl                                   = "private"
   control_object_ownership              = true
   object_ownership                      = "ObjectWriter"
-        
+
   server_side_encryption_configuration = {
     rule = {
       bucket_key_enabled = true
@@ -87,18 +87,9 @@ module "lb_trust_store_bucket" {
       id      = "trust_store"
       enabled = true
 
-      transition = [
-        {
-          days          = var.s3_transition_days
-          storage_class = "ONEZONE_IA"
-        }
-      ]
-      expiration = {
-        days = var.s3_expiration_days
-      }
       noncurrent_version_expiration = {
-        newer_noncurrent_versions = var.s3_newer_noncurrent_versions
-        days                      = var.s3_noncurrent_version_expiration_days
+        newer_noncurrent_versions = var.trust_store_s3_config.newer_noncurrent_versions
+        days                      = var.trust_store_s3_config.noncurrent_version_expiration_days
       }
       filter = []
     }
@@ -124,19 +115,19 @@ module "okta_mtls_alb" {
 
   target_groups = {
     "tg-0" = {
-       name              = var.alb_config.name
-       backend_protocol  = "HTTP"
-       backend_port      = 80
-       target_type       = "ip"
-       create_attachment = false
-       health_check = {
-         path                = "/healthz"
-         matcher             = "200"
-         timeout             = 10
-         interval            = 15
-         healthy_threshold   = 5
-         unhealthy_threshold = 5
-       }
+      name              = var.alb_config.name
+      backend_protocol  = "HTTP"
+      backend_port      = 80
+      target_type       = "ip"
+      create_attachment = false
+      health_check = {
+        path                = "/healthz"
+        matcher             = "200"
+        timeout             = 10
+        interval            = 15
+        healthy_threshold   = 5
+        unhealthy_threshold = 5
+      }
     }
   }
 
@@ -159,27 +150,27 @@ module "okta_mtls_alb" {
       certificate_arn = var.alb_config.certificate_arn
       mutual_authentication = {
         mode            = "verify"
-        trust_store_arn = module.trust_store.trust_store_arn
+        trust_store_arn = aws_lb_trust_store.this.arn
       }
-      forward = {
-        target_group_key = "tg-0"
+      fixed_response = {
+        content_type = "text/plain"
+        message_body = "Not Found"
+        status_code  = "404"
       }
       routing_http_request_x_amzn_mtls_clientcert_serial_number_header_name = "X-Client-Cert-Serial"
       rules = {
-        "https/okta-deny" = {
+        "https/okta-forward" = {
           actions = [{
-            fixed_response = [{
-              content_type = "text/plain"
-              message_body = "Not Found"
-              status_code  = "404"
-            }]
+            forward = {
+              target_group_key = "tg-0"
+            }
             order = 1
-            type  = "fixed-response"
+            type  = "forward"
           }]
           conditions = [{
-            host_header = [{
-              regex_values = ["^okta.*"]
-            }]
+            path_pattern = {
+              values = ["/api/fleet/conditional_access/idp/sso"]
+            }
           }]
         }
       }
