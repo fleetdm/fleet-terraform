@@ -7,6 +7,12 @@ variable "customer_prefix" {
   default = "fleet"
 }
 
+variable "redirect_priority" {
+  description = "The priority of the redirect https_listener_rule generated in the output"
+  type        = string
+  default     = 1
+}
+
 variable "trust_store_s3_config" {
   type = object({
     bucket_prefix                      = optional(string, "fleet-okta-trust-store")
