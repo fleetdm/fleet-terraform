@@ -9,7 +9,7 @@ variable "customer_prefix" {
 
 variable "redirect_priority" {
   description = "The priority of the redirect https_listener_rule generated in the output"
-  type        = string
+  type        = number
   default     = 1
 }
 
