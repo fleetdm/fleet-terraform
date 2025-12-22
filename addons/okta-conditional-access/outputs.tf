@@ -1,5 +1,5 @@
 output "redirect_rules" {
-  value = {
+  value = [{
     actions = [{
       redirect = {
         host        = "${var.alb_config.subdomain_prefix}.#{host}"
@@ -14,7 +14,7 @@ output "redirect_rules" {
       }
     }]
     priority = 1
-  }
+  }]
 }
 
 output "lb_trust_store__bucket" {
