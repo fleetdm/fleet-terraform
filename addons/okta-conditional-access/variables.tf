@@ -13,6 +13,11 @@ variable "trust_store_s3_config" {
     newer_noncurrent_versions          = optional(number, 5)
     noncurrent_version_expiration_days = optional(number, 30)
   })
+  default = {
+    bucket_prefix                      = "fleet-okta-trust-store"
+    newer_noncurrent_versions          = 5
+    noncurrent_version_expiration_days = 30
+  }
 }
 
 variable "alb_config" {

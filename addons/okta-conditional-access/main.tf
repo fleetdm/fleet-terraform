@@ -6,9 +6,9 @@ data "aws_region" "current" {}
 
 resource "aws_lb_trust_store" "this" {
 
-  ca_certificates_bundle_s3_bucket         = module.lb_trust_store_bucket[0].s3_bucket_id
+  ca_certificates_bundle_s3_bucket         = module.lb_trust_store_bucket.s3_bucket_id
   ca_certificates_bundle_s3_key            = var.alb_config.trust_store.ca_certificates_bundle_s3_key
-  ca_certificates_bundle_s3_object_version = coalesce(var.alb_config.trust_store.ca_certificates_bundle_s3_object_version, null)
+  ca_certificates_bundle_s3_object_version = try(var.alb_config.trust_store.ca_certificates_bundle_s3_object_version, null)
   name                                     = "${var.customer_prefix}-trust-store"
 
 }
@@ -17,9 +17,9 @@ resource "aws_lb_trust_store_revocation" "this" {
   for_each = var.alb_config.trust_store.create_trust_store_revocation && var.alb_config.trust_store.revocation_lists != null ? var.alb_config.trust_store.revocation_lists : {}
 
   trust_store_arn               = aws_lb_trust_store.this.arn
-  revocations_s3_bucket         = module.lb_trust_store_bucket[0].s3_bucket_id
+  revocations_s3_bucket         = module.lb_trust_store_bucket.s3_bucket_id
   revocations_s3_key            = each.value.revocations_s3_key
-  revocations_s3_object_version = coalesce(each.value.revocations_s3_object_version, null)
+  revocations_s3_object_version = try(each.value.revocations_s3_object_version, null)
 }
 
 data "aws_iam_policy_document" "alb_trust_store_restricted" {
@@ -98,10 +98,10 @@ module "lb_trust_store_bucket" {
 
 resource "aws_s3_object" "trust_store_ca" {
   count  = var.alb_config.trust_store.ca_certificates_bundle_file != null && var.alb_config.trust_store.ca_certificates_bundle_file != "" ? 1 : 0
-  bucket = module.lb_trust_store_bucket[0].s3_bucket_id
+  bucket = module.lb_trust_store_bucket.s3_bucket_id
   key    = var.alb_config.trust_store.ca_certificates_bundle_s3_key
   source = var.alb_config.trust_store.ca_certificates_bundle_file
-  etag  = filemd5(var.alb_config.trust_store.ca_certificates_bundle_file)
+  etag   = filemd5(var.alb_config.trust_store.ca_certificates_bundle_file)
 }
 
 ### ALB
@@ -115,7 +115,7 @@ module "okta_mtls_alb" {
 
   vpc_id                     = var.vpc_id
   subnets                    = var.alb_config.subnets
-  security_groups            = var.alb_config.security_groups
+  security_groups            = concat(var.alb_config.security_groups, [aws_security_group.alb.id])
   access_logs                = var.alb_config.access_logs
   idle_timeout               = var.alb_config.idle_timeout
   internal                   = var.alb_config.internal
@@ -157,8 +157,9 @@ module "okta_mtls_alb" {
       protocol        = "HTTPS"
       certificate_arn = var.alb_config.certificate_arn
       mutual_authentication = {
-        mode            = "verify"
-        trust_store_arn = aws_lb_trust_store.this.arn
+        mode                           = "verify"
+        advertise_trust_store_ca_names = "on"
+        trust_store_arn                = aws_lb_trust_store.this.arn
       }
       fixed_response = {
         content_type = "text/plain"
@@ -187,5 +188,37 @@ module "okta_mtls_alb" {
 
   tags = {
     Name = var.alb_config.name
+  }
+}
+
+resource "aws_security_group" "alb" {
+  #checkov:skip=CKV2_AWS_5:False positive
+  vpc_id      = var.vpc_id
+  description = "Fleet ALB Security Group"
+  ingress {
+    description      = "Ingress from all, its a public load balancer"
+    from_port        = 443
+    to_port          = 443
+    protocol         = "tcp"
+    cidr_blocks      = var.alb_config.allowed_cidrs
+    ipv6_cidr_blocks = var.alb_config.allowed_ipv6_cidrs
+  }
+
+  ingress {
+    description      = "For http to https redirect"
+    from_port        = 80
+    to_port          = 80
+    protocol         = "tcp"
+    cidr_blocks      = var.alb_config.allowed_cidrs
+    ipv6_cidr_blocks = var.alb_config.allowed_ipv6_cidrs
+  }
+
+  egress {
+    description      = "Egress to all"
+    from_port        = 0
+    to_port          = 0
+    protocol         = "-1"
+    cidr_blocks      = var.alb_config.egress_cidrs
+    ipv6_cidr_blocks = var.alb_config.egress_ipv6_cidrs
   }
 }
