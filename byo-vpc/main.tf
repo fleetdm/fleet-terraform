@@ -29,6 +29,7 @@ module "byo-db" {
       subnets         = var.vpc_config.networking.subnets
       security_groups = var.fleet_config.networking.security_groups
       ingress_sources = var.fleet_config.networking.ingress_sources
+      assign_public_ip = var.fleet_config.networking.assign_public_ip
     }
   })
   ecs_cluster      = var.ecs_cluster

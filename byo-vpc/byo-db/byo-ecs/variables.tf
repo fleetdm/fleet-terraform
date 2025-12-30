@@ -71,6 +71,7 @@ variable "fleet_config" {
         security_groups  = optional(list(string), [])
         prefix_list_ids  = optional(list(string), [])
       })
+      assign_public_ip = optional(bool, false)
     })
     autoscaling = optional(object({
       max_capacity                 = optional(number, 5)
@@ -179,6 +180,7 @@ variable "fleet_config" {
         security_groups  = []
         prefix_list_ids  = []
       }
+      assign_public_ip = false
     }
     autoscaling = {
       max_capacity                 = 5

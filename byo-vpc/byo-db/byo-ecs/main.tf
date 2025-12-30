@@ -50,6 +50,7 @@ resource "aws_ecs_service" "fleet" {
   network_configuration {
     subnets         = var.fleet_config.networking.subnets
     security_groups = var.fleet_config.networking.security_groups == null ? aws_security_group.main.*.id : var.fleet_config.networking.security_groups
+    assign_public_ip = var.fleet_config.networking.assign_public_ip
   }
 }
 
