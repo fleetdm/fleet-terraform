@@ -12,6 +12,7 @@ locals {
         security_groups  = concat(var.fleet_config.networking.ingress_sources.security_groups, [module.alb.security_group_id])
         prefix_list_ids  = var.fleet_config.networking.ingress_sources.prefix_list_ids
       }
+      assign_public_ip = var.fleet_config.networking.assign_public_ip
     })
   })
   fleet_target_group = [

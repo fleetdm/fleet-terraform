@@ -303,6 +303,7 @@ variable "fleet_config" {
         security_groups  = []
         prefix_list_ids  = []
       })
+      assign_public_ip = optional(bool, false)
       }), {
       subnets         = null
       security_groups = null
@@ -312,6 +313,7 @@ variable "fleet_config" {
         security_groups  = []
         prefix_list_ids  = []
       }
+      assign_public_ip = false
     })
     autoscaling = optional(object({
       max_capacity                 = optional(number, 5)
@@ -421,6 +423,7 @@ variable "fleet_config" {
         security_groups  = []
         prefix_list_ids  = []
       }
+      assign_public_ip = false
     }
     autoscaling = {
       max_capacity                 = 5
