@@ -77,8 +77,9 @@ variable "redis_config" {
     instance_type                 = optional(string, "cache.m5.large")
     apply_immediately             = optional(bool, true)
     automatic_failover_enabled    = optional(bool, false)
-    engine_version                = optional(string, "6.x")
-    family                        = optional(string, "redis6.x")
+    engine                        = optional(string, "redis")
+    engine_version                = optional(string, "7.1")
+    family                        = optional(string, "redis7")
     at_rest_encryption_enabled    = optional(bool, true)
     transit_encryption_enabled    = optional(bool, true)
     parameter = optional(list(object({
@@ -100,8 +101,9 @@ variable "redis_config" {
     instance_type                 = "cache.m5.large"
     apply_immediately             = true
     automatic_failover_enabled    = false
-    engine_version                = "6.x"
-    family                        = "redis6.x"
+    engine                        = "redis"
+    engine_version                = "7.1"
+    family                        = "redis7"
     at_rest_encryption_enabled    = true
     transit_encryption_enabled    = true
     parameter                     = []
