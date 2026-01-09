@@ -102,7 +102,7 @@ variable "redis_config" {
     apply_immediately             = true
     automatic_failover_enabled    = false
     engine                        = "redis"
-    engine_version                = "7.1"
+    engine_version                = "6.x"
     family                        = "redis7"
     at_rest_encryption_enabled    = true
     transit_encryption_enabled    = true
