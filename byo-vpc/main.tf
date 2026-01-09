@@ -89,20 +89,21 @@ module "rds" {
 
 module "redis" {
   source  = "cloudposse/elasticache-redis/aws"
-  version = "0.53.0"
+  version = ">= 1.9.1"
 
   name                          = var.redis_config.name
   replication_group_id          = var.redis_config.replication_group_id == null ? var.redis_config.name : var.redis_config.replication_group_id
   elasticache_subnet_group_name = var.redis_config.elasticache_subnet_group_name == null ? var.redis_config.name : var.redis_config.elasticache_subnet_group_name
   availability_zones            = var.redis_config.availability_zones
   vpc_id                        = var.vpc_config.vpc_id
-  description                   = "Fleet Redis"
+  description                   = "Fleet cache"
   #allowed_security_group_ids = concat(var.redis_config.allowed_security_group_ids, module.byo-db.ecs.security_group)
   subnets                    = var.redis_config.subnets
   cluster_size               = var.redis_config.cluster_size
   instance_type              = var.redis_config.instance_type
   apply_immediately          = var.redis_config.apply_immediately
   automatic_failover_enabled = var.redis_config.automatic_failover_enabled
+  engine                     = var.redis_config.engine
   engine_version             = var.redis_config.engine_version
   family                     = var.redis_config.family
   at_rest_encryption_enabled = var.redis_config.at_rest_encryption_enabled
