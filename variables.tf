@@ -151,7 +151,7 @@ variable "redis_config" {
     automatic_failover_enabled    = false
     engine                        = "redis"
     engine_version                = "7.1"
-    family                        = "redis7"
+    family                        = "redis6.x"
     at_rest_encryption_enabled    = true
     transit_encryption_enabled    = true
     parameter                     = []
