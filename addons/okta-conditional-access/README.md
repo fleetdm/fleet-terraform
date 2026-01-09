@@ -37,17 +37,20 @@ locals {
 module "okta_acm" {
   source  = "terraform-aws-modules/acm/aws"
   version = "4.3.1"
+
   domain_name = local.okta_subdomain
   # Assumes you are managing your domain in route53 inside of this config.
   zone_id = aws_route53_zone.main.id
+
   wait_for_validation = true
 }
+
 resource "aws_route53_record" "okta" {
   # If you change the route53_zone to a data source this also needs to become "data.aws_route53_zone.main.id"
   zone_id = aws_route53_zone.main.id
   name    = local.okta_subdomain
   type    = "A"
-    
+
   alias {
     name                   = module.okta-conditional-access.alb.lb_dns_name
     zone_id                = module.okta-conditional-access.alb.lb_zone_id
@@ -79,16 +82,16 @@ module "fleet" {
     # Note: by default the rules use the highest priority indexes starting at 1,
     # but that can be configured inside the module.
     https_listener_rules = module.okta-conditional-access.redirect_rules
-  }  
+  }
 }
 
 module "okta-conditional-access" {
   source = "github.com/fleetdm/fleet-terraform/addons/okta-conditional-access?depth=1&ref=tf-mod-addon-okta-conditional-access-v0.5.0"
   customer_prefix = "fleet"
   vpc_id = module.fleet.vpc.vpc_id
-  trust_store_s3_config = {   
+  trust_store_s3_config = {
     bucket_prefix = "fleet-okta-trust-store"
-  }   
+  }
   alb_config = {
     name = "fleet-okta"
     # If using the ALB logging module:
@@ -96,7 +99,7 @@ module "okta-conditional-access" {
       bucket  = module.logging_alb.log_s3_bucket_id
       prefix  = "fleet"
       enabled = true
-    }     
+    }
     subnets = module.fleet.vpc.public_subnets
     certificate_arn = module.okta_acm.acm_certificate_arn
     idle_timeout = 60
