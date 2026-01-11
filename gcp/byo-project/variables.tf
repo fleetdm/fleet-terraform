@@ -106,7 +106,7 @@ variable "fleet_config" {
     })))
   })
   default = {
-    image_tag              = "fleetdm/fleet:v4.78.1"
+    image_tag              = "fleetdm/fleet:v4.78.2"
     installers_bucket_name = ""
     fleet_cpu              = "1000m"
     fleet_memory           = "4096Mi"
