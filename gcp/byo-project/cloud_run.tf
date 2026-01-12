@@ -18,7 +18,7 @@ locals {
   })
   fleet_env_vars = merge(var.fleet_config.extra_env_vars, {
     FLEET_LICENSE_KEY      = var.fleet_config.license_key
-    FLEET_SERVER_FORCE_H2C = "true"
+    FLEET_SERVER_FORCE_H2C = var.fleet_config.use_h2c
     FLEET_MYSQL_PROTOCOL   = "tcp"
     FLEET_MYSQL_ADDRESS    = "${module.mysql.private_ip_address}:3306"
     FLEET_MYSQL_USERNAME   = var.database_config.database_user
@@ -77,7 +77,7 @@ module "fleet-service" {
     {
       container_image = local.fleet_image_tag
       ports = {
-        name           = "h2c"
+        name           = var.fleet_config.use_h2c ? "h2c" : "http1"
         container_port = 8080
       }
       # container_command = ["/bin/sh"]
