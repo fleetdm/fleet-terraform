@@ -24,7 +24,7 @@ variable "image_repository" {
 
 variable "image_tag" {
   type        = string
-  default     = "v4.66.0"
+  default     = "v4.79.0"
   description = "Used to populate the fleet version that will be deployed."
 }
 
