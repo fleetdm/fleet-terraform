@@ -1,11 +1,11 @@
 module "fleet" {
-    source = "git::https://github.com/fleetdm/fleet-terraform//k8s?depth=1&ref=tf-mod-k8s-v1.2.0"
+    source = "git::https://github.com/fleetdm/fleet-terraform//k8s?depth=1&ref=tf-mod-k8s-v1.2.1"
 
     namespace = "fleet"
     hostname = "fleet.localhost.local"
     replicas = "3"
     image_repository = "fleetdm/fleet"
-    image_tag = "v4.72.0"
+    image_tag = "v4.79.0"
     /*
         Example:
         image_pull_secrets = [

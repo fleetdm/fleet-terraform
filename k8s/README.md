@@ -329,7 +329,7 @@ No modules.
 | <a name="input_hostname"></a> [hostname](#input\_hostname) | Used as the hostname that you will access fleet on. | `string` | `"fleet.localhost"` | no |
 | <a name="input_image_pull_secrets"></a> [image\_pull\_secrets](#input\_image\_pull\_secrets) | Used to inject image pull secrets for access to a private container registry. | <pre>list(object({<br/>    name = string<br/>  }))</pre> | `[]` | no |
 | <a name="input_image_repository"></a> [image\_repository](#input\_image\_repository) | Used to populate the image repository for fleet. | `string` | `"fleetdm/fleet"` | no |
-| <a name="input_image_tag"></a> [image\_tag](#input\_image\_tag) | Used to populate the fleet version that will be deployed. | `string` | `"v4.66.0"` | no |
+| <a name="input_image_tag"></a> [image\_tag](#input\_image\_tag) | Used to populate the fleet version that will be deployed. | `string` | `"v4.79.0"` | no |
 | <a name="input_ingress"></a> [ingress](#input\_ingress) | Used to configure values for ingress. | <pre>object({<br/>    enabled     = optional(bool, false)<br/>    class_name  = optional(string, "nginx")<br/>    labels      = optional(map(string), {})<br/>    annotations = optional(map(string), {})<br/>    hosts       = optional(list(any), [])<br/>    tls = object({<br/>      secret_name = optional(string, "")<br/>      hosts       = optional(list(string), [])<br/>    })<br/>  })</pre> | n/a | yes |
 | <a name="input_namespace"></a> [namespace](#input\_namespace) | The value for this variable will be used as the name of the namespace that fleet will be deployed to. | `string` | `"fleet"` | no |
 | <a name="input_node_selector"></a> [node\_selector](#input\_node\_selector) | Used to populate node selector values. | `map(any)` | `{}` | no |
