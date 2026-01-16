@@ -130,22 +130,22 @@ module "byo-vpc" {
           values           = ["yes", "true"]
         }]
       }]
-    },
+      },
       # This prevents exposing the Fleet and Go versions publicly
-#      {
-#      priority = 9000
-#      actions = [{
-#        type         = "fixed-response"
-#        content_type = "text/html"
-#        status_code  = "403"
-#        message_body = "<h1><center>403 Forbidden</center></h1>"
-#      }]
-#      conditions = [{
-#        path_patterns = [
-#          "/version"
-#        ]
-#      }]
-#      }
+      # {
+      # priority = 9000
+      # actions = [{
+      #   type         = "fixed-response"
+      #   content_type = "text/html"
+      #   status_code  = "404"
+      #   message_body = "<h1><center>404 Not Found</center></h1>"
+      # }]
+      # conditions = [{
+      #   path_patterns = [
+      #     "/version"
+      #   ]
+      # }]
+      # },
     ]
   }
   ecs_cluster = {
