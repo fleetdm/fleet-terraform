@@ -196,6 +196,19 @@ module "fleet" {
     #     path_patterns = ["*"]
     #   }]
     #   }, {
+    #   priority             = 8999
+    #   actions = [{
+    #     type         = "fixed-response"
+    #     content_type = "text/html"
+    #     status_code  = "404"
+    #     message_body = "<h1><center>404 Not Found</center></h1>"
+    #   }]
+    #   conditions = [{
+    #     path_patterns = [
+    #       "/version"
+    #     ]
+    #   }]
+    #   }, {
     #   priority             = 1
     #   actions = [{
     #     type               = "forward"
@@ -266,9 +279,9 @@ module "migrations" {
   desired_count            = module.fleet.byo-vpc.byo-db.byo-ecs.appautoscaling_target.min_capacity
   min_capacity             = module.fleet.byo-vpc.byo-db.byo-ecs.appautoscaling_target.min_capacity
   max_capacity             = module.fleet.byo-vpc.byo-db.byo-ecs.appautoscaling_target.max_capacity
-   
+
   depends_on = [
-    module.fleet, 
+    module.fleet,
   ]
 }
 
