@@ -132,7 +132,7 @@ variable "fleet_config" {
     extra_env_vars         = optional(map(string))
     extra_secret_env_vars = optional(map(object({
       secret  = string
-      version = string
+      version = optional(string, "latest")
     })))
   })
   default = {
