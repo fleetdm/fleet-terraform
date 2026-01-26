@@ -80,13 +80,63 @@ This Terraform project automates the deployment of Fleet Device Management (Flee
 
     ```
 
+### Secret Manager env vars
+
+Use `fleet_config.extra_secret_env_vars` to inject additional Secret Manager-backed environment variables into the Fleet Cloud Run service and migration job. The module grants `roles/secretmanager.secretAccessor` for every secret you provide, but you must create and populate the secrets yourself. If `version` is omitted, it defaults to `latest`.
+
+```hcl
+fleet_config = {
+  extra_secret_env_vars = {
+    FLEET_MDM_WINDOWS_WSTEP_IDENTITY_CERT_BYTES = {
+      secret  = "mdm-wstep-identity-cert"
+      version = "latest"
+    }
+    FLEET_MDM_WINDOWS_WSTEP_IDENTITY_KEY_BYTES = {
+      secret = "mdm-wstep-identity-key"
+    }
+  }
+}
+```
+
+If you want to look up an existing secret, use a data source in configuration (not in `terraform.tfvars`) and merge it into `fleet_config`:
+
+```hcl
+data "google_secret_manager_secret" "mdm_wstep_cert" {
+  project   = module.project_factory.project_id
+  secret_id = "mdm-wstep-identity-cert"
+}
+
+data "google_secret_manager_secret" "mdm_wstep_key" {
+  project   = module.project_factory.project_id
+  secret_id = "mdm-wstep-identity-key"
+}
+
+locals {
+  extra_secret_env_vars = {
+    FLEET_MDM_WINDOWS_WSTEP_IDENTITY_CERT_BYTES = {
+      secret = data.google_secret_manager_secret.mdm_wstep_cert.secret_id
+    }
+    FLEET_MDM_WINDOWS_WSTEP_IDENTITY_KEY_BYTES = {
+      secret = data.google_secret_manager_secret.mdm_wstep_key.secret_id
+    }
+  }
+}
+
+module "fleet" {
+  # ...
+  fleet_config = merge(var.fleet_config, {
+    extra_secret_env_vars = local.extra_secret_env_vars
+  })
+}
+```
+
 **Key Variables to Set:**
 * `org_id`: Your GCP Organization ID.
 *   `billing_account_id`: Your GCP Billing Account ID.
 *   `dns_zone_name`: The DNS zone that will be created/managed in Cloud DNS (e.g., `mydomain.com.`). **Must end with a dot.**
 *   `dns_record_name`: The specific DNS record for Fleet (e.g., `fleet.mydomain.com.`). **Must end with a dot.**
 *   `project_name`: A descriptive name for the project to be created.
-*   `fleet_config.image_tag`: The Docker image tag for the Fleet version you want to deploy (e.g., `fleetdm/fleet:v4.76.0`).
+*   `fleet_config.image_tag`: The Docker image tag for the Fleet version you want to deploy (e.g., `fleetdm/fleet:v4.79.1`).
 *   `fleet_config.exec_migration`: Set to `true` when you are upgrading the `fleet_config.image_tag` to automatically run database migrations. Set to `false` if you want to manage migrations manually or if it's not an image upgrade.
 *   `fleet_config.license_key` (Optional, inside the `fleet_config` object): Your Fleet license key if you have one.
 
@@ -249,7 +299,7 @@ No resources.
 | <a name="input_database_config"></a> [database\_config](#input\_database\_config) | Configuration for the Cloud SQL (MySQL) instance. | <pre>object({<br>    name                = string<br>    database_name       = string<br>    database_user       = string<br>    collation           = string<br>    charset             = string<br>    deletion_protection = bool<br>    database_version    = string<br>    tier                = string<br>  })</pre> | <pre>{<br>  "charset": "utf8mb4",<br>  "collation": "utf8mb4_unicode_ci",<br>  "database_name": "fleet",<br>  "database_user": "fleet",<br>  "database_version": "MYSQL_8_0",<br>  "deletion_protection": false,<br>  "name": "fleet-mysql",<br>  "tier": "db-n1-standard-1"<br>}</pre> | no |
 | <a name="input_dns_record_name"></a> [dns\_record\_name](#input\_dns\_record\_name) | The DNS record for Fleet (e.g., 'fleet.my-fleet-infra.com.') | `string` | n/a | yes |
 | <a name="input_dns_zone_name"></a> [dns\_zone\_name](#input\_dns\_zone\_name) | The DNS name of the managed zone (e.g., 'my-fleet-infra.com.') | `string` | n/a | yes |
-| <a name="input_fleet_config"></a> [fleet\_config](#input\_fleet\_config) | Configuration for the Fleet application deployment. | <pre>object({<br>    installers_bucket_name = string<br>    image_tag              = string<br>    fleet_cpu              = string<br>    fleet_memory           = string<br>    debug_logging          = bool<br>    license_key            = optional(string)<br>    min_instance_count     = number<br>    max_instance_count     = number<br>    exec_migration         = bool<br>    extra_env_vars         = optional(map(string))<br>    extra_secret_env_vars = optional(map(object({<br>      secret  = string<br>      version = string<br>    })))<br>  })</pre> | <pre>{<br>  "debug_logging": false,<br>  "exec_migration": true,<br>  "extra_env_vars": {},<br>  "extra_secret_env_vars": {},<br>  "fleet_cpu": "1000m",<br>  "fleet_memory": "4096Mi",<br>  "image_tag": "fleetdm/fleet:v4.76.0",<br>  "installers_bucket_name": "",<br>  "max_instance_count": 5,<br>  "min_instance_count": 1<br>}</pre> | no |
+| <a name="input_fleet_config"></a> [fleet\_config](#input\_fleet\_config) | Configuration for the Fleet application deployment. | <pre>object({<br>    installers_bucket_name = string<br>    image_tag              = string<br>    fleet_cpu              = string<br>    fleet_memory           = string<br>    debug_logging          = bool<br>    license_key            = optional(string)<br>    min_instance_count     = number<br>    max_instance_count     = number<br>    exec_migration         = bool<br>    extra_env_vars         = optional(map(string))<br>    extra_secret_env_vars = optional(map(object({<br>      secret  = string<br>      version = optional(string, "latest")<br>    })))<br>  })</pre> | <pre>{<br>  "debug_logging": false,<br>  "exec_migration": true,<br>  "extra_env_vars": {},<br>  "extra_secret_env_vars": {},<br>  "fleet_cpu": "1000m",<br>  "fleet_memory": "4096Mi",<br>  "image_tag": "fleetdm/fleet:v4.79.1",<br>  "installers_bucket_name": "",<br>  "max_instance_count": 5,<br>  "min_instance_count": 1<br>}</pre> | no |
 | <a name="input_fleet_image"></a> [fleet\_image](#input\_fleet\_image) | n/a | `string` | `"v4.67.3"` | no |
 | <a name="input_labels"></a> [labels](#input\_labels) | resource labels | `map(string)` | <pre>{<br>  "application": "fleet"<br>}</pre> | no |
 | <a name="input_location"></a> [location](#input\_location) | The general location for resources, e.g., 'us' for GCS buckets. | `string` | `"us"` | no |
