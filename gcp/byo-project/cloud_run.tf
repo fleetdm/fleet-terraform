@@ -15,6 +15,16 @@ locals {
       secret  = google_secret_manager_secret.private_key.secret_id
       version = "latest"
     }
+    # If configuring Windows MDM, uncomment the lines below and
+    # add a comma after the } under FLEET_SERVER_PRIVATE_KEY
+    # FLEET_MDM_WINDOWS_WSTEP_IDENTITY_CERT_BYTES = {
+    #   secret  = google_secret_manager_secret.windows_mdm_cert.secret_id
+    #   version = "latest"
+    # },
+    # FLEET_MDM_WINDOWS_WSTEP_IDENTITY_KEY_BYTES = {
+    #   secret  = google_secret_manager_secret.windows_mdm_key.secret_id
+    #   version = "latest"
+    # }
   })
   fleet_env_vars = merge(var.fleet_config.extra_env_vars, {
     FLEET_LICENSE_KEY      = var.fleet_config.license_key
