@@ -93,6 +93,17 @@ This Terraform project automates the deployment of Fleet Device Management (Flee
 
 Review `variables.tf` and `byo-project/variables.tf` for all available options and their defaults.
 
+## Known Limitations
+
+1. To handle large uploads, we need to bypass GCP cloud run's 32MB HTTP/1 body limit, by setting `fleet_config.use_h2c = true` which forces Fleet to use HTTP/2. However, as Cloud Run documentation notes, HTTP/2 end-to-end breaks connection upgrades, affecting WebSocket support and Fleet functionality for features such as Live Queries.
+    
+    **Workaround**: [Use Fleet Gitops Flow](https://fleetdm.com/docs/using-fleet/gitops#managing-software-installers)
+    * Set `fleet_config.use_h2c = false` to force HTTP/1
+    * If you have large uploads, use `fleetctl apply` with a url field in your software YAML. The data flow avoids the ingress limit:
+        * Apply the YAML (small request).
+        * The Fleet Server makes an outbound GET request to download the file from the URL (S3, GCS, etc).
+        * Cloud Run doesn't apply the 32MB limit to outbound requests.
+
 ## Deployment Steps
 
 1.  **Authenticate with GCP:**
