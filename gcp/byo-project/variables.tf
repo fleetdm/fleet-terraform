@@ -115,7 +115,7 @@ variable "fleet_config" {
     min_instance_count     = 1
     max_instance_count     = 5
     exec_migration         = true
-    use_h2c                = true
+    use_h2c                = false
     extra_env_vars         = {}
     extra_secret_env_vars  = {}
   }
