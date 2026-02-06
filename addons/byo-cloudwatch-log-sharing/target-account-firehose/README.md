@@ -28,10 +28,19 @@ module "fleet_log_sharing_target" {
     aws.target      = aws.target_region
   }
 
-  source_account_ids            = ["111111111111"]
-  destination_name              = "fleet-app-logs-firehose"
-  firehose_delivery_stream_name = "fleet-app-logs-firehose"
-  s3_bucket_name                = "fleet-app-logs-firehose-example"
+  source_account_ids = ["111111111111"]
+
+  cloudwatch_destination = {
+    name = "fleet-app-logs-firehose"
+  }
+
+  firehose = {
+    delivery_stream_name = "fleet-app-logs-firehose"
+  }
+
+  s3 = {
+    bucket_name = "fleet-app-logs-firehose-example"
+  }
 }
 
 output "fleet_log_sharing_target" {
@@ -91,18 +100,10 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| <a name="input_buffering_interval"></a> [buffering\_interval](#input\_buffering\_interval) | Buffer interval in seconds before Firehose delivers to S3. | `number` | `300` | no |
-| <a name="input_buffering_size"></a> [buffering\_size](#input\_buffering\_size) | Buffer size in MB before Firehose delivers to S3. | `number` | `5` | no |
-| <a name="input_compression_format"></a> [compression\_format](#input\_compression\_format) | Compression format for Firehose S3 delivery. | `string` | `"GZIP"` | no |
-| <a name="input_destination_name"></a> [destination\_name](#input\_destination\_name) | Name of the CloudWatch Logs destination created in the destination provider region. | `string` | `"fleet-log-sharing-firehose-destination"` | no |
+| <a name="input_cloudwatch_destination"></a> [cloudwatch\_destination](#input\_cloudwatch\_destination) | CloudWatch Logs destination settings in the source log-group region. | <pre>object({<br/>    name      = optional(string, "fleet-log-sharing-firehose-destination")<br/>    role_name = optional(string, "fleet-log-sharing-firehose-destination-role")<br/>  })</pre> | `{}` | no |
 | <a name="input_destination_policy_source_organization_id"></a> [destination\_policy\_source\_organization\_id](#input\_destination\_policy\_source\_organization\_id) | Optional AWS Organization ID allowed to subscribe to this destination. | `string` | `""` | no |
-| <a name="input_destination_role_name"></a> [destination\_role\_name](#input\_destination\_role\_name) | IAM role name assumed by CloudWatch Logs to write into Firehose. | `string` | `"fleet-log-sharing-firehose-destination-role"` | no |
-| <a name="input_firehose_delivery_stream_name"></a> [firehose\_delivery\_stream\_name](#input\_firehose\_delivery\_stream\_name) | Firehose delivery stream name that receives shared log events. | `string` | n/a | yes |
-| <a name="input_firehose_role_name"></a> [firehose\_role\_name](#input\_firehose\_role\_name) | IAM role name assumed by Firehose to deliver records to S3. | `string` | `"fleet-log-sharing-firehose-delivery-role"` | no |
-| <a name="input_s3_bucket_name"></a> [s3\_bucket\_name](#input\_s3\_bucket\_name) | S3 bucket name for Firehose-delivered logs. | `string` | n/a | yes |
-| <a name="input_s3_error_output_prefix"></a> [s3\_error\_output\_prefix](#input\_s3\_error\_output\_prefix) | S3 prefix for Firehose delivery errors. | `string` | `"fleet-logs-errors/!{firehose:error-output-type}/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/"` | no |
-| <a name="input_s3_force_destroy"></a> [s3\_force\_destroy](#input\_s3\_force\_destroy) | Whether to allow Terraform to destroy a non-empty S3 bucket. | `bool` | `false` | no |
-| <a name="input_s3_prefix"></a> [s3\_prefix](#input\_s3\_prefix) | S3 prefix for delivered records. | `string` | `"fleet-logs/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/"` | no |
+| <a name="input_firehose"></a> [firehose](#input\_firehose) | Firehose delivery stream settings used as the CloudWatch Logs destination target. | <pre>object({<br/>    delivery_stream_name = string<br/>    role_name            = optional(string, "fleet-log-sharing-firehose-delivery-role")<br/>    buffering_size       = optional(number, 5)<br/>    buffering_interval   = optional(number, 300)<br/>    compression_format   = optional(string, "GZIP")<br/>    s3_prefix            = optional(string, "fleet-logs/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/")<br/>    s3_error_prefix      = optional(string, "fleet-logs-errors/!{firehose:error-output-type}/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/")<br/>  })</pre> | n/a | yes |
+| <a name="input_s3"></a> [s3](#input\_s3) | S3 configuration for Firehose delivered logs. | <pre>object({<br/>    bucket_name   = string<br/>    force_destroy = optional(bool, false)<br/>  })</pre> | n/a | yes |
 | <a name="input_source_account_ids"></a> [source\_account\_ids](#input\_source\_account\_ids) | AWS account IDs allowed to create subscription filters to this destination. | `list(string)` | n/a | yes |
 | <a name="input_tags"></a> [tags](#input\_tags) | Tags to apply to created resources that support tags. | `map(string)` | `{}` | no |
 

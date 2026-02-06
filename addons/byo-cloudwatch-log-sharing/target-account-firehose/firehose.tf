@@ -12,7 +12,7 @@ data "aws_iam_policy_document" "firehose_assume_role" {
 
 resource "aws_iam_role" "firehose" {
   provider           = aws.target
-  name               = var.firehose_role_name
+  name               = var.firehose.role_name
   assume_role_policy = data.aws_iam_policy_document.firehose_assume_role.json
   tags               = var.tags
 }
@@ -38,7 +38,7 @@ data "aws_iam_policy_document" "firehose" {
 
 resource "aws_iam_policy" "firehose" {
   provider = aws.target
-  name     = "${var.firehose_role_name}-policy"
+  name     = "${var.firehose.role_name}-policy"
   policy   = data.aws_iam_policy_document.firehose.json
   tags     = var.tags
 }
@@ -51,17 +51,17 @@ resource "aws_iam_role_policy_attachment" "firehose" {
 
 resource "aws_kinesis_firehose_delivery_stream" "destination" {
   provider    = aws.target
-  name        = var.firehose_delivery_stream_name
+  name        = var.firehose.delivery_stream_name
   destination = "extended_s3"
 
   extended_s3_configuration {
     bucket_arn          = aws_s3_bucket.destination.arn
     role_arn            = aws_iam_role.firehose.arn
-    prefix              = var.s3_prefix
-    error_output_prefix = var.s3_error_output_prefix
-    buffering_size      = var.buffering_size
-    buffering_interval  = var.buffering_interval
-    compression_format  = var.compression_format
+    prefix              = var.firehose.s3_prefix
+    error_output_prefix = var.firehose.s3_error_prefix
+    buffering_size      = var.firehose.buffering_size
+    buffering_interval  = var.firehose.buffering_interval
+    compression_format  = var.firehose.compression_format
   }
 
   tags = var.tags

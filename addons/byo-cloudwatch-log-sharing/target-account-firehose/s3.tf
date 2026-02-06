@@ -1,7 +1,7 @@
 resource "aws_s3_bucket" "destination" {
   provider      = aws.target
-  bucket        = var.s3_bucket_name
-  force_destroy = var.s3_force_destroy
+  bucket        = var.s3.bucket_name
+  force_destroy = var.s3.force_destroy
   tags          = var.tags
 }
 

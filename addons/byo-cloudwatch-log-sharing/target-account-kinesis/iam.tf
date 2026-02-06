@@ -18,7 +18,7 @@ data "aws_iam_policy_document" "assume_role" {
 
 resource "aws_iam_role" "destination" {
   provider           = aws.destination
-  name               = var.destination_role_name
+  name               = var.cloudwatch_destination.role_name
   assume_role_policy = data.aws_iam_policy_document.assume_role.json
   tags               = var.tags
 }
@@ -38,7 +38,7 @@ data "aws_iam_policy_document" "destination" {
 
 resource "aws_iam_policy" "destination" {
   provider = aws.destination
-  name     = "${var.destination_role_name}-policy"
+  name     = "${var.cloudwatch_destination.role_name}-policy"
   policy   = data.aws_iam_policy_document.destination.json
   tags     = var.tags
 }

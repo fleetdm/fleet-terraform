@@ -1,11 +1,11 @@
 resource "aws_kinesis_stream" "destination" {
   provider         = aws.target
-  name             = var.kinesis_stream_name
-  retention_period = var.kinesis_retention_period
-  shard_count      = var.kinesis_stream_mode == "PROVISIONED" ? var.kinesis_shard_count : null
+  name             = var.kinesis.stream_name
+  retention_period = var.kinesis.retention_period
+  shard_count      = var.kinesis.stream_mode == "PROVISIONED" ? var.kinesis.shard_count : null
 
   stream_mode_details {
-    stream_mode = var.kinesis_stream_mode
+    stream_mode = var.kinesis.stream_mode
   }
 
   tags = var.tags

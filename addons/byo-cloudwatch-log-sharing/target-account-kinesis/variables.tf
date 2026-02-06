@@ -8,60 +8,44 @@ variable "source_account_ids" {
   }
 }
 
-variable "destination_name" {
-  type        = string
-  description = "Name of the CloudWatch Logs destination created in the destination provider region."
-  default     = "fleet-log-sharing-destination"
-}
-
-variable "destination_role_name" {
-  type        = string
-  description = "IAM role name assumed by CloudWatch Logs to write into the Kinesis stream."
-  default     = "fleet-log-sharing-destination-role"
-}
-
-variable "kinesis_stream_name" {
-  type        = string
-  description = "Kinesis Data Stream name that receives shared log events."
-}
-
-variable "kinesis_stream_mode" {
-  type        = string
-  description = "Kinesis stream mode. Valid values: ON_DEMAND or PROVISIONED."
-  default     = "ON_DEMAND"
-
-  validation {
-    condition     = contains(["ON_DEMAND", "PROVISIONED"], var.kinesis_stream_mode)
-    error_message = "kinesis_stream_mode must be one of: ON_DEMAND, PROVISIONED."
-  }
-}
-
-variable "kinesis_shard_count" {
-  type        = number
-  description = "Shard count when kinesis_stream_mode is PROVISIONED."
-  default     = 1
-
-  validation {
-    condition     = var.kinesis_shard_count >= 1
-    error_message = "kinesis_shard_count must be greater than or equal to 1."
-  }
-}
-
-variable "kinesis_retention_period" {
-  type        = number
-  description = "Retention period for the Kinesis stream in hours."
-  default     = 24
-
-  validation {
-    condition     = var.kinesis_retention_period >= 24 && var.kinesis_retention_period <= 8760
-    error_message = "kinesis_retention_period must be between 24 and 8760 hours."
-  }
-}
-
 variable "destination_policy_source_organization_id" {
   type        = string
   description = "Optional AWS Organization ID allowed to subscribe to this destination."
   default     = ""
+}
+
+variable "cloudwatch_destination" {
+  description = "CloudWatch Logs destination settings in the source log-group region."
+  type = object({
+    name      = optional(string, "fleet-log-sharing-destination")
+    role_name = optional(string, "fleet-log-sharing-destination-role")
+  })
+  default = {}
+}
+
+variable "kinesis" {
+  description = "Kinesis stream settings used as the CloudWatch Logs destination target."
+  type = object({
+    stream_name      = string
+    stream_mode      = optional(string, "ON_DEMAND")
+    shard_count      = optional(number, 1)
+    retention_period = optional(number, 24)
+  })
+
+  validation {
+    condition     = contains(["ON_DEMAND", "PROVISIONED"], var.kinesis.stream_mode)
+    error_message = "kinesis.stream_mode must be one of: ON_DEMAND, PROVISIONED."
+  }
+
+  validation {
+    condition     = var.kinesis.shard_count >= 1
+    error_message = "kinesis.shard_count must be greater than or equal to 1."
+  }
+
+  validation {
+    condition     = var.kinesis.retention_period >= 24 && var.kinesis.retention_period <= 8760
+    error_message = "kinesis.retention_period must be between 24 and 8760 hours."
+  }
 }
 
 variable "tags" {

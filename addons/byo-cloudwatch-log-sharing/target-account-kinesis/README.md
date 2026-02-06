@@ -28,9 +28,15 @@ module "fleet_log_sharing_target" {
     aws.target      = aws.target_region
   }
 
-  source_account_ids  = ["111111111111"]
-  destination_name    = "fleet-app-logs"
-  kinesis_stream_name = "fleet-app-logs"
+  source_account_ids = ["111111111111"]
+
+  cloudwatch_destination = {
+    name = "fleet-app-logs"
+  }
+
+  kinesis = {
+    stream_name = "fleet-app-logs"
+  }
 }
 
 output "fleet_log_sharing_target" {
@@ -82,13 +88,9 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| <a name="input_destination_name"></a> [destination\_name](#input\_destination\_name) | Name of the CloudWatch Logs destination created in the destination provider region. | `string` | `"fleet-log-sharing-destination"` | no |
+| <a name="input_cloudwatch_destination"></a> [cloudwatch\_destination](#input\_cloudwatch\_destination) | CloudWatch Logs destination settings in the source log-group region. | <pre>object({<br/>    name      = optional(string, "fleet-log-sharing-destination")<br/>    role_name = optional(string, "fleet-log-sharing-destination-role")<br/>  })</pre> | `{}` | no |
 | <a name="input_destination_policy_source_organization_id"></a> [destination\_policy\_source\_organization\_id](#input\_destination\_policy\_source\_organization\_id) | Optional AWS Organization ID allowed to subscribe to this destination. | `string` | `""` | no |
-| <a name="input_destination_role_name"></a> [destination\_role\_name](#input\_destination\_role\_name) | IAM role name assumed by CloudWatch Logs to write into the Kinesis stream. | `string` | `"fleet-log-sharing-destination-role"` | no |
-| <a name="input_kinesis_retention_period"></a> [kinesis\_retention\_period](#input\_kinesis\_retention\_period) | Retention period for the Kinesis stream in hours. | `number` | `24` | no |
-| <a name="input_kinesis_shard_count"></a> [kinesis\_shard\_count](#input\_kinesis\_shard\_count) | Shard count when kinesis\_stream\_mode is PROVISIONED. | `number` | `1` | no |
-| <a name="input_kinesis_stream_mode"></a> [kinesis\_stream\_mode](#input\_kinesis\_stream\_mode) | Kinesis stream mode. Valid values: ON\_DEMAND or PROVISIONED. | `string` | `"ON_DEMAND"` | no |
-| <a name="input_kinesis_stream_name"></a> [kinesis\_stream\_name](#input\_kinesis\_stream\_name) | Kinesis Data Stream name that receives shared log events. | `string` | n/a | yes |
+| <a name="input_kinesis"></a> [kinesis](#input\_kinesis) | Kinesis stream settings used as the CloudWatch Logs destination target. | <pre>object({<br/>    stream_name      = string<br/>    stream_mode      = optional(string, "ON_DEMAND")<br/>    shard_count      = optional(number, 1)<br/>    retention_period = optional(number, 24)<br/>  })</pre> | n/a | yes |
 | <a name="input_source_account_ids"></a> [source\_account\_ids](#input\_source\_account\_ids) | AWS account IDs allowed to create subscription filters to this destination. | `list(string)` | n/a | yes |
 | <a name="input_tags"></a> [tags](#input\_tags) | Tags to apply to created resources that support tags. | `map(string)` | `{}` | no |
 

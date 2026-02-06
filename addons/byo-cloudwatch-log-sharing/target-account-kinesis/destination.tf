@@ -29,7 +29,7 @@ locals {
 
 resource "aws_cloudwatch_log_destination" "destination" {
   provider   = aws.destination
-  name       = var.destination_name
+  name       = var.cloudwatch_destination.name
   role_arn   = aws_iam_role.destination.arn
   target_arn = aws_kinesis_stream.destination.arn
 }
