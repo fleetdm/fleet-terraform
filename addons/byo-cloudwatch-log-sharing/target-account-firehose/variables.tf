@@ -17,8 +17,9 @@ variable "destination_policy_source_organization_id" {
 variable "cloudwatch_destination" {
   description = "CloudWatch Logs destination settings in the source log-group region."
   type = object({
-    name      = optional(string, "fleet-log-sharing-firehose-destination")
-    role_name = optional(string, "fleet-log-sharing-firehose-destination-role")
+    name        = optional(string, "fleet-log-sharing-firehose-destination")
+    role_name   = optional(string, "fleet-log-sharing-firehose-destination-role")
+    policy_name = optional(string)
   })
   default = {}
 }
@@ -28,6 +29,7 @@ variable "firehose" {
   type = object({
     delivery_stream_name = string
     role_name            = optional(string, "fleet-log-sharing-firehose-delivery-role")
+    policy_name          = optional(string)
     buffering_size       = optional(number, 5)
     buffering_interval   = optional(number, 300)
     compression_format   = optional(string, "UNCOMPRESSED")

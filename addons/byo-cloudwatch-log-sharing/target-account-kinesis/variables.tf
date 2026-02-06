@@ -17,8 +17,9 @@ variable "destination_policy_source_organization_id" {
 variable "cloudwatch_destination" {
   description = "CloudWatch Logs destination settings in the source log-group region."
   type = object({
-    name      = optional(string, "fleet-log-sharing-destination")
-    role_name = optional(string, "fleet-log-sharing-destination-role")
+    name        = optional(string, "fleet-log-sharing-destination")
+    role_name   = optional(string, "fleet-log-sharing-destination-role")
+    policy_name = optional(string)
   })
   default = {}
 }

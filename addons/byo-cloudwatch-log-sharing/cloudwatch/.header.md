@@ -8,7 +8,7 @@ Use this module in the source Fleet account (and in the same region as the Fleet
 
 ```hcl
 module "fleet_log_sharing" {
-  source = "github.com/fleetdm/fleet-terraform//addons/byo-cloudwatch-log-sharing/cloudwatch"
+  source = "github.com/fleetdm/fleet-terraform//addons/byo-cloudwatch-log-sharing/cloudwatch?depth=1&ref=tf-mod-addon-byo-cloudwatch-log-sharing-v1.0.0"
 
   subscription = {
     log_group_name  = module.fleet.byo-vpc.byo-db.byo-ecs.logging_config["awslogs-group"]
@@ -23,7 +23,7 @@ module "fleet_log_sharing" {
 
 ```hcl
 module "fleet_log_sharing" {
-  source = "github.com/fleetdm/fleet-terraform//addons/byo-cloudwatch-log-sharing/cloudwatch"
+  source = "github.com/fleetdm/fleet-terraform//addons/byo-cloudwatch-log-sharing/cloudwatch?depth=1&ref=tf-mod-addon-byo-cloudwatch-log-sharing-v1.0.0"
 
   subscription = {
     log_group_name       = module.fleet.byo-vpc.byo-db.byo-ecs.logging_config["awslogs-group"]

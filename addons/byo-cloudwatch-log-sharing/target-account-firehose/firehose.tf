@@ -38,7 +38,7 @@ data "aws_iam_policy_document" "firehose" {
 
 resource "aws_iam_policy" "firehose" {
   provider = aws.target
-  name     = "${var.firehose.role_name}-policy"
+  name     = local.firehose_policy_name
   policy   = data.aws_iam_policy_document.firehose.json
   tags     = var.tags
 }

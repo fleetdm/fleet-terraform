@@ -1,3 +1,14 @@
+locals {
+  cloudwatch_destination_policy_name = coalesce(
+    var.cloudwatch_destination.policy_name,
+    "${var.cloudwatch_destination.role_name}-policy"
+  )
+  firehose_policy_name = coalesce(
+    var.firehose.policy_name,
+    "${var.firehose.role_name}-policy"
+  )
+}
+
 data "aws_iam_policy_document" "assume_role" {
   statement {
     effect  = "Allow"
@@ -37,7 +48,7 @@ data "aws_iam_policy_document" "destination" {
 
 resource "aws_iam_policy" "destination" {
   provider = aws.destination
-  name     = "${var.cloudwatch_destination.role_name}-policy"
+  name     = local.cloudwatch_destination_policy_name
   policy   = data.aws_iam_policy_document.destination.json
   tags     = var.tags
 }

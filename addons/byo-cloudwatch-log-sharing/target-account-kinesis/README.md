@@ -21,7 +21,7 @@ provider "aws" {
 }
 
 module "fleet_log_sharing_target" {
-  source = "github.com/fleetdm/fleet-terraform//addons/byo-cloudwatch-log-sharing/target-account-kinesis"
+  source = "github.com/fleetdm/fleet-terraform//addons/byo-cloudwatch-log-sharing/target-account-kinesis?depth=1&ref=tf-mod-addon-byo-cloudwatch-log-sharing-v1.0.0"
 
   providers = {
     aws.destination = aws.source_region
@@ -31,7 +31,9 @@ module "fleet_log_sharing_target" {
   source_account_ids = ["111111111111"]
 
   cloudwatch_destination = {
-    name = "fleet-app-logs"
+    name        = "fleet-app-logs"
+    role_name   = "fleet-app-logs-role"
+    policy_name = "fleet-app-logs-policy"
   }
 
   kinesis = {
@@ -88,7 +90,7 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| <a name="input_cloudwatch_destination"></a> [cloudwatch\_destination](#input\_cloudwatch\_destination) | CloudWatch Logs destination settings in the source log-group region. | <pre>object({<br/>    name      = optional(string, "fleet-log-sharing-destination")<br/>    role_name = optional(string, "fleet-log-sharing-destination-role")<br/>  })</pre> | `{}` | no |
+| <a name="input_cloudwatch_destination"></a> [cloudwatch\_destination](#input\_cloudwatch\_destination) | CloudWatch Logs destination settings in the source log-group region. | <pre>object({<br/>    name        = optional(string, "fleet-log-sharing-destination")<br/>    role_name   = optional(string, "fleet-log-sharing-destination-role")<br/>    policy_name = optional(string)<br/>  })</pre> | `{}` | no |
 | <a name="input_destination_policy_source_organization_id"></a> [destination\_policy\_source\_organization\_id](#input\_destination\_policy\_source\_organization\_id) | Optional AWS Organization ID allowed to subscribe to this destination. | `string` | `""` | no |
 | <a name="input_kinesis"></a> [kinesis](#input\_kinesis) | Kinesis stream settings used as the CloudWatch Logs destination target. | <pre>object({<br/>    stream_name      = string<br/>    stream_mode      = optional(string, "ON_DEMAND")<br/>    shard_count      = optional(number, 1)<br/>    retention_period = optional(number, 24)<br/>  })</pre> | n/a | yes |
 | <a name="input_source_account_ids"></a> [source\_account\_ids](#input\_source\_account\_ids) | AWS account IDs allowed to create subscription filters to this destination. | `list(string)` | n/a | yes |
