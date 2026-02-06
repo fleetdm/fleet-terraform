@@ -23,7 +23,7 @@ locals {
 
   allowed_source_arns = [
     for account_id in local.allowed_source_accounts :
-    "arn:${data.aws_partition.destination.partition}:logs:${data.aws_region.destination.name}:${account_id}:*"
+    "arn:${data.aws_partition.destination.partition}:logs:${data.aws_region.destination.region}:${account_id}:*"
   ]
 }
 

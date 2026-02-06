@@ -5,7 +5,7 @@ data "aws_iam_policy_document" "assume_role" {
 
     principals {
       type        = "Service"
-      identifiers = ["logs.${data.aws_region.destination.name}.amazonaws.com"]
+      identifiers = ["logs.${data.aws_region.destination.region}.amazonaws.com"]
     }
 
     condition {
