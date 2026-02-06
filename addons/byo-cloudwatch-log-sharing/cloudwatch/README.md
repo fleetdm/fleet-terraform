@@ -72,6 +72,4 @@ No modules.
 
 | Name | Description |
 |------|-------------|
-| <a name="output_subscription_filter_destination_arn"></a> [subscription\_filter\_destination\_arn](#output\_subscription\_filter\_destination\_arn) | CloudWatch Logs destination ARN used by the subscription filter. |
-| <a name="output_subscription_filter_log_group_name"></a> [subscription\_filter\_log\_group\_name](#output\_subscription\_filter\_log\_group\_name) | CloudWatch Logs log group name where the subscription filter is configured. |
-| <a name="output_subscription_filter_name"></a> [subscription\_filter\_name](#output\_subscription\_filter\_name) | Created CloudWatch Logs subscription filter name. |
+| <a name="output_subscription_filter"></a> [subscription\_filter](#output\_subscription\_filter) | CloudWatch Logs subscription filter details. |

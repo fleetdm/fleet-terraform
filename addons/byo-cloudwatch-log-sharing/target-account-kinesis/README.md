@@ -44,7 +44,7 @@ output "fleet_log_sharing_target" {
 }
 ```
 
-Then apply the source account module (`../cloudwatch`) using `module.fleet_log_sharing_target.log_destination_arn` and set `destination_type = "kinesis"`.
+Then apply the source account module (`../cloudwatch`) using `module.fleet_log_sharing_target.log_destination.arn` and set `destination_type = "kinesis"`.
 
 ## Requirements
 
@@ -98,11 +98,5 @@ No modules.
 
 | Name | Description |
 |------|-------------|
-| <a name="output_destination_account_id"></a> [destination\_account\_id](#output\_destination\_account\_id) | AWS account ID where the CloudWatch Logs destination exists. |
-| <a name="output_destination_region"></a> [destination\_region](#output\_destination\_region) | Region where the CloudWatch Logs destination was created. This must match the source log group region. |
-| <a name="output_destination_role_arn"></a> [destination\_role\_arn](#output\_destination\_role\_arn) | IAM role ARN assumed by CloudWatch Logs to write records into Kinesis. |
-| <a name="output_kinesis_region"></a> [kinesis\_region](#output\_kinesis\_region) | Region where the Kinesis stream was created. |
-| <a name="output_kinesis_stream_arn"></a> [kinesis\_stream\_arn](#output\_kinesis\_stream\_arn) | Kinesis stream ARN used as CloudWatch Logs destination target. |
-| <a name="output_kinesis_stream_name"></a> [kinesis\_stream\_name](#output\_kinesis\_stream\_name) | Kinesis stream name used as CloudWatch Logs destination target. |
-| <a name="output_log_destination_arn"></a> [log\_destination\_arn](#output\_log\_destination\_arn) | CloudWatch Logs destination ARN to use from the source account module. |
-| <a name="output_log_destination_name"></a> [log\_destination\_name](#output\_log\_destination\_name) | CloudWatch Logs destination name. |
+| <a name="output_kinesis"></a> [kinesis](#output\_kinesis) | Kinesis destination details. |
+| <a name="output_log_destination"></a> [log\_destination](#output\_log\_destination) | CloudWatch Logs destination details to share with the source-account team. |

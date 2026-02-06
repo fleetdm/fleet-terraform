@@ -48,7 +48,7 @@ output "fleet_log_sharing_target" {
 }
 ```
 
-Then apply the source account module (`../cloudwatch`) using `module.fleet_log_sharing_target.log_destination_arn` (default `destination_type` is `firehose`).
+Then apply the source account module (`../cloudwatch`) using `module.fleet_log_sharing_target.log_destination.arn` (default `destination_type` is `firehose`).
 
 ## Requirements
 
@@ -111,13 +111,6 @@ No modules.
 
 | Name | Description |
 |------|-------------|
-| <a name="output_destination_account_id"></a> [destination\_account\_id](#output\_destination\_account\_id) | AWS account ID where the CloudWatch Logs destination exists. |
-| <a name="output_destination_region"></a> [destination\_region](#output\_destination\_region) | Region where the CloudWatch Logs destination was created. This must match the source log group region. |
-| <a name="output_destination_role_arn"></a> [destination\_role\_arn](#output\_destination\_role\_arn) | IAM role ARN assumed by CloudWatch Logs to write records into Firehose. |
-| <a name="output_firehose_delivery_stream_arn"></a> [firehose\_delivery\_stream\_arn](#output\_firehose\_delivery\_stream\_arn) | Firehose delivery stream ARN used as CloudWatch Logs destination target. |
-| <a name="output_firehose_delivery_stream_name"></a> [firehose\_delivery\_stream\_name](#output\_firehose\_delivery\_stream\_name) | Firehose delivery stream name used as CloudWatch Logs destination target. |
-| <a name="output_firehose_region"></a> [firehose\_region](#output\_firehose\_region) | Region where the Firehose delivery stream was created. |
-| <a name="output_log_destination_arn"></a> [log\_destination\_arn](#output\_log\_destination\_arn) | CloudWatch Logs destination ARN to use from the source account module. |
-| <a name="output_log_destination_name"></a> [log\_destination\_name](#output\_log\_destination\_name) | CloudWatch Logs destination name. |
-| <a name="output_s3_bucket_arn"></a> [s3\_bucket\_arn](#output\_s3\_bucket\_arn) | S3 bucket ARN used as Firehose destination. |
-| <a name="output_s3_bucket_name"></a> [s3\_bucket\_name](#output\_s3\_bucket\_name) | S3 bucket name used as Firehose destination. |
+| <a name="output_firehose"></a> [firehose](#output\_firehose) | Firehose destination details. |
+| <a name="output_log_destination"></a> [log\_destination](#output\_log\_destination) | CloudWatch Logs destination details to share with the source-account team. |
+| <a name="output_s3_bucket"></a> [s3\_bucket](#output\_s3\_bucket) | S3 bucket details used as the Firehose destination. |
