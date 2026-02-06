@@ -61,7 +61,9 @@ resource "aws_kinesis_firehose_delivery_stream" "destination" {
     error_output_prefix = var.firehose.s3_error_prefix
     buffering_size      = var.firehose.buffering_size
     buffering_interval  = var.firehose.buffering_interval
-    compression_format  = var.firehose.compression_format
+    # CloudWatch Logs subscription payloads are gzip-compressed already.
+    # Keep this UNCOMPRESSED by default to avoid double-compression.
+    compression_format = var.firehose.compression_format
   }
 
   tags = var.tags

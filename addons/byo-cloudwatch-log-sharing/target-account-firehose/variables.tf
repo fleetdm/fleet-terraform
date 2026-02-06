@@ -24,13 +24,13 @@ variable "cloudwatch_destination" {
 }
 
 variable "firehose" {
-  description = "Firehose delivery stream settings used as the CloudWatch Logs destination target."
+  description = "Firehose delivery stream settings used as the CloudWatch Logs destination target. CloudWatch Logs subscription payloads are already gzip-compressed, so UNCOMPRESSED is the default to avoid double compression."
   type = object({
     delivery_stream_name = string
     role_name            = optional(string, "fleet-log-sharing-firehose-delivery-role")
     buffering_size       = optional(number, 5)
     buffering_interval   = optional(number, 300)
-    compression_format   = optional(string, "GZIP")
+    compression_format   = optional(string, "UNCOMPRESSED")
     s3_prefix            = optional(string, "fleet-logs/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/")
     s3_error_prefix      = optional(string, "fleet-logs-errors/!{firehose:error-output-type}/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/")
   })

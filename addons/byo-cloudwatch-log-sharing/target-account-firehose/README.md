@@ -2,6 +2,8 @@
 
 This module creates the cross-account CloudWatch Logs destination and a Firehose delivery stream target.
 
+CloudWatch Logs subscription payloads are already gzip-compressed. This module defaults Firehose `compression_format` to `UNCOMPRESSED` to avoid double-compression.
+
 Because CloudWatch Logs destinations must be created in the same region as the source log group, this module uses two provider aliases:
 
 - `aws.destination`: Region of the Fleet CloudWatch log group (source region).
@@ -36,6 +38,8 @@ module "fleet_log_sharing_target" {
 
   firehose = {
     delivery_stream_name = "fleet-app-logs-firehose"
+    # Optional override; default is UNCOMPRESSED.
+    compression_format   = "UNCOMPRESSED"
   }
 
   s3 = {
@@ -102,7 +106,7 @@ No modules.
 |------|-------------|------|---------|:--------:|
 | <a name="input_cloudwatch_destination"></a> [cloudwatch\_destination](#input\_cloudwatch\_destination) | CloudWatch Logs destination settings in the source log-group region. | <pre>object({<br/>    name      = optional(string, "fleet-log-sharing-firehose-destination")<br/>    role_name = optional(string, "fleet-log-sharing-firehose-destination-role")<br/>  })</pre> | `{}` | no |
 | <a name="input_destination_policy_source_organization_id"></a> [destination\_policy\_source\_organization\_id](#input\_destination\_policy\_source\_organization\_id) | Optional AWS Organization ID allowed to subscribe to this destination. | `string` | `""` | no |
-| <a name="input_firehose"></a> [firehose](#input\_firehose) | Firehose delivery stream settings used as the CloudWatch Logs destination target. | <pre>object({<br/>    delivery_stream_name = string<br/>    role_name            = optional(string, "fleet-log-sharing-firehose-delivery-role")<br/>    buffering_size       = optional(number, 5)<br/>    buffering_interval   = optional(number, 300)<br/>    compression_format   = optional(string, "GZIP")<br/>    s3_prefix            = optional(string, "fleet-logs/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/")<br/>    s3_error_prefix      = optional(string, "fleet-logs-errors/!{firehose:error-output-type}/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/")<br/>  })</pre> | n/a | yes |
+| <a name="input_firehose"></a> [firehose](#input\_firehose) | Firehose delivery stream settings used as the CloudWatch Logs destination target. CloudWatch Logs subscription payloads are already gzip-compressed, so UNCOMPRESSED is the default to avoid double compression. | <pre>object({<br/>    delivery_stream_name = string<br/>    role_name            = optional(string, "fleet-log-sharing-firehose-delivery-role")<br/>    buffering_size       = optional(number, 5)<br/>    buffering_interval   = optional(number, 300)<br/>    compression_format   = optional(string, "UNCOMPRESSED")<br/>    s3_prefix            = optional(string, "fleet-logs/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/")<br/>    s3_error_prefix      = optional(string, "fleet-logs-errors/!{firehose:error-output-type}/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/")<br/>  })</pre> | n/a | yes |
 | <a name="input_s3"></a> [s3](#input\_s3) | S3 configuration for Firehose delivered logs. | <pre>object({<br/>    bucket_name   = string<br/>    force_destroy = optional(bool, false)<br/>  })</pre> | n/a | yes |
 | <a name="input_source_account_ids"></a> [source\_account\_ids](#input\_source\_account\_ids) | AWS account IDs allowed to create subscription filters to this destination. | `list(string)` | n/a | yes |
 | <a name="input_tags"></a> [tags](#input\_tags) | Tags to apply to created resources that support tags. | `map(string)` | `{}` | no |
