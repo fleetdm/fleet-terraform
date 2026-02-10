@@ -8,7 +8,7 @@ variable "subscription" {
   })
 
   validation {
-    condition     = length(trim(var.subscription.log_group_name)) > 0
+    condition     = length(trimspace(var.subscription.log_group_name)) > 0
     error_message = "subscription.log_group_name must not be empty."
   }
 
@@ -82,12 +82,12 @@ variable "gcp_pubsub" {
   })
 
   validation {
-    condition     = length(trim(var.gcp_pubsub.project_id)) > 0
+    condition     = length(trimspace(var.gcp_pubsub.project_id)) > 0
     error_message = "gcp_pubsub.project_id must not be empty."
   }
 
   validation {
-    condition     = length(trim(var.gcp_pubsub.topic_id)) > 0
+    condition     = length(trimspace(var.gcp_pubsub.topic_id)) > 0
     error_message = "gcp_pubsub.topic_id must not be empty."
   }
 
@@ -123,7 +123,7 @@ variable "dlq" {
     condition = (
       !can(var.dlq.queue_name) ||
       var.dlq.queue_name == null ||
-      length(trim(var.dlq.queue_name)) > 0
+      length(trimspace(var.dlq.queue_name)) > 0
     )
     error_message = "dlq.queue_name must not be empty when provided."
   }
@@ -229,7 +229,7 @@ variable "replayer" {
     condition = (
       !can(var.replayer.function_name) ||
       var.replayer.function_name == null ||
-      length(trim(var.replayer.function_name)) > 0
+      length(trimspace(var.replayer.function_name)) > 0
     )
     error_message = "replayer.function_name must not be empty when provided."
   }
@@ -238,7 +238,7 @@ variable "replayer" {
     condition = (
       !can(var.replayer.role_name) ||
       var.replayer.role_name == null ||
-      length(trim(var.replayer.role_name)) > 0
+      length(trimspace(var.replayer.role_name)) > 0
     )
     error_message = "replayer.role_name must not be empty when provided."
   }
@@ -247,7 +247,7 @@ variable "replayer" {
     condition = (
       !can(var.replayer.policy_name) ||
       var.replayer.policy_name == null ||
-      length(trim(var.replayer.policy_name)) > 0
+      length(trimspace(var.replayer.policy_name)) > 0
     )
     error_message = "replayer.policy_name must not be empty when provided."
   }
