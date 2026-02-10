@@ -25,8 +25,8 @@ module "fleet_log_sharing_target_gcp" {
   # project_id = "customer-observability-prod"
 
   service_account = {
-    # Optional. If omitted, defaults to "fleet-cloudwatch-pubsub-publisher".
-    account_id = "fleet-cloudwatch-pubsub-publisher"
+    # Optional. If omitted, defaults to "fleet-cwl-pubsub-publisher".
+    account_id = "fleet-cwl-pubsub-publisher"
   }
 
   pubsub = {
@@ -133,7 +133,7 @@ No modules.
 | <a name="input_labels"></a> [labels](#input\_labels) | Labels to apply to resources that support labels. | `map(string)` | `{}` | no |
 | <a name="input_project_id"></a> [project\_id](#input\_project\_id) | Optional GCP project ID where resources will be created. If omitted, the module uses the active Google provider project. | `string` | `""` | no |
 | <a name="input_pubsub"></a> [pubsub](#input\_pubsub) | Pub/Sub topic and subscription settings for incoming Fleet log events. | <pre>object({<br/>    topic_name                 = optional(string, "fleet-cloudwatch-logs")<br/>    subscription_name          = optional(string, "fleet-cloudwatch-logs-to-gcs")<br/>    ack_deadline_seconds       = optional(number, 20)<br/>    message_retention_duration = optional(string, "604800s")<br/>  })</pre> | `{}` | no |
-| <a name="input_service_account"></a> [service\_account](#input\_service\_account) | Service account used by the AWS bridge Lambda to publish to Pub/Sub. | <pre>object({<br/>    account_id   = optional(string, "")<br/>    display_name = optional(string, "Fleet CloudWatch Pub/Sub Publisher")<br/>    description  = optional(string, "Publishes Fleet CloudWatch log events to a customer-managed Pub/Sub topic")<br/>    create_key   = optional(bool, true)<br/>  })</pre> | `{}` | no |
+| <a name="input_service_account"></a> [service\_account](#input\_service\_account) | Service account used by the AWS bridge Lambda to publish to Pub/Sub. If account\_id is omitted, defaults to fleet-cwl-pubsub-publisher. | <pre>object({<br/>    account_id   = optional(string, "")<br/>    display_name = optional(string, "Fleet CloudWatch Pub/Sub Publisher")<br/>    description  = optional(string, "Publishes Fleet CloudWatch log events to a customer-managed Pub/Sub topic")<br/>    create_key   = optional(bool, true)<br/>  })</pre> | `{}` | no |
 
 ## Outputs
 

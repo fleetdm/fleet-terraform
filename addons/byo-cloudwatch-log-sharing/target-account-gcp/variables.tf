@@ -36,7 +36,7 @@ variable "pubsub" {
 }
 
 variable "service_account" {
-  description = "Service account used by the AWS bridge Lambda to publish to Pub/Sub."
+  description = "Service account used by the AWS bridge Lambda to publish to Pub/Sub. If account_id is omitted, defaults to fleet-cwl-pubsub-publisher."
   type = object({
     account_id   = optional(string, "")
     display_name = optional(string, "Fleet CloudWatch Pub/Sub Publisher")
