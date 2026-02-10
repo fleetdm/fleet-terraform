@@ -12,7 +12,7 @@ data "aws_iam_policy_document" "firehose_assume_role" {
 
 resource "aws_iam_role" "firehose" {
   provider           = aws.target
-  name               = var.firehose.role_name
+  name               = local.firehose_role_name
   assume_role_policy = data.aws_iam_policy_document.firehose_assume_role.json
   tags               = var.tags
 }

@@ -22,6 +22,14 @@ variable "cloudwatch_destination" {
     policy_name = optional(string)
   })
   default = {}
+
+  validation {
+    condition = (
+      var.cloudwatch_destination.role_name == null ||
+      length(trimspace(var.cloudwatch_destination.role_name)) > 0
+    )
+    error_message = "cloudwatch_destination.role_name must be null or a non-empty string."
+  }
 }
 
 variable "kinesis" {

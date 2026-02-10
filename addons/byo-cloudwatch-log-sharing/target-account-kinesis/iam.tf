@@ -1,7 +1,12 @@
 locals {
+  cloudwatch_destination_role_name = coalesce(
+    var.cloudwatch_destination.role_name,
+    "fleet-log-sharing-destination-role"
+  )
+
   cloudwatch_destination_policy_name = coalesce(
     var.cloudwatch_destination.policy_name,
-    "${var.cloudwatch_destination.role_name}-policy"
+    "${local.cloudwatch_destination_role_name}-policy"
   )
 }
 
@@ -25,7 +30,7 @@ data "aws_iam_policy_document" "assume_role" {
 
 resource "aws_iam_role" "destination" {
   provider           = aws.destination
-  name               = var.cloudwatch_destination.role_name
+  name               = local.cloudwatch_destination_role_name
   assume_role_policy = data.aws_iam_policy_document.assume_role.json
   tags               = var.tags
 }

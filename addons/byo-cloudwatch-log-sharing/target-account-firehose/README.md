@@ -9,6 +9,8 @@ Because CloudWatch Logs destinations must be created in the same region as the s
 - `aws.destination`: Region of the Fleet CloudWatch log group (source region).
 - `aws.target`: Region for the Firehose stream and S3 bucket (same region or different region).
 
+Both provider aliases must use the same AWS account credentials. Cross-account is achieved between source and target subscriptions, not between `aws.destination` and `aws.target` within this module.
+
 ## Usage
 
 ```hcl

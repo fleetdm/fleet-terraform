@@ -22,6 +22,14 @@ variable "cloudwatch_destination" {
     policy_name = optional(string)
   })
   default = {}
+
+  validation {
+    condition = (
+      var.cloudwatch_destination.role_name == null ||
+      length(trimspace(var.cloudwatch_destination.role_name)) > 0
+    )
+    error_message = "cloudwatch_destination.role_name must be null or a non-empty string."
+  }
 }
 
 variable "firehose" {
@@ -56,6 +64,14 @@ variable "firehose" {
       "HADOOP_SNAPPY",
     ], var.firehose.compression_format)
     error_message = "firehose.compression_format must be one of: UNCOMPRESSED, GZIP, ZIP, Snappy, HADOOP_SNAPPY."
+  }
+
+  validation {
+    condition = (
+      var.firehose.role_name == null ||
+      length(trimspace(var.firehose.role_name)) > 0
+    )
+    error_message = "firehose.role_name must be null or a non-empty string."
   }
 }
 
