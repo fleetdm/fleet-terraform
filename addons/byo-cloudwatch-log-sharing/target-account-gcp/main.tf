@@ -6,6 +6,7 @@ data "google_project" "target" {
 
 locals {
   effective_project_id       = trimspace(var.project_id) != "" ? var.project_id : data.google_client_config.current.project
+  effective_sa_account_id    = trimspace(var.service_account.account_id) != "" ? var.service_account.account_id : "fleet-cloudwatch-pubsub-publisher"
   pubsub_service_agent_email = "service-${data.google_project.target.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
 }
 
@@ -17,7 +18,7 @@ resource "google_pubsub_topic" "fleet_logs" {
 
 resource "google_service_account" "publisher" {
   project      = local.effective_project_id
-  account_id   = var.service_account.account_id
+  account_id   = local.effective_sa_account_id
   display_name = var.service_account.display_name
   description  = var.service_account.description
 }

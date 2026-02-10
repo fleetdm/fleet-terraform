@@ -38,7 +38,7 @@ variable "pubsub" {
 variable "service_account" {
   description = "Service account used by the AWS bridge Lambda to publish to Pub/Sub."
   type = object({
-    account_id   = optional(string, "fleet-cloudwatch-pubsub-publisher")
+    account_id   = optional(string, "")
     display_name = optional(string, "Fleet CloudWatch Pub/Sub Publisher")
     description  = optional(string, "Publishes Fleet CloudWatch log events to a customer-managed Pub/Sub topic")
     create_key   = optional(bool, true)
@@ -46,8 +46,11 @@ variable "service_account" {
   default = {}
 
   validation {
-    condition     = can(regex("^[a-z]([-a-z0-9]{4,28}[a-z0-9])$", var.service_account.account_id))
-    error_message = "service_account.account_id must be 6-30 chars, start with a letter, and use lowercase letters, numbers, or hyphens."
+    condition = (
+      trimspace(var.service_account.account_id) == "" ||
+      can(regex("^[a-z]([-a-z0-9]{4,28}[a-z0-9])$", var.service_account.account_id))
+    )
+    error_message = "service_account.account_id must be empty or 6-30 chars starting with a letter, using lowercase letters, numbers, or hyphens."
   }
 
   validation {
