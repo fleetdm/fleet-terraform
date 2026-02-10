@@ -48,7 +48,8 @@ module "fleet_log_sharing_target_gcp" {
 }
 
 output "fleet_log_sharing_target_gcp" {
-  value = module.fleet_log_sharing_target_gcp
+  value     = module.fleet_log_sharing_target_gcp
+  sensitive = true
 }
 ```
 
