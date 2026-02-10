@@ -1,5 +1,5 @@
 locals {
-  replayer_lambda_binary_path = "${path.module}/lambda/bootstrap-replayer"
+  replayer_lambda_binary_path = "${path.module}/lambda/replayer/bootstrap"
 }
 
 resource "null_resource" "replayer_build" {
@@ -17,7 +17,7 @@ resource "null_resource" "replayer_build" {
     working_dir = "${path.module}/lambda"
     command     = <<-EOT
       go mod download
-      CGO_ENABLED=0 GOOS=linux GOARCH=${local.replayer_go_arch} go build -tags lambda.norpc -o bootstrap-replayer ./replayer
+      CGO_ENABLED=0 GOOS=linux GOARCH=${local.replayer_go_arch} go build -tags lambda.norpc -o replayer/bootstrap ./replayer
     EOT
   }
 }
