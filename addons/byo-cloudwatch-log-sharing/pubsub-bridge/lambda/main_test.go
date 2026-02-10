@@ -16,14 +16,10 @@ import (
 
 func resetMainTestState() {
 	cacheMu.Lock()
-	cachedSecretARN = ""
-	cachedCredentialsJSON = nil
-	cachedProjectID = ""
-	cachedTopicReference = ""
-	cachedPubSubClient = nil
-	cachedPublisher = nil
+	cache = cacheState{}
 	cacheMu.Unlock()
 
+	credentialsCacheTTL = defaultCredentialsCacheTTL
 	getPublisherFunc = getPublisher
 	publishBatchFunc = publishBatch
 }

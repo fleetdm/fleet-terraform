@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	pubsub "cloud.google.com/go/pubsub/v2"
 	"github.com/aws/aws-lambda-go/lambda"
@@ -23,6 +24,8 @@ import (
 )
 
 const defaultPubSubBatchMax = 1000
+
+const defaultCredentialsCacheTTL = 5 * time.Minute
 
 type cloudWatchLogsEvent struct {
 	AWSLogs struct {
@@ -53,16 +56,22 @@ type serviceAccountCredentials struct {
 	PrivateKey  string `json:"private_key"`
 }
 
+type cacheState struct {
+	secretARN          string
+	credentialsJSON    []byte
+	credentialsFetched time.Time
+
+	projectID      string
+	topicReference string
+	pubsubClient   *pubsub.Client
+	publisher      *pubsub.Publisher
+}
+
 var (
 	cacheMu sync.Mutex
+	cache   cacheState
 
-	cachedSecretARN       string
-	cachedCredentialsJSON []byte
-
-	cachedProjectID      string
-	cachedTopicReference string
-	cachedPubSubClient   *pubsub.Client
-	cachedPublisher      *pubsub.Publisher
+	credentialsCacheTTL = defaultCredentialsCacheTTL
 
 	getPublisherFunc = getPublisher
 	publishBatchFunc = publishBatch
@@ -105,9 +114,9 @@ func parseServiceAccountSecret(secretText string) ([]byte, error) {
 
 func getServiceAccountJSON(ctx context.Context, secretARN string) ([]byte, error) {
 	cacheMu.Lock()
-	if cachedSecretARN == secretARN && len(cachedCredentialsJSON) > 0 {
-		cached := make([]byte, len(cachedCredentialsJSON))
-		copy(cached, cachedCredentialsJSON)
+	if cache.secretARN == secretARN && len(cache.credentialsJSON) > 0 && time.Since(cache.credentialsFetched) < credentialsCacheTTL {
+		cached := make([]byte, len(cache.credentialsJSON))
+		copy(cached, cache.credentialsJSON)
 		cacheMu.Unlock()
 		return cached, nil
 	}
@@ -140,9 +149,10 @@ func getServiceAccountJSON(ctx context.Context, secretARN string) ([]byte, error
 	}
 
 	cacheMu.Lock()
-	cachedSecretARN = secretARN
-	cachedCredentialsJSON = make([]byte, len(credentialsJSON))
-	copy(cachedCredentialsJSON, credentialsJSON)
+	cache.secretARN = secretARN
+	cache.credentialsJSON = make([]byte, len(credentialsJSON))
+	copy(cache.credentialsJSON, credentialsJSON)
+	cache.credentialsFetched = time.Now()
 	cacheMu.Unlock()
 
 	return credentialsJSON, nil
@@ -152,8 +162,12 @@ func getPublisher(ctx context.Context, projectID, topicID, secretARN string) (*p
 	topicReference := topicID
 
 	cacheMu.Lock()
-	if cachedPublisher != nil && cachedProjectID == projectID && cachedTopicReference == topicReference {
-		publisher := cachedPublisher
+	if cache.publisher != nil &&
+		cache.projectID == projectID &&
+		cache.topicReference == topicReference &&
+		cache.secretARN == secretARN &&
+		time.Since(cache.credentialsFetched) < credentialsCacheTTL {
+		publisher := cache.publisher
 		cacheMu.Unlock()
 		return publisher, nil
 	}
@@ -172,17 +186,18 @@ func getPublisher(ctx context.Context, projectID, topicID, secretARN string) (*p
 	publisher := client.Publisher(topicReference)
 
 	cacheMu.Lock()
-	if cachedPublisher != nil {
-		cachedPublisher.Stop()
+	if cache.publisher != nil {
+		cache.publisher.Stop()
 	}
-	if cachedPubSubClient != nil {
-		_ = cachedPubSubClient.Close()
+	if cache.pubsubClient != nil {
+		_ = cache.pubsubClient.Close()
 	}
 
-	cachedProjectID = projectID
-	cachedTopicReference = topicReference
-	cachedPubSubClient = client
-	cachedPublisher = publisher
+	cache.projectID = projectID
+	cache.topicReference = topicReference
+	cache.secretARN = secretARN
+	cache.pubsubClient = client
+	cache.publisher = publisher
 	cacheMu.Unlock()
 
 	return publisher, nil
