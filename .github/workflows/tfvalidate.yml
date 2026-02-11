@@ -89,13 +89,13 @@ jobs:
             } > "${AUTO_PROVIDER_FILE}"
 
             for alias in ${AWS_ALIASES}; do
-              cat >> "${AUTO_PROVIDER_FILE}" <<EOF
-provider "aws" {
-  alias  = "${alias}"
-  region = "us-east-2"
-}
-
-EOF
+              {
+                echo 'provider "aws" {'
+                echo "  alias  = \"${alias}\""
+                echo '  region = "us-east-2"'
+                echo '}'
+                echo
+              } >> "${AUTO_PROVIDER_FILE}"
             done
 
             echo "Generated ${AUTO_PROVIDER_FILE} for aliases: ${AWS_ALIASES}"
