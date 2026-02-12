@@ -1,6 +1,6 @@
 module github.com/fleetdm/fleet/terraform/addons/byo-cloudwatch-log-sharing/pubsub-bridge/lambda
 
-go 1.25.6
+go 1.25.7
 
 require (
 	cloud.google.com/go/pubsub/v2 v2.3.0
