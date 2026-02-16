@@ -7,10 +7,19 @@ locals {
     name      = k
     valueFrom = v
   }]
-  private_key_secret_entry = var.fleet_config.private_key_secret_arn == null ? [{
-    name      = "FLEET_SERVER_PRIVATE_KEY"
-    valueFrom = aws_secretsmanager_secret.fleet_server_private_key[0].arn
-  }] : []
+  private_key = var.fleet_config.private_key_secret_arn == null ? {
+    secret = [{
+      name      = "FLEET_SERVER_PRIVATE_KEY"
+      valueFrom = aws_secretsmanager_secret.fleet_server_private_key[0].arn
+    }]
+    env = []
+  } : {
+    secret = []
+    env = [{
+      name  = "FLEET_SERVER_PRIVATE_KEY_ARN"
+      value = var.fleet_config.private_key_secret_arn
+    }]
+  }
   load_balancers = concat([
     {
       target_group_arn = var.fleet_config.loadbalancer.arn
@@ -111,7 +120,7 @@ resource "aws_ecs_task_definition" "backend" {
             name      = "FLEET_MYSQL_READ_REPLICA_PASSWORD"
             valueFrom = var.fleet_config.database.password_secret_arn
           }
-        ], local.private_key_secret_entry, local.secrets)
+        ], local.private_key.secret, local.secrets)
         environment = concat([
           {
             name  = "FLEET_MYSQL_USERNAME"
@@ -157,7 +166,7 @@ resource "aws_ecs_task_definition" "backend" {
             name  = "FLEET_S3_SOFTWARE_INSTALLERS_PREFIX"
             value = var.fleet_config.software_installers.s3_object_prefix
           },
-        ], local.environment)
+        ], local.private_key.env, local.environment)
       }
   ], var.fleet_config.sidecars))
   dynamic "volume" {
