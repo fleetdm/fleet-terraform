@@ -73,6 +73,11 @@ data "aws_iam_policy_document" "fleet" {
     resources = ["*"]
   }
 
+  statement {
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = var.fleet_config.private_key_secret_arn != null ? [var.fleet_config.private_key_secret_arn] : [aws_secretsmanager_secret.fleet_server_private_key[0].arn]
+  }
 }
 
 data "aws_iam_policy_document" "assume_role" {
