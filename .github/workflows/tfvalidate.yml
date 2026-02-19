@@ -23,7 +23,9 @@ defaults:
 
 permissions:
   contents: read
+  pull-requests: write
 
+# Set repository variable TFVALIDATE_USE_HARDEN_RUNNER = 'true' to enable step-security/harden-runner; unset or other = skip (forks work without it).
 jobs:
   listaddons:
     name: list terraform addon directories
@@ -31,6 +33,12 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.value }}
     steps:
+      - name: Harden Runner
+        if: vars.TFVALIDATE_USE_HARDEN_RUNNER == 'true'
+        uses: step-security/harden-runner@5ef0c079ce82195b2a36a210272d6b661572d83e # v2.7.0
+        with:
+          egress-policy: audit
+
       - name: Clone repo 
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -56,6 +64,12 @@ jobs:
       matrix:
         terraform_dir: ${{ fromJson(needs.listaddons.outputs.matrix) }}
     steps:
+      - name: Harden Runner
+        if: vars.TFVALIDATE_USE_HARDEN_RUNNER == 'true'
+        uses: step-security/harden-runner@5ef0c079ce82195b2a36a210272d6b661572d83e # v2.7.0
+        with:
+          egress-policy: audit
+
       - name: Clone repo
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -69,3 +83,65 @@ jobs:
         run: |
           terraform init -backend=false
           terraform validate
+
+      - name: Build validation status comment
+        if: github.event_name == 'pull_request'
+        id: comment-body
+        run: |
+          run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          jobs_json=$(gh run view "$GITHUB_RUN_ID" --json jobs)
+          listaddons_ok=$(echo "$jobs_json" | jq -r '[.jobs[] | select(.name == "list terraform addon directories")] | if length > 0 then (.[0].conclusion // "pending") else "skip" end')
+          tfvalidate_jobs=$(echo "$jobs_json" | jq -r '.jobs[] | select(.name | startswith("terraform validate")) | "\(.name)|\(.conclusion // "pending")"')
+          all_ok="true"
+          [[ "$listaddons_ok" != "success" && "$listaddons_ok" != "skip" ]] && all_ok="false"
+          while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            concl="${line#*|}"
+            [[ "$concl" != "success" ]] && all_ok="false"
+          done <<< "$tfvalidate_jobs"
+          if [[ "$all_ok" == "true" && "$listaddons_ok" == "success" ]]; then
+            emoji="✅"
+            status="**Terraform validation: success**"
+          else
+            emoji="❌"
+            status="**Terraform validation: failed**"
+          fi
+          {
+            echo "<!-- tfvalidate-status -->"
+            echo "$emoji $status"
+            echo ""
+            echo "| Module / step | Status |"
+            echo "|---------------|--------|"
+            if [[ "$listaddons_ok" != "skip" ]]; then
+              lo_icon=$([[ "$listaddons_ok" == "success" ]] && echo "✅" || echo "❌")
+              echo "| list addon directories | $lo_icon $listaddons_ok |"
+            fi
+            while IFS= read -r line; do
+              [[ -z "$line" ]] && continue
+              name="${line%|*}"
+              dir=$(echo "$name" | sed -n 's/^terraform validate[[:space:]]*(\(.*\))$/\1/p')
+              [[ -z "$dir" ]] && dir="$name"
+              concl="${line#*|}"
+              icon=$([[ "$concl" == "success" ]] && echo "✅" || echo "❌")
+              echo "| $dir | $icon $concl |"
+            done <<< "$tfvalidate_jobs"
+            echo ""
+            echo "[View run]($run_url)"
+          } > comment.md
+
+      - name: Find existing validation comment
+        if: github.event_name == 'pull_request'
+        id: find-comment
+        uses: peter-evans/find-comment@v3
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body-includes: "<!-- tfvalidate-status -->"
+
+      - name: Comment validation status on PR
+        if: github.event_name == 'pull_request'
+        uses: peter-evans/create-or-update-comment@v5
+        with:
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body-path: comment.md
+          edit-mode: replace
