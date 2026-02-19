@@ -35,7 +35,7 @@ jobs:
     steps:
       - name: Harden Runner
         if: vars.TFVALIDATE_USE_HARDEN_RUNNER == 'true'
-        uses: step-security/harden-runner@5ef0c079ce82195b2a36a210272d6b661572d83e # v2.7.0
+        uses: step-security/harden-runner@5ef0c079ce82195b2a36a210272d6b661572d83e # v2.14.2
         with:
           egress-policy: audit
 
@@ -66,7 +66,7 @@ jobs:
     steps:
       - name: Harden Runner
         if: vars.TFVALIDATE_USE_HARDEN_RUNNER == 'true'
-        uses: step-security/harden-runner@5ef0c079ce82195b2a36a210272d6b661572d83e # v2.7.0
+        uses: step-security/harden-runner@5ef0c079ce82195b2a36a210272d6b661572d83e # v2.14.2
         with:
           egress-policy: audit
 
@@ -132,14 +132,14 @@ jobs:
       - name: Find existing validation comment
         if: github.event_name == 'pull_request'
         id: find-comment
-        uses: peter-evans/find-comment@v3
+        uses: peter-evans/find-comment@b30e6a3c0ed37e7c023ccd3f1db5c6c0b0c23aad # v4.0.0
         with:
           issue-number: ${{ github.event.pull_request.number }}
           body-includes: "<!-- tfvalidate-status -->"
 
       - name: Comment validation status on PR
         if: github.event_name == 'pull_request'
-        uses: peter-evans/create-or-update-comment@v5
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
         with:
           comment-id: ${{ steps.find-comment.outputs.comment-id }}
           issue-number: ${{ github.event.pull_request.number }}
