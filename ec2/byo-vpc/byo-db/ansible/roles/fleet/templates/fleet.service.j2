@@ -1,0 +1,16 @@
+[Unit]
+Description=Fleet device management server
+After=network.target
+
+[Service]
+Type=simple
+User={{ fleet_service_user }}
+Group={{ fleet_service_user }}
+EnvironmentFile={{ fleet_env_file }}
+ExecStart={{ fleet_binary_path }} serve
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=999999
+
+[Install]
+WantedBy=multi-user.target
