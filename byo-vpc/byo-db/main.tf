@@ -63,7 +63,7 @@ module "cluster" {
 
 module "alb" {
   source  = "terraform-aws-modules/alb/aws"
-  version = "9.17.0"
+  version = "10.5.0"
 
   name = var.alb_config.name
 
