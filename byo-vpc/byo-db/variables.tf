@@ -91,6 +91,7 @@ variable "fleet_config" {
     iam_role_arn                 = optional(string, null)
     repository_credentials       = optional(string, "")
     private_key_secret_name      = optional(string, "fleet-server-private-key")
+    private_key_secret_arn     = optional(string, null)
     service = optional(object({
       name = optional(string, "fleet")
       }), {
@@ -234,6 +235,7 @@ variable "fleet_config" {
     iam_role_arn                 = null
     repository_credentials       = ""
     private_key_secret_name      = "fleet-server-private-key"
+    private_key_secret_arn     = null
     service = {
       name = "fleet"
     }

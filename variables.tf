@@ -248,6 +248,7 @@ variable "fleet_config" {
     iam_role_arn                 = optional(string, null)
     repository_credentials       = optional(string, "")
     private_key_secret_name      = optional(string, "fleet-server-private-key")
+    private_key_secret_arn      = optional(string, null)
     service = optional(object({
       name = optional(string, "fleet")
       }), {
@@ -391,6 +392,7 @@ variable "fleet_config" {
     iam_role_arn                 = null
     repository_credentials       = ""
     private_key_secret_name      = "fleet-server-private-key"
+    private_key_secret_arn      = null
     service = {
       name = "fleet"
     }
@@ -450,7 +452,7 @@ variable "fleet_config" {
       s3_object_prefix = ""
     }
   }
-  description = "The configuration object for Fleet itself. Fields that default to null will have their respective resources created if not specified."
+  description = "The configuration object for Fleet itself. Fields that default to null will have their respective resources created if not specified. For BYO-ECS, set private_key_secret_arn to an existing Secrets Manager secret ARN to use that secret instead of creating one; the task receives FLEET_SERVER_PRIVATE_KEY_ARN in that case."
   nullable    = false
 }
 

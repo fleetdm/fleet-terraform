@@ -40,7 +40,7 @@ output "fleet_config" {
 }
 
 output "fleet_server_private_key_secret_arn" {
-  value = aws_secretsmanager_secret.fleet_server_private_key.arn
+  value = var.fleet_config.private_key_secret_arn != null ? var.fleet_config.private_key_secret_arn : aws_secretsmanager_secret.fleet_server_private_key[0].arn
 }
 
 output "fleet_s3_software_installers_config" {
