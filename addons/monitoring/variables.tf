@@ -86,6 +86,7 @@ variable "cron_monitoring" {
     mysql_database             = string
     mysql_user                 = string
     mysql_password_secret_name = string
+    mysql_tls_config           = optional(string, "true")
     vpc_id                     = string
     subnet_ids                 = list(string)
     rds_security_group_id      = string

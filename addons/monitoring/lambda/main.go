@@ -51,6 +51,7 @@ type OptionsStruct struct {
 	MySQLUser                  string `long:"mysql-user" env:"MYSQL_USER" required:"true"`
 	MySQLSMSecret              string `long:"mysql-secretsmanager-secret" env:"MYSQL_SECRETSMANAGER_SECRET" required:"true"`
 	MySQLDatabase              string `long:"mysql-database" env:"MYSQL_DATABASE" required:"true"`
+	MySQLTLSConfig             string `long:"mysql-tls-config" env:"MYSQL_TLS_CONFIG" default:"true"`
 	FleetEnv                   string `long:"fleet-environment" env:"FLEET_ENV" required:"true"`
 	AWSRegion                  string `long:"aws-region" env:"AWS_REGION" required:"true"`
 	CronDelayTolerance         string `long:"cron-delay-tolerance" env:"CRON_DELAY_TOLERANCE" default:"2h"`
@@ -157,6 +158,7 @@ func setupDB(snsClient *sns.Client) (db *sql.DB, err error) {
 		DBName:               options.MySQLDatabase,
 		AllowNativePasswords: true,
 		ParseTime:            true,
+		TLSConfig:            options.MySQLTLSConfig,
 	}
 
 	db, err = sql.Open("mysql", cfg.FormatDSN())
