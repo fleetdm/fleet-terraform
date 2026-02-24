@@ -12,8 +12,8 @@ This includes:
 
 # Preparation
 
-> Note: The documented examples and links in this README may assume use of `module.fleet` instead of `module.fleet`. The monitoring example configuration can be modified as documented below, if your fleet module is named `fleet` instead of `main`
-> - A search and replace of `module.fleet` -> `module.fleet`
+> Note: The documented examples and links in this README may assume use of `module.fleet` instead of `module.main`. The monitoring example configuration can be modified as documented below, if your fleet module is named `fleet` instead of `main`
+> - A search and replace of `module.fleet` -> `module.main`
 
 Some of the for\_each and counts in this module cannot pre-determine the numbers until the `main` fleet module is applied.
 
@@ -31,7 +31,7 @@ https://github.com/fleetdm/fleet-terraform/blob/main/example/main.tf for details
 
 ```
 module "monitoring" {
-  source                 = "github.com/fleetdm/fleet-terraform//addons/monitoring?ref=tf-mod-addon-monitoring-v1.8.0"
+  source                 = "github.com/fleetdm/fleet-terraform//addons/monitoring?ref=tf-mod-addon-monitoring-v1.9.0"
   customer_prefix        = local.customer
   fleet_ecs_service_name = module.fleet.byo-vpc.byo-db.byo-ecs.service.name
   albs = [
@@ -69,6 +69,7 @@ module "monitoring" {
     mysql_database             = module.fleet.byo-vpc.rds.cluster_database_name
     mysql_user                 = module.fleet.byo-vpc.rds.cluster_master_username
     mysql_password_secret_name = "${local.customer}-database-password"
+    mysql_tls_config           = "true"
     rds_security_group_id      = module.fleet.byo-vpc.rds.security_group_id
     subnet_ids                 = module.fleet.vpc.private_subnets
     vpc_id                     = module.fleet.vpc.vpc_id
@@ -157,7 +158,7 @@ No requirements.
 | Name | Version |
 |------|---------|
 | <a name="provider_archive"></a> [archive](#provider\_archive) | 2.7.1 |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.26.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.33.0 |
 | <a name="provider_null"></a> [null](#provider\_null) | 3.2.4 |
 
 ## Modules
@@ -206,7 +207,7 @@ No modules.
 |------|-------------|------|---------|:--------:|
 | <a name="input_acm_certificate_arn"></a> [acm\_certificate\_arn](#input\_acm\_certificate\_arn) | n/a | `string` | `null` | no |
 | <a name="input_albs"></a> [albs](#input\_albs) | n/a | <pre>list(object({<br/>    name                    = string<br/>    arn_suffix              = string<br/>    target_group_name       = string<br/>    target_group_arn_suffix = string<br/>    min_containers          = optional(string, 1)<br/>    ecs_service_name        = string<br/>    alert_thresholds = optional(<br/>      object({<br/>        HTTPCode_ELB_5XX_Count = object({<br/>          period    = number<br/>          threshold = number<br/>        })<br/>        HTTPCode_Target_5XX_Count = object({<br/>          period    = number<br/>          threshold = number<br/>        })<br/>      }),<br/>      {<br/>        HTTPCode_ELB_5XX_Count = {<br/>          period    = 120<br/>          threshold = 0<br/>        },<br/>        HTTPCode_Target_5XX_Count = {<br/>          period    = 120<br/>          threshold = 0<br/>        }<br/>      }<br/>    )<br/>  }))</pre> | `[]` | no |
-| <a name="input_cron_monitoring"></a> [cron\_monitoring](#input\_cron\_monitoring) | n/a | <pre>object({<br/>    mysql_host                 = string<br/>    mysql_database             = string<br/>    mysql_user                 = string<br/>    mysql_password_secret_name = string<br/>    vpc_id                     = string<br/>    subnet_ids                 = list(string)<br/>    rds_security_group_id      = string<br/>    delay_tolerance            = string<br/>    run_interval               = string<br/>    log_retention_in_days      = optional(number, 7)<br/>    ignore_list                = optional(list(string), [])<br/>  })</pre> | `null` | no |
+| <a name="input_cron_monitoring"></a> [cron\_monitoring](#input\_cron\_monitoring) | n/a | <pre>object({<br/>    mysql_host                 = string<br/>    mysql_database             = string<br/>    mysql_user                 = string<br/>    mysql_password_secret_name = string<br/>    mysql_tls_config           = optional(string, "true")<br/>    vpc_id                     = string<br/>    subnet_ids                 = list(string)<br/>    rds_security_group_id      = string<br/>    delay_tolerance            = string<br/>    run_interval               = string<br/>    log_retention_in_days      = optional(number, 7)<br/>    ignore_list                = optional(list(string), [])<br/>  })</pre> | `null` | no |
 | <a name="input_customer_prefix"></a> [customer\_prefix](#input\_customer\_prefix) | n/a | `string` | `"fleet"` | no |
 | <a name="input_default_sns_topic_arns"></a> [default\_sns\_topic\_arns](#input\_default\_sns\_topic\_arns) | n/a | `list(string)` | `[]` | no |
 | <a name="input_fleet_ecs_service_name"></a> [fleet\_ecs\_service\_name](#input\_fleet\_ecs\_service\_name) | n/a | `string` | `null` | no |
