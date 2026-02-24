@@ -129,6 +129,7 @@ variable "fleet_config" {
     min_instance_count     = number
     max_instance_count     = number
     exec_migration         = bool
+    use_h2c                = bool
     extra_env_vars         = optional(map(string))
     extra_secret_env_vars = optional(map(object({
       secret  = string
@@ -136,7 +137,7 @@ variable "fleet_config" {
     })))
   })
   default = {
-    image_tag              = "fleetdm/fleet:v4.79.1"
+    image_tag              = "fleetdm/fleet:v4.81.0"
     installers_bucket_name = "" # Bucket names must be globally unique
     fleet_cpu              = "1000m"
     fleet_memory           = "4096Mi"
@@ -144,6 +145,7 @@ variable "fleet_config" {
     min_instance_count     = 1
     max_instance_count     = 5
     exec_migration         = true
+    use_h2c                = false
     extra_env_vars         = {}
     extra_secret_env_vars  = {}
   }

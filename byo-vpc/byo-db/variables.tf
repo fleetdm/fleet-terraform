@@ -77,7 +77,7 @@ variable "fleet_config" {
     mem                          = optional(number, 4096)
     cpu                          = optional(number, 512)
     pid_mode                     = optional(string, null)
-    image                        = optional(string, "fleetdm/fleet:v4.79.1")
+    image                        = optional(string, "fleetdm/fleet:v4.81.0")
     family                       = optional(string, "fleet")
     sidecars                     = optional(list(any), [])
     depends_on                   = optional(list(any), [])
@@ -219,7 +219,7 @@ variable "fleet_config" {
     mem                          = 512
     cpu                          = 256
     pid_mode                     = null
-    image                        = "fleetdm/fleet:v4.79.1"
+    image                        = "fleetdm/fleet:v4.81.0"
     family                       = "fleet"
     sidecars                     = []
     depends_on                   = []
@@ -328,6 +328,6 @@ variable "alb_config" {
     tls_policy                 = optional(string, "ELBSecurityPolicy-TLS13-1-2-2021-06")
     idle_timeout               = optional(number, 905)
     internal                   = optional(bool, false)
-    enable_deletion_protection = optional(bool, true)
+    enable_deletion_protection = optional(bool, false)
   })
 }
