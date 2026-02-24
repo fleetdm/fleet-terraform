@@ -7,6 +7,19 @@ locals {
     name      = k
     valueFrom = v
   }]
+  private_key = var.fleet_config.private_key_secret_arn == null ? {
+    secret = [{
+      name      = "FLEET_SERVER_PRIVATE_KEY"
+      valueFrom = aws_secretsmanager_secret.fleet_server_private_key[0].arn
+    }]
+    env = []
+  } : {
+    secret = []
+    env = [{
+      name  = "FLEET_SERVER_PRIVATE_KEY_ARN"
+      value = var.fleet_config.private_key_secret_arn
+    }]
+  }
   load_balancers = concat([
     {
       target_group_arn = var.fleet_config.loadbalancer.arn
@@ -106,12 +119,8 @@ resource "aws_ecs_task_definition" "backend" {
           {
             name      = "FLEET_MYSQL_READ_REPLICA_PASSWORD"
             valueFrom = var.fleet_config.database.password_secret_arn
-          },
-          {
-            name      = "FLEET_SERVER_PRIVATE_KEY"
-            valueFrom = aws_secretsmanager_secret.fleet_server_private_key.arn
           }
-        ], local.secrets)
+        ], local.private_key.secret, local.secrets)
         environment = concat([
           {
             name  = "FLEET_MYSQL_USERNAME"
@@ -157,7 +166,7 @@ resource "aws_ecs_task_definition" "backend" {
             name  = "FLEET_S3_SOFTWARE_INSTALLERS_PREFIX"
             value = var.fleet_config.software_installers.s3_object_prefix
           },
-        ], local.environment)
+        ], local.private_key.env, local.environment)
       }
   ], var.fleet_config.sidecars))
   dynamic "volume" {
@@ -259,13 +268,14 @@ resource "aws_security_group" "main" {
 }
 
 resource "random_password" "fleet_server_private_key" {
+  count   = var.fleet_config.private_key_secret_arn == null ? 1 : 0
   length  = 32
   special = true
 }
 
 resource "aws_secretsmanager_secret" "fleet_server_private_key" {
-  name = var.fleet_config.private_key_secret_name
-
+  count  = var.fleet_config.private_key_secret_arn == null ? 1 : 0
+  name   = var.fleet_config.private_key_secret_name
   recovery_window_in_days = "0"
   lifecycle {
     create_before_destroy = true
@@ -273,8 +283,9 @@ resource "aws_secretsmanager_secret" "fleet_server_private_key" {
 }
 
 resource "aws_secretsmanager_secret_version" "fleet_server_private_key" {
-  secret_id     = aws_secretsmanager_secret.fleet_server_private_key.id
-  secret_string = random_password.fleet_server_private_key.result
+  count         = var.fleet_config.private_key_secret_arn == null ? 1 : 0
+  secret_id     = aws_secretsmanager_secret.fleet_server_private_key[0].id
+  secret_string = random_password.fleet_server_private_key[0].result
 }
 
 // Bucket logging is not supported in our Fleet Terraforms at the moment. It can be enabled by the
