@@ -145,6 +145,12 @@ module "fleet" {
     # Script execution can run for up to 300s plus overhead.
     # Ensure the load balancer does not 5XX before we have results.
     idle_timeout = 905
+    # Optionally change the primary Fleet target group from the default HTTP backend
+    # to HTTPS when Fleet itself terminates TLS on the ECS task.
+    # fleet_target_group = {
+    #   protocol = "HTTPS"
+    #   port     = 8080
+    # }
     # Optionally deploy load balancer as an internal load balancer
     # internal = true
     # optionally set deletion protection on (true) or off (false)

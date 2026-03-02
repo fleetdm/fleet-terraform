@@ -421,15 +421,30 @@ variable "migration_config" {
 
 variable "alb_config" {
   type = object({
-    name                       = optional(string, "fleet")
-    subnets                    = list(string)
-    security_groups            = optional(list(string), [])
-    access_logs                = optional(map(string), {})
-    certificate_arn            = string
-    allowed_cidrs              = optional(list(string), ["0.0.0.0/0"])
-    allowed_ipv6_cidrs         = optional(list(string), ["::/0"])
-    egress_cidrs               = optional(list(string), ["0.0.0.0/0"])
-    egress_ipv6_cidrs          = optional(list(string), ["::/0"])
+    name               = optional(string, "fleet")
+    subnets            = list(string)
+    security_groups    = optional(list(string), [])
+    access_logs        = optional(map(string), {})
+    certificate_arn    = string
+    allowed_cidrs      = optional(list(string), ["0.0.0.0/0"])
+    allowed_ipv6_cidrs = optional(list(string), ["::/0"])
+    egress_cidrs       = optional(list(string), ["0.0.0.0/0"])
+    egress_ipv6_cidrs  = optional(list(string), ["::/0"])
+    fleet_target_group = optional(object({
+      protocol          = optional(string, "HTTP")
+      port              = optional(number, 80)
+      target_type       = optional(string, "ip")
+      create_attachment = optional(bool, false)
+      health_check = optional(object({
+        path                = optional(string, "/healthz")
+        matcher             = optional(string, "200")
+        port                = optional(string)
+        timeout             = optional(number, 10)
+        interval            = optional(number, 15)
+        healthy_threshold   = optional(number, 5)
+        unhealthy_threshold = optional(number, 5)
+      }), {})
+    }), {})
     extra_target_groups        = optional(any, [])
     https_listener_rules       = optional(any, [])
     https_overrides            = optional(any, {})
