@@ -112,7 +112,7 @@ resource "aws_ecs_task_definition" "vuln-processing" {
         },
         {
           name  = "FLEET_SERVER_TLS"
-          value = "false"
+          value = tostring(try(var.fleet_config.server_tls_enabled, false))
         },
         {
           name  = "FLEET_S3_SOFTWARE_INSTALLERS_BUCKET"
@@ -161,6 +161,5 @@ resource "aws_ecs_task_definition" "vuln-processing" {
     }
   }
 }
-
 
 
