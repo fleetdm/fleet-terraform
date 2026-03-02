@@ -15,21 +15,20 @@ locals {
       assign_public_ip = var.fleet_config.networking.assign_public_ip
     })
   })
+  fleet_target_group_health_check = merge(
+    var.alb_config.fleet_target_group.health_check,
+    {
+      protocol = var.alb_config.fleet_target_group.protocol
+    }
+  )
   fleet_target_group = [
     {
       name              = var.alb_config.name
-      backend_protocol  = "HTTP"
-      backend_port      = 80
-      target_type       = "ip"
-      create_attachment = false
-      health_check = {
-        path                = "/healthz"
-        matcher             = "200"
-        timeout             = 10
-        interval            = 15
-        healthy_threshold   = 5
-        unhealthy_threshold = 5
-      }
+      protocol          = var.alb_config.fleet_target_group.protocol
+      port              = var.alb_config.fleet_target_group.port
+      target_type       = var.alb_config.fleet_target_group.target_type
+      create_attachment = var.alb_config.fleet_target_group.create_attachment
+      health_check      = local.fleet_target_group_health_check
     }
   ]
   target_groups = { for idx, tg in concat(local.fleet_target_group, var.alb_config.extra_target_groups) :
@@ -69,12 +68,12 @@ module "alb" {
 
   load_balancer_type = "application"
 
-  vpc_id          = var.vpc_id
-  subnets         = var.alb_config.subnets
-  security_groups = concat(var.alb_config.security_groups, [aws_security_group.alb.id])
-  access_logs     = var.alb_config.access_logs
-  idle_timeout    = var.alb_config.idle_timeout
-  internal        = var.alb_config.internal
+  vpc_id                     = var.vpc_id
+  subnets                    = var.alb_config.subnets
+  security_groups            = concat(var.alb_config.security_groups, [aws_security_group.alb.id])
+  access_logs                = var.alb_config.access_logs
+  idle_timeout               = var.alb_config.idle_timeout
+  internal                   = var.alb_config.internal
   enable_deletion_protection = var.alb_config.enable_deletion_protection
 
   target_groups = local.target_groups
@@ -105,28 +104,28 @@ module "alb" {
         "rule-${idx}" => merge(rule, {
           conditions = flatten([
             for condition in rule.conditions : concat(flatten([
-              for key in ["host_headers", "http_request_methods", "path_patterns", "source_ips"]:
+              for key in ["host_headers", "http_request_methods", "path_patterns", "source_ips"] :
               lookup(condition, key, null) != null ? [{
                 "${trimsuffix(key, "s")}" = {
                   values = condition[key]
                 }
               }] : []
-            ]),
-            lookup(condition, "http_headers", null) != null ? [
-              for header in condition.http_headers : {
-                http_header = {
-                  http_header_name = header.http_header_name
-                  values           = header.values
-                }
-              }]: [],
-            lookup(condition, "query_strings", null) != null ? [{
-              query_string = [
-                for qs in condition.query_strings : {
-                  key = qs.key
-                  value = qs.value
-                }
-              ]
-            }]: [],
+              ]),
+              lookup(condition, "http_headers", null) != null ? [
+                for header in condition.http_headers : {
+                  http_header = {
+                    http_header_name = header.http_header_name
+                    values           = header.values
+                  }
+              }] : [],
+              lookup(condition, "query_strings", null) != null ? [{
+                query_string = [
+                  for qs in condition.query_strings : {
+                    key   = qs.key
+                    value = qs.value
+                  }
+                ]
+              }] : [],
           )])
           actions = [for action in rule.actions : merge(action, {
             target_group_key = try(action.target_group_key, try("tg-${action.target_group_index}", null))

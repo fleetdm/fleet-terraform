@@ -48,8 +48,8 @@ resource "aws_ecs_service" "fleet" {
   }
 
   network_configuration {
-    subnets         = var.fleet_config.networking.subnets
-    security_groups = var.fleet_config.networking.security_groups == null ? aws_security_group.main.*.id : var.fleet_config.networking.security_groups
+    subnets          = var.fleet_config.networking.subnets
+    security_groups  = var.fleet_config.networking.security_groups == null ? aws_security_group.main.*.id : var.fleet_config.networking.security_groups
     assign_public_ip = var.fleet_config.networking.assign_public_ip
   }
 }
@@ -147,7 +147,7 @@ resource "aws_ecs_task_definition" "backend" {
           },
           {
             name  = "FLEET_SERVER_TLS"
-            value = "false"
+            value = tostring(var.fleet_config.server_tls_enabled)
           },
           {
             name  = "FLEET_S3_SOFTWARE_INSTALLERS_BUCKET"
@@ -297,7 +297,7 @@ resource "aws_s3_bucket" "software_installers" { #tfsec:ignore:aws-s3-encryption
   bucket        = var.fleet_config.software_installers.bucket_name
   bucket_prefix = var.fleet_config.software_installers.bucket_prefix
   tags          = var.fleet_config.software_installers.tags
-  
+
   # Allow destroy of non-empty buckets
   force_destroy = true
 }
@@ -311,7 +311,7 @@ resource "aws_s3_bucket_versioning" "software_installers" {
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "software_installers" {
-  count      = var.fleet_config.software_installers.enable_bucket_versioning == true && var.fleet_config.software_installers.create_bucket == true && var.fleet_config.software_installers.expire_noncurrent_versions == true? 1 : 0
+  count      = var.fleet_config.software_installers.enable_bucket_versioning == true && var.fleet_config.software_installers.create_bucket == true && var.fleet_config.software_installers.expire_noncurrent_versions == true ? 1 : 0
   depends_on = [aws_s3_bucket_versioning.software_installers[0]]
   bucket     = aws_s3_bucket.software_installers[0].bucket
   rule {
