@@ -24,6 +24,12 @@ variable "s3_expiration_days" {
   default = 90
 }
 
+variable "landing_s3_expiration_days" {
+  description = "Retention in days for the SSE-S3 landing bucket. Keep this at 1 after migration; increase it temporarily for phased backfills."
+  type        = number
+  default     = 1
+}
+
 variable "s3_newer_noncurrent_versions" {
   type    = number
   default = 5
