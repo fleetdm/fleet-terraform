@@ -279,7 +279,7 @@ data "archive_file" "lambda_reencrypt" {
 
 resource "aws_cloudwatch_log_group" "lambda_reencrypt" {
   name              = "/aws/lambda/${var.prefix}-alb-log-reencrypt"
-  retention_in_days = 14
+  retention_in_days = var.lambda_log_retention_in_days
 }
 
 resource "aws_lambda_function" "reencrypt" {
@@ -420,7 +420,7 @@ data "archive_file" "lambda_sweep" {
 
 resource "aws_cloudwatch_log_group" "lambda_sweep" {
   name              = "/aws/lambda/${var.prefix}-alb-log-sweep"
-  retention_in_days = 14
+  retention_in_days = var.lambda_log_retention_in_days
 }
 
 resource "aws_lambda_function" "sweep_reencrypt" {
