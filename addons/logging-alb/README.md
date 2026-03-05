@@ -1,9 +1,17 @@
 # ALB Logging Addon
-This addon creates an SSE-S3 landing bucket for ALB access logs, replicates those logs into an SSE-KMS archive bucket, and optionally creates Athena resources for querying the replicated logs.
+This addon creates an S3 bucket for ALB access logs with in-place SSE-KMS re-encryption via Lambda. ALB access logging requires SSE-S3 (AES256), so objects are written with SSE-S3 and immediately re-encrypted to SSE-KMS using a customer-managed KMS key.
+
+## How it works
+
+1. **ALB writes** log objects to the S3 bucket using SSE-S3 (the only encryption ALB supports).
+2. **Event-driven Lambda** triggers on `s3:ObjectCreated:Put` and re-encrypts each object in-place to SSE-KMS via `CopyObject`. The Lambda's `CopyObject` emits `s3:ObjectCreated:Copy` which does not re-trigger the notification (loop prevention).
+3. **Daily sweep Lambda** runs via EventBridge and scans the last 2 days of ALB log prefixes. If any SSE-S3 objects are found (missed by the event-driven Lambda), it generates a CSV manifest and submits an S3 Batch Operations `S3PutObjectCopy` job to re-encrypt them.
+
+Optionally creates Athena resources for querying the logs.
 
 # Example Configuration
 
-This assumes your fleet module is `main` and is configured with it's default documentation.
+This assumes your fleet module is `main` and is configured with its default documentation.
 
 See https://github.com/fleetdm/fleet/blob/main/terraform/example/main.tf for details.
 
@@ -38,35 +46,34 @@ module "logging_alb" {
 
 Once this terraform is applied, the Athena table will need to be created.  See https://docs.aws.amazon.com/athena/latest/ug/application-load-balancer-logs.html for help with creating the table.
 
-For this implementation, the S3 pattern for the `CREATE TABLE` query should use the archive bucket and look like this:
+For this implementation, the S3 pattern for the `CREATE TABLE` query should look like this:
 
 ```
-s3://your-alb-logs-archive-bucket/<PREFIX>/AWSLogs/<ACCOUNT-ID>/elasticloadbalancing/<REGION>/
+s3://your-alb-logs-bucket/<PREFIX>/AWSLogs/<ACCOUNT-ID>/elasticloadbalancing/<REGION>/
 ```
 
-## Migration
+## Migration from previous versions
 
-Upgrades from older versions should use a two-phase migration:
+If upgrading from a previous version that used a separate archive bucket, use the provided script to re-encrypt existing SSE-S3 objects in-place. The script uses S3 Batch Operations with `S3PutObjectCopy` to re-encrypt objects at scale.
 
-1. Set `landing_s3_expiration_days` to a value larger than `1` so existing landing-bucket objects are retained during the backfill window.
-2. Apply Terraform so the archive bucket and live replication are in place.
-3. Start the historical backfill with `scripts/start-batch-replication-migration.sh`.
-4. Wait for the batch job to finish and validate that Athena can query the archive bucket data.
-5. Set `landing_s3_expiration_days` back to `1` and apply Terraform again.
-
-Terraform will emit a non-blocking check warning whenever `landing_s3_expiration_days` is set to something other than `1`.
-
-Example backfill command:
+1. Apply Terraform so the new Lambda functions and Batch Operations IAM role are in place.
+2. Run the migration script to re-encrypt existing objects:
 
 ```
 ./scripts/start-batch-replication-migration.sh \
-  --source-bucket fleet-alb-logs \
-  --report-bucket fleet-alb-logs
+  --source-bucket fleet-alb-logs
 ```
 
-The script submits an S3 Batch Replication job for existing objects that match the bucket's replication configuration. It creates or updates a Batch Operations IAM role automatically if you do not provide `--batch-role-arn`.
+The script auto-detects the KMS key by deriving a prefix from the bucket name (stripping the `-alb-logs` suffix) and looking up a KMS alias matching `alias/<prefix>-logs`. Use `--kms-key-arn` to specify the key explicitly. Use `--batch-role-arn` to pass the Terraform-managed Batch Operations role ARN.
 
-If the report bucket uses SSE-KMS, also pass `--report-kms-key-arn`.
+3. Wait for the batch job to finish and validate that objects are now SSE-KMS encrypted.
+4. Optionally clean up the script-created IAM role:
+
+```
+./scripts/start-batch-replication-migration.sh \
+  --cleanup-role \
+  --source-bucket fleet-alb-logs
+```
 
 ## Requirements
 
@@ -76,6 +83,7 @@ No requirements.
 
 | Name | Version |
 |------|---------|
+| <a name="provider_archive"></a> [archive](#provider\_archive) | 2.7.1 |
 | <a name="provider_aws"></a> [aws](#provider\_aws) | 6.34.0 |
 
 ## Modules
@@ -91,23 +99,36 @@ No requirements.
 |------|------|
 | [aws_athena_database.logs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/athena_database) | resource |
 | [aws_athena_workgroup.logs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/athena_workgroup) | resource |
+| [aws_cloudwatch_event_rule.sweep_reencrypt](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_event_rule) | resource |
+| [aws_cloudwatch_event_target.sweep_reencrypt](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_event_target) | resource |
+| [aws_cloudwatch_log_group.lambda_reencrypt](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
+| [aws_cloudwatch_log_group.lambda_sweep](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
 | [aws_glue_catalog_table.partitioned_alb_logs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/glue_catalog_table) | resource |
-| [aws_iam_role.s3_replication](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
-| [aws_iam_role_policy.s3_replication](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
+| [aws_iam_role.batch_reencrypt](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
+| [aws_iam_role.lambda_reencrypt](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
+| [aws_iam_role.lambda_sweep](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
+| [aws_iam_role_policy.batch_reencrypt](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
+| [aws_iam_role_policy.lambda_reencrypt](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
+| [aws_iam_role_policy.lambda_sweep](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_kms_alias.logs_alias](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kms_alias) | resource |
 | [aws_kms_key.logs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kms_key) | resource |
-| [aws_s3_bucket.logs_archive](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket) | resource |
-| [aws_s3_bucket_lifecycle_configuration.logs_archive](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_lifecycle_configuration) | resource |
-| [aws_s3_bucket_public_access_block.logs_archive](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_public_access_block) | resource |
-| [aws_s3_bucket_replication_configuration.logs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_replication_configuration) | resource |
-| [aws_s3_bucket_server_side_encryption_configuration.logs_archive](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_server_side_encryption_configuration) | resource |
-| [aws_s3_bucket_versioning.logs_archive](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_versioning) | resource |
+| [aws_lambda_function.reencrypt](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_function) | resource |
+| [aws_lambda_function.sweep_reencrypt](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_function) | resource |
+| [aws_lambda_permission.eventbridge_invoke_sweep](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
+| [aws_lambda_permission.s3_invoke_reencrypt](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
+| [aws_s3_bucket_notification.reencrypt](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_notification) | resource |
+| [archive_file.lambda_reencrypt](https://registry.terraform.io/providers/hashicorp/archive/latest/docs/data-sources/file) | data source |
+| [archive_file.lambda_sweep](https://registry.terraform.io/providers/hashicorp/archive/latest/docs/data-sources/file) | data source |
 | [aws_caller_identity.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/caller_identity) | data source |
+| [aws_iam_policy_document.batch_reencrypt](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
+| [aws_iam_policy_document.batch_reencrypt_assume_role](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.kms](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
+| [aws_iam_policy_document.lambda_reencrypt](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
+| [aws_iam_policy_document.lambda_reencrypt_assume_role](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
+| [aws_iam_policy_document.lambda_sweep](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
+| [aws_iam_policy_document.lambda_sweep_assume_role](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.s3_athena_bucket](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.s3_log_bucket](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
-| [aws_iam_policy_document.s3_replication](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
-| [aws_iam_policy_document.s3_replication_assume_role](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_region.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/region) | data source |
 
 ## Inputs
@@ -119,7 +140,6 @@ No requirements.
 | <a name="input_extra_kms_policies"></a> [extra\_kms\_policies](#input\_extra\_kms\_policies) | n/a | `list(any)` | `[]` | no |
 | <a name="input_extra_s3_athena_policies"></a> [extra\_s3\_athena\_policies](#input\_extra\_s3\_athena\_policies) | n/a | `list(any)` | `[]` | no |
 | <a name="input_extra_s3_log_policies"></a> [extra\_s3\_log\_policies](#input\_extra\_s3\_log\_policies) | n/a | `list(any)` | `[]` | no |
-| <a name="input_landing_s3_expiration_days"></a> [landing\_s3\_expiration\_days](#input\_landing\_s3\_expiration\_days) | Retention in days for the SSE-S3 landing bucket. Keep this at 1 after migration; increase it temporarily for phased backfills. | `number` | `1` | no |
 | <a name="input_prefix"></a> [prefix](#input\_prefix) | n/a | `string` | `"fleet"` | no |
 | <a name="input_s3_expiration_days"></a> [s3\_expiration\_days](#input\_s3\_expiration\_days) | n/a | `number` | `90` | no |
 | <a name="input_s3_newer_noncurrent_versions"></a> [s3\_newer\_noncurrent\_versions](#input\_s3\_newer\_noncurrent\_versions) | n/a | `number` | `5` | no |
@@ -130,5 +150,4 @@ No requirements.
 
 | Name | Description |
 |------|-------------|
-| <a name="output_archive_log_s3_bucket_id"></a> [archive\_log\_s3\_bucket\_id](#output\_archive\_log\_s3\_bucket\_id) | SSE-KMS archive bucket used for retained ALB logs and Athena table data |
-| <a name="output_log_s3_bucket_id"></a> [log\_s3\_bucket\_id](#output\_log\_s3\_bucket\_id) | SSE-S3 landing bucket used by ALB access logging |
+| <a name="output_log_s3_bucket_id"></a> [log\_s3\_bucket\_id](#output\_log\_s3\_bucket\_id) | S3 bucket used by ALB access logging (SSE-S3 on write, re-encrypted to SSE-KMS by Lambda) |
