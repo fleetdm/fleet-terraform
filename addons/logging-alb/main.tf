@@ -428,7 +428,7 @@ resource "aws_lambda_function" "sweep_reencrypt" {
   role             = aws_iam_role.lambda_sweep.arn
   handler          = "sweep_reencrypt.handler"
   runtime          = "python3.12"
-  timeout          = 300
+  timeout          = 900
   filename         = data.archive_file.lambda_sweep.output_path
   source_code_hash = data.archive_file.lambda_sweep.output_base64sha256
 
