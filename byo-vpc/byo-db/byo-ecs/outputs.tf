@@ -23,7 +23,7 @@ output "logging_config" {
   # Always respond sanely even if we did not generate
   value = {
     awslogs-group         = var.fleet_config.awslogs.create == true ? aws_cloudwatch_log_group.main[0].name : var.fleet_config.awslogs.name
-    awslogs-region        = var.fleet_config.awslogs.create == true ? data.aws_region.current.region : var.fleet_config.awslogs.region
+    awslogs-region        = var.fleet_config.awslogs.create == true ? data.aws_region.current.id : var.fleet_config.awslogs.region
     awslogs-stream-prefix = var.fleet_config.awslogs.prefix
   }
 }
@@ -43,10 +43,14 @@ output "fleet_server_private_key_secret_arn" {
   value = aws_secretsmanager_secret.fleet_server_private_key.arn
 }
 
+output "fleet_server_private_key_secret_kms_key_arn" {
+  value = local.private_key_secret_kms_key_arn
+}
+
 output "fleet_s3_software_installers_config" {
   value = {
     bucket_name      = var.fleet_config.software_installers.create_bucket == true ? aws_s3_bucket.software_installers[0].bucket : var.fleet_config.software_installers.bucket_name
     s3_object_prefix = var.fleet_config.software_installers.s3_object_prefix
-    kms_key_id       = var.fleet_config.software_installers.create_kms_key == true && var.fleet_config.software_installers.create_bucket ? aws_kms_key.software_installers[0].id : null
+    kms_key_id       = local.software_installers_kms_key_id
   }
 }
