@@ -19,6 +19,17 @@ locals {
       credentialsParameter = var.fleet_config.repository_credentials
     }
   } : null
+  private_key_secret_create_kms_key = var.fleet_config.private_key_secret_kms.enabled == true && var.fleet_config.private_key_secret_kms.kms_key_arn == null
+  private_key_secret_kms_key_arn = var.fleet_config.private_key_secret_kms.enabled == true ? (
+    var.fleet_config.private_key_secret_kms.kms_key_arn != null ? var.fleet_config.private_key_secret_kms.kms_key_arn : aws_kms_key.private_key_secret[0].arn
+  ) : null
+  software_installers_create_kms_key = var.fleet_config.software_installers.create_kms_key == true && var.fleet_config.software_installers.kms_key_arn == null
+  software_installers_kms_key_arn = var.fleet_config.software_installers.create_kms_key == true || var.fleet_config.software_installers.kms_key_arn != null ? (
+    var.fleet_config.software_installers.kms_key_arn != null ? var.fleet_config.software_installers.kms_key_arn : aws_kms_key.software_installers[0].arn
+  ) : null
+  software_installers_kms_key_id = var.fleet_config.software_installers.create_kms_key == true || var.fleet_config.software_installers.kms_key_arn != null ? (
+    var.fleet_config.software_installers.kms_key_arn != null ? var.fleet_config.software_installers.kms_key_arn : aws_kms_key.software_installers[0].id
+  ) : null
 }
 
 data "aws_region" "current" {}
@@ -87,7 +98,7 @@ resource "aws_ecs_task_definition" "backend" {
           logDriver = "awslogs"
           options = {
             awslogs-group         = var.fleet_config.awslogs.create == true ? aws_cloudwatch_log_group.main[0].name : var.fleet_config.awslogs.name
-            awslogs-region        = var.fleet_config.awslogs.create == true ? data.aws_region.current.region : var.fleet_config.awslogs.region
+            awslogs-region        = var.fleet_config.awslogs.create == true ? data.aws_region.current.id : var.fleet_config.awslogs.region
             awslogs-stream-prefix = var.fleet_config.awslogs.prefix
           }
         },
@@ -264,7 +275,8 @@ resource "random_password" "fleet_server_private_key" {
 }
 
 resource "aws_secretsmanager_secret" "fleet_server_private_key" {
-  name = var.fleet_config.private_key_secret_name
+  name       = var.fleet_config.private_key_secret_name
+  kms_key_id = local.private_key_secret_kms_key_arn
 
   recovery_window_in_days = "0"
   lifecycle {
@@ -282,14 +294,25 @@ resource "aws_secretsmanager_secret_version" "fleet_server_private_key" {
 // in the future.
 
 resource "aws_kms_key" "software_installers" {
-  count               = var.fleet_config.software_installers.create_kms_key == true ? 1 : 0
+  count               = local.software_installers_create_kms_key == true ? 1 : 0
   enable_key_rotation = true
 }
 
 resource "aws_kms_alias" "software_installers" {
-  count         = var.fleet_config.software_installers.create_kms_key == true ? 1 : 0
+  count         = local.software_installers_create_kms_key == true ? 1 : 0
   target_key_id = aws_kms_key.software_installers[0].id
   name          = "alias/${var.fleet_config.software_installers.kms_alias}"
+}
+
+resource "aws_kms_key" "private_key_secret" {
+  count               = local.private_key_secret_create_kms_key == true ? 1 : 0
+  enable_key_rotation = true
+}
+
+resource "aws_kms_alias" "private_key_secret" {
+  count         = local.private_key_secret_create_kms_key == true ? 1 : 0
+  target_key_id = aws_kms_key.private_key_secret[0].id
+  name          = "alias/${var.fleet_config.private_key_secret_kms.kms_alias}"
 }
 
 resource "aws_s3_bucket" "software_installers" { #tfsec:ignore:aws-s3-encryption-customer-key:exp:2022-07-01  #tfsec:ignore:aws-s3-enable-versioning #tfsec:ignore:aws-s3-enable-bucket-logging:exp:2022-06-15
@@ -329,7 +352,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "software_installe
   bucket = aws_s3_bucket.software_installers[0].bucket
   rule {
     apply_server_side_encryption_by_default {
-      kms_master_key_id = var.fleet_config.software_installers.create_kms_key == true ? aws_kms_key.software_installers[0].id : null
+      kms_master_key_id = local.software_installers_kms_key_arn
       sse_algorithm     = "aws:kms"
     }
   }

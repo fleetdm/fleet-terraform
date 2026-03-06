@@ -36,7 +36,25 @@ locals {
       create_attachment = try(tg.create_attachment, false)
     })
   }
+  fargate_ephemeral_storage_create_kms_key = var.fleet_config.fargate_ephemeral_storage_kms.enabled == true && var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn == null
+  fargate_ephemeral_storage_kms_key_arn = var.fleet_config.fargate_ephemeral_storage_kms.enabled == true ? (
+    var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn != null ? var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn : aws_kms_key.fargate_ephemeral_storage[0].arn
+  ) : null
+  ecs_cluster_configuration = merge(
+    var.ecs_cluster.cluster_configuration,
+    local.fargate_ephemeral_storage_kms_key_arn != null ? {
+      managed_storage_configuration = merge(
+        try(var.ecs_cluster.cluster_configuration.managed_storage_configuration, {}),
+        {
+          fargate_ephemeral_storage_kms_key_id = local.fargate_ephemeral_storage_kms_key_arn
+        }
+      )
+    } : {}
+  )
 }
+
+data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
 
 module "ecs" {
   source           = "./byo-ecs"
@@ -51,13 +69,93 @@ module "cluster" {
   version = "4.1.2"
 
   autoscaling_capacity_providers        = var.ecs_cluster.autoscaling_capacity_providers
-  cluster_configuration                 = var.ecs_cluster.cluster_configuration
+  cluster_configuration                 = local.ecs_cluster_configuration
   cluster_name                          = var.ecs_cluster.cluster_name
   cluster_settings                      = var.ecs_cluster.cluster_settings
   create                                = var.ecs_cluster.create
   default_capacity_provider_use_fargate = var.ecs_cluster.default_capacity_provider_use_fargate
   fargate_capacity_providers            = var.ecs_cluster.fargate_capacity_providers
   tags                                  = var.ecs_cluster.tags
+}
+
+data "aws_iam_policy_document" "fargate_ephemeral_storage_kms" {
+  count = local.fargate_ephemeral_storage_create_kms_key == true ? 1 : 0
+
+  statement {
+    sid    = "EnableRootPermissions"
+    effect = "Allow"
+    actions = [
+      "kms:*"
+    ]
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+    }
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "AllowGenerateDataKeyWithoutPlaintextForFargateTasks"
+    effect = "Allow"
+    actions = [
+      "kms:GenerateDataKeyWithoutPlaintext"
+    ]
+    principals {
+      type        = "Service"
+      identifiers = ["fargate.amazonaws.com"]
+    }
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "kms:EncryptionContext:aws:ecs:clusterAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "kms:EncryptionContext:aws:ecs:clusterName"
+      values   = [var.ecs_cluster.cluster_name]
+    }
+  }
+
+  statement {
+    sid    = "AllowCreateGrantForFargateTasks"
+    effect = "Allow"
+    actions = [
+      "kms:CreateGrant"
+    ]
+    principals {
+      type        = "Service"
+      identifiers = ["fargate.amazonaws.com"]
+    }
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "kms:EncryptionContext:aws:ecs:clusterAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "kms:EncryptionContext:aws:ecs:clusterName"
+      values   = [var.ecs_cluster.cluster_name]
+    }
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "kms:GrantOperations"
+      values   = ["Decrypt"]
+    }
+  }
+}
+
+resource "aws_kms_key" "fargate_ephemeral_storage" {
+  count               = local.fargate_ephemeral_storage_create_kms_key == true ? 1 : 0
+  enable_key_rotation = true
+  policy              = data.aws_iam_policy_document.fargate_ephemeral_storage_kms[0].json
+}
+
+resource "aws_kms_alias" "fargate_ephemeral_storage" {
+  count         = local.fargate_ephemeral_storage_create_kms_key == true ? 1 : 0
+  target_key_id = aws_kms_key.fargate_ephemeral_storage[0].id
+  name          = "alias/${var.fleet_config.fargate_ephemeral_storage_kms.kms_alias}"
 }
 
 module "alb" {
