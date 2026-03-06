@@ -1,4 +1,8 @@
 locals {
+  # Resolve a role name for policy attachments in both modes:
+  # - module-managed role (iam_role_arn == null), or
+  # - caller-provided same-account role ARN (attachment needs a role name, not ARN).
+  # Cross-account ARNs intentionally return null so we do not attempt out-of-account mutation.
   task_role_name = var.fleet_config.iam_role_arn == null ? var.fleet_config.iam.role.name : (
     can(split(":", var.fleet_config.iam_role_arn)[4]) && split(":", var.fleet_config.iam_role_arn)[4] == data.aws_caller_identity.current.account_id && can(split("role/", var.fleet_config.iam_role_arn)[1]) ? split("role/", var.fleet_config.iam_role_arn)[1] : null
   )
