@@ -34,6 +34,12 @@ variable "s3_noncurrent_version_expiration_days" {
   default = 30
 }
 
+variable "lambda_log_retention_in_days" {
+  description = "CloudWatch log retention in days for the re-encrypt and sweep Lambda functions"
+  type        = number
+  default     = 365
+}
+
 variable "extra_kms_policies" {
   type    = list(any)
   default = []

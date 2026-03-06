@@ -3,30 +3,57 @@ data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
 locals {
+  landing_bucket_name = "${var.prefix}-alb-logs"
 
-  kms_policies = concat([{
-    actions = ["kms:*"],
-    principals = [{
-      type        = "AWS"
-      identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
-    }]
-    resources = ["*"]
-
+  kms_policies = concat([
+    {
+      actions = ["kms:*"]
+      principals = [{
+        type        = "AWS"
+        identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
+      }]
+      resources = ["*"]
     },
     {
       actions = [
-        "kms:Encrypt*",
-        "kms:Decrypt*",
-        "kms:ReEncrypt*",
+        "kms:Encrypt",
+        "kms:Decrypt",
         "kms:GenerateDataKey*",
-        "kms:Describe*",
+        "kms:DescribeKey",
       ]
       resources = ["*"]
       principals = [{
-        type        = "Service"
-        identifiers = ["logs.${data.aws_region.current.region}.amazonaws.com"]
+        type        = "AWS"
+        identifiers = [aws_iam_role.lambda_reencrypt.arn]
       }]
-  }], var.extra_kms_policies)
+    },
+    {
+      actions = [
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:GenerateDataKey*",
+        "kms:DescribeKey",
+      ]
+      resources = ["*"]
+      principals = [{
+        type        = "AWS"
+        identifiers = [aws_iam_role.lambda_sweep.arn]
+      }]
+    },
+    {
+      actions = [
+        "kms:Encrypt",
+        "kms:GenerateDataKey",
+        "kms:GenerateDataKeyWithoutPlaintext",
+        "kms:DescribeKey",
+      ]
+      resources = ["*"]
+      principals = [{
+        type        = "AWS"
+        identifiers = [aws_iam_role.batch_reencrypt.arn]
+      }]
+    },
+  ], var.extra_kms_policies)
 
   s3_path_prefix = coalesce(var.alt_path_prefix, var.prefix)
 }
@@ -115,6 +142,8 @@ data "aws_iam_policy_document" "s3_athena_bucket" {
   }
 }
 
+# ── KMS key ──────────────────────────────────────────────────────────────────
+
 resource "aws_kms_key" "logs" {
   policy              = data.aws_iam_policy_document.kms.json
   enable_key_rotation = true
@@ -125,11 +154,13 @@ resource "aws_kms_alias" "logs_alias" {
   target_key_id = aws_kms_key.logs.id
 }
 
+# ── S3 bucket (single bucket — ALB writes SSE-S3, Lambda re-encrypts to SSE-KMS) ──
+
 module "s3_bucket_for_logs" {
   source  = "terraform-aws-modules/s3-bucket/aws"
   version = "5.0.0"
 
-  bucket = "${var.prefix}-alb-logs"
+  bucket = local.landing_bucket_name
 
   # Allow deletion of non-empty bucket
   force_destroy = true
@@ -178,6 +209,318 @@ module "s3_bucket_for_logs" {
     }
   ]
 }
+
+# ── Event-driven re-encrypt Lambda ───────────────────────────────────────────
+
+data "aws_iam_policy_document" "lambda_reencrypt_assume_role" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["lambda.amazonaws.com"]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "lambda_reencrypt" {
+  statement {
+    sid = "ReadWriteBucket"
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+    ]
+    resources = [
+      "${module.s3_bucket_for_logs.s3_bucket_arn}/*",
+    ]
+  }
+
+  statement {
+    sid = "UseKmsKey"
+    actions = [
+      "kms:Encrypt",
+      "kms:Decrypt",
+      "kms:GenerateDataKey*",
+      "kms:DescribeKey",
+    ]
+    resources = [
+      aws_kms_key.logs.arn,
+    ]
+  }
+
+  statement {
+    sid = "WriteLogs"
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+    ]
+    resources = [
+      "${aws_cloudwatch_log_group.lambda_reencrypt.arn}:*",
+    ]
+  }
+}
+
+resource "aws_iam_role" "lambda_reencrypt" {
+  name_prefix        = "${var.prefix}-alb-log-reencrypt-"
+  assume_role_policy = data.aws_iam_policy_document.lambda_reencrypt_assume_role.json
+}
+
+resource "aws_iam_role_policy" "lambda_reencrypt" {
+  name_prefix = "${var.prefix}-alb-log-reencrypt-"
+  role        = aws_iam_role.lambda_reencrypt.id
+  policy      = data.aws_iam_policy_document.lambda_reencrypt.json
+}
+
+data "archive_file" "lambda_reencrypt" {
+  type        = "zip"
+  source_file = "${path.module}/lambda/reencrypt.py"
+  output_path = "${path.module}/lambda/.reencrypt.zip"
+}
+
+resource "aws_cloudwatch_log_group" "lambda_reencrypt" {
+  name              = "/aws/lambda/${var.prefix}-alb-log-reencrypt"
+  retention_in_days = var.lambda_log_retention_in_days
+}
+
+resource "aws_lambda_function" "reencrypt" {
+  function_name    = "${var.prefix}-alb-log-reencrypt"
+  role             = aws_iam_role.lambda_reencrypt.arn
+  handler          = "reencrypt.handler"
+  runtime          = "python3.12"
+  timeout          = 60
+  filename         = data.archive_file.lambda_reencrypt.output_path
+  source_code_hash = data.archive_file.lambda_reencrypt.output_base64sha256
+
+  environment {
+    variables = {
+      KMS_KEY_ARN = aws_kms_key.logs.arn
+    }
+  }
+
+  depends_on = [
+    aws_cloudwatch_log_group.lambda_reencrypt,
+    aws_iam_role_policy.lambda_reencrypt,
+  ]
+}
+
+resource "aws_lambda_permission" "s3_invoke_reencrypt" {
+  statement_id  = "AllowS3Invoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.reencrypt.function_name
+  principal     = "s3.amazonaws.com"
+  source_arn    = module.s3_bucket_for_logs.s3_bucket_arn
+}
+
+resource "aws_s3_bucket_notification" "reencrypt" {
+  bucket = module.s3_bucket_for_logs.s3_bucket_id
+
+  lambda_function {
+    lambda_function_arn = aws_lambda_function.reencrypt.arn
+    events              = ["s3:ObjectCreated:Put"]
+    filter_prefix       = "${local.s3_path_prefix}/"
+  }
+
+  depends_on = [aws_lambda_permission.s3_invoke_reencrypt]
+}
+
+# ── Sweep re-encrypt Lambda (daily) ─────────────────────────────────────────
+
+data "aws_iam_policy_document" "lambda_sweep_assume_role" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["lambda.amazonaws.com"]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "lambda_sweep" {
+  statement {
+    sid = "ListBucket"
+    actions = [
+      "s3:ListBucket",
+    ]
+    resources = [
+      module.s3_bucket_for_logs.s3_bucket_arn,
+    ]
+  }
+
+  statement {
+    sid = "ReadWriteBucket"
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+    ]
+    resources = [
+      "${module.s3_bucket_for_logs.s3_bucket_arn}/*",
+    ]
+  }
+
+  statement {
+    sid = "UseKmsKey"
+    actions = [
+      "kms:Encrypt",
+      "kms:Decrypt",
+      "kms:GenerateDataKey*",
+      "kms:DescribeKey",
+    ]
+    resources = [
+      aws_kms_key.logs.arn,
+    ]
+  }
+
+  statement {
+    sid = "CreateBatchJob"
+    actions = [
+      "s3:CreateJob",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid = "PassBatchRole"
+    actions = [
+      "iam:PassRole",
+    ]
+    resources = [
+      aws_iam_role.batch_reencrypt.arn,
+    ]
+  }
+
+  statement {
+    sid = "WriteLogs"
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+    ]
+    resources = [
+      "${aws_cloudwatch_log_group.lambda_sweep.arn}:*",
+    ]
+  }
+}
+
+resource "aws_iam_role" "lambda_sweep" {
+  name_prefix        = "${var.prefix}-alb-log-sweep-"
+  assume_role_policy = data.aws_iam_policy_document.lambda_sweep_assume_role.json
+}
+
+resource "aws_iam_role_policy" "lambda_sweep" {
+  name_prefix = "${var.prefix}-alb-log-sweep-"
+  role        = aws_iam_role.lambda_sweep.id
+  policy      = data.aws_iam_policy_document.lambda_sweep.json
+}
+
+data "archive_file" "lambda_sweep" {
+  type        = "zip"
+  source_file = "${path.module}/lambda/sweep_reencrypt.py"
+  output_path = "${path.module}/lambda/.sweep_reencrypt.zip"
+}
+
+resource "aws_cloudwatch_log_group" "lambda_sweep" {
+  name              = "/aws/lambda/${var.prefix}-alb-log-sweep"
+  retention_in_days = var.lambda_log_retention_in_days
+}
+
+resource "aws_lambda_function" "sweep_reencrypt" {
+  function_name    = "${var.prefix}-alb-log-sweep"
+  role             = aws_iam_role.lambda_sweep.arn
+  handler          = "sweep_reencrypt.handler"
+  runtime          = "python3.12"
+  timeout          = 900
+  filename         = data.archive_file.lambda_sweep.output_path
+  source_code_hash = data.archive_file.lambda_sweep.output_base64sha256
+
+  environment {
+    variables = {
+      BUCKET         = module.s3_bucket_for_logs.s3_bucket_id
+      KMS_KEY_ARN    = aws_kms_key.logs.arn
+      LOG_PREFIX     = local.s3_path_prefix
+      ACCOUNT_ID     = data.aws_caller_identity.current.account_id
+      REGION         = data.aws_region.current.region
+      BATCH_ROLE_ARN = aws_iam_role.batch_reencrypt.arn
+    }
+  }
+
+  depends_on = [
+    aws_cloudwatch_log_group.lambda_sweep,
+    aws_iam_role_policy.lambda_sweep,
+  ]
+}
+
+# ── EventBridge daily schedule → sweep Lambda ────────────────────────────────
+
+resource "aws_cloudwatch_event_rule" "sweep_reencrypt" {
+  name_prefix         = "${var.prefix}-alb-log-sweep-"
+  schedule_expression = "rate(1 day)"
+}
+
+resource "aws_cloudwatch_event_target" "sweep_reencrypt" {
+  rule = aws_cloudwatch_event_rule.sweep_reencrypt.name
+  arn  = aws_lambda_function.sweep_reencrypt.arn
+}
+
+resource "aws_lambda_permission" "eventbridge_invoke_sweep" {
+  statement_id  = "AllowEventBridgeInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.sweep_reencrypt.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.sweep_reencrypt.arn
+}
+
+# ── S3 Batch Operations IAM role (used by sweep Lambda and migration script) ─
+
+data "aws_iam_policy_document" "batch_reencrypt_assume_role" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["s3.amazonaws.com", "batchoperations.s3.amazonaws.com"]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "batch_reencrypt" {
+  statement {
+    sid = "ReadWriteBucket"
+    actions = [
+      "s3:GetObject",
+      "s3:GetObjectVersion",
+      "s3:PutObject",
+    ]
+    resources = [
+      "${module.s3_bucket_for_logs.s3_bucket_arn}/*",
+    ]
+  }
+
+  statement {
+    sid = "UseKmsKey"
+    actions = [
+      "kms:Encrypt",
+      "kms:GenerateDataKey",
+      "kms:GenerateDataKeyWithoutPlaintext",
+      "kms:DescribeKey",
+    ]
+    resources = [
+      aws_kms_key.logs.arn,
+    ]
+  }
+}
+
+resource "aws_iam_role" "batch_reencrypt" {
+  name_prefix        = "${var.prefix}-alb-batch-reencrypt-"
+  assume_role_policy = data.aws_iam_policy_document.batch_reencrypt_assume_role.json
+}
+
+resource "aws_iam_role_policy" "batch_reencrypt" {
+  name_prefix = "${var.prefix}-alb-batch-reencrypt-"
+  role        = aws_iam_role.batch_reencrypt.id
+  policy      = data.aws_iam_policy_document.batch_reencrypt.json
+}
+
+# ── Athena (optional) ────────────────────────────────────────────────────────
 
 resource "aws_athena_database" "logs" {
   count  = var.enable_athena == true ? 1 : 0
