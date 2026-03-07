@@ -137,7 +137,7 @@ module "cloudfront_software_installers" {
 
   origin = {
     s3_one = {
-      domain_name           = data.aws_s3_bucket.software_installers.bucket_domain_name
+      domain_name           = data.aws_s3_bucket.software_installers.bucket_regional_domain_name
       origin_access_control = "${var.customer}-software-installers"
     }
   }
