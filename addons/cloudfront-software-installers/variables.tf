@@ -10,6 +10,12 @@ variable "key_group_id" {
   default     = null
 }
 
+variable "public_key_id" {
+  description = "Cloudfront public key id. Required when passing in a key_group_id"
+  type = string
+  default = null
+}
+
 variable "private_key" {
   description = "Private key used for signed URLs"
   type        = string

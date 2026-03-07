@@ -94,7 +94,7 @@ resource "aws_secretsmanager_secret_version" "software_installers" {
     FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PRIVATE_KEY   = var.private_key
     FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PUBLC_KEY     = var.public_key
     FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL                       = "https://${module.cloudfront_software_installers.cloudfront_distribution_domain_name}"
-    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PUBLIC_KEY_ID = var.key_group_id == null ? aws_cloudfront_public_key.software_installers[0].id : var.key_group_id
+    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PUBLIC_KEY_ID = var.key_group_id == null ? aws_cloudfront_public_key.software_installers[0].id : var.public_key_id
   })
 }
 
