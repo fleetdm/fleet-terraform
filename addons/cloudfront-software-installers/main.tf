@@ -92,9 +92,9 @@ resource "aws_secretsmanager_secret_version" "software_installers" {
   secret_id = aws_secretsmanager_secret.software_installers.id
   secret_string = jsonencode({
     FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PRIVATE_KEY   = var.private_key
-    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PUBLC_KEY     = var.public_key
+    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PUBLIC_KEY    = var.public_key
     FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL                       = "https://${module.cloudfront_software_installers.cloudfront_distribution_domain_name}"
-    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PUBLIC_KEY_ID = var.key_group_id == null ? aws_cloudfront_public_key.software_installers[0].id : var.key_group_id
+    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PUBLIC_KEY_ID = var.public_key_id == null ? aws_cloudfront_public_key.software_installers[0].id : var.public_key_id
   })
 }
 
@@ -137,7 +137,7 @@ module "cloudfront_software_installers" {
 
   origin = {
     s3_one = {
-      domain_name           = data.aws_s3_bucket.software_installers.bucket_domain_name
+      domain_name           = data.aws_s3_bucket.software_installers.bucket_regional_domain_name
       origin_access_control = "${var.customer}-software-installers"
     }
   }

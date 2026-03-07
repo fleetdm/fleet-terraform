@@ -10,6 +10,22 @@ variable "key_group_id" {
   default     = null
 }
 
+variable "public_key_id" {
+  description = "Cloudfront public key id. Required when passing in a key_group_id"
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.key_group_id == null || var.public_key_id != null
+    error_message = "key_group_id provided. Please add a value for public_key_id."
+  }
+
+  validation {
+    condition     = var.key_group_id != null || var.public_key_id == null
+    error_message = "public_key_id provided. Please add a value for key_group_id."
+  }
+}
+
 variable "private_key" {
   description = "Private key used for signed URLs"
   type        = string
