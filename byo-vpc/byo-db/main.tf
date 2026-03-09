@@ -205,6 +205,7 @@ data "aws_iam_policy_document" "fargate_ephemeral_storage_kms" {
 
 resource "aws_kms_key" "fargate_ephemeral_storage" {
   count               = local.fargate_ephemeral_storage_create_kms_key == true ? 1 : 0
+  description         = "CMK for ECS Fargate ephemeral storage encryption for the Fleet ECS cluster."
   enable_key_rotation = true
   policy              = data.aws_iam_policy_document.fargate_ephemeral_storage_kms[0].json
 }
@@ -251,6 +252,7 @@ data "aws_iam_policy_document" "cluster_cloudwatch_log_group_kms" {
 
 resource "aws_kms_key" "cluster_cloudwatch_log_group" {
   count               = local.cluster_cloudwatch_log_group_create_kms_key == true ? 1 : 0
+  description         = "CMK for ECS cluster execute-command CloudWatch Logs log group encryption."
   enable_key_rotation = true
   policy              = data.aws_iam_policy_document.cluster_cloudwatch_log_group_kms[0].json
 }
