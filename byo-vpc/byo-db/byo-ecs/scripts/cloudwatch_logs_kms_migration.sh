@@ -63,19 +63,40 @@ fi
 
 CUTOFF_MS="$(jq -nr --arg t "$CUTOFF_ISO" '($t | fromdateiso8601 * 1000 | floor)')"
 
-STREAMS_JSON="$(aws logs describe-log-streams \
-  --region "$REGION" \
-  --log-group-name "$LOG_GROUP_NAME" \
-  --output json)"
+# Explicit pagination to ensure all streams are processed.
+ALL_STREAMS_JSON='[]'
+NEXT_TOKEN=''
+while :; do
+  if [[ -n "$NEXT_TOKEN" ]]; then
+    STREAMS_PAGE_JSON="$(aws logs describe-log-streams \
+      --region "$REGION" \
+      --log-group-name "$LOG_GROUP_NAME" \
+      --next-token "$NEXT_TOKEN" \
+      --output json)"
+  else
+    STREAMS_PAGE_JSON="$(aws logs describe-log-streams \
+      --region "$REGION" \
+      --log-group-name "$LOG_GROUP_NAME" \
+      --output json)"
+  fi
+
+  PAGE_STREAMS_JSON="$(jq '.logStreams // []' <<<"$STREAMS_PAGE_JSON")"
+  ALL_STREAMS_JSON="$(jq -c --argjson page "$PAGE_STREAMS_JSON" '. + $page' <<<"$ALL_STREAMS_JSON")"
+
+  NEXT_TOKEN="$(jq -r '.nextToken // empty' <<<"$STREAMS_PAGE_JSON")"
+  if [[ -z "$NEXT_TOKEN" ]]; then
+    break
+  fi
+done
 
 OLD_STREAMS_JSON="$(jq --argjson cutoff "$CUTOFF_MS" '
   [
-    .logStreams[]
+    .[]
     | select((.lastEventTimestamp // 0) > 0)
     | select(.lastEventTimestamp < $cutoff)
     | {logStreamName, lastEventTimestamp}
   ]
-' <<<"$STREAMS_JSON")"
+' <<<"$ALL_STREAMS_JSON")"
 
 OLD_COUNT="$(jq 'length' <<<"$OLD_STREAMS_JSON")"
 

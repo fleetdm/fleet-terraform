@@ -208,7 +208,7 @@ variable "fleet_config" {
     loadbalancer = {
       arn = null
     }
-    extra_load_balacners = []
+    extra_load_balancers = []
     networking = {
       subnets         = null
       security_groups = null
