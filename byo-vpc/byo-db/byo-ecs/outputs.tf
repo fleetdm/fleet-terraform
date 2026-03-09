@@ -47,6 +47,10 @@ output "fleet_server_private_key_secret_kms_key_arn" {
   value = local.private_key_secret_kms_key_arn
 }
 
+output "fleet_application_logs_kms_key_arn" {
+  value = local.application_logs_kms_key_arn
+}
+
 output "fleet_s3_software_installers_config" {
   value = {
     bucket_name      = var.fleet_config.software_installers.create_bucket == true ? aws_s3_bucket.software_installers[0].bucket : var.fleet_config.software_installers.bucket_name

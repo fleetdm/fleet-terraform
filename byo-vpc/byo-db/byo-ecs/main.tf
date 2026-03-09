@@ -23,6 +23,10 @@ locals {
   private_key_secret_kms_key_arn = var.fleet_config.private_key_secret_kms.enabled == true ? (
     var.fleet_config.private_key_secret_kms.kms_key_arn != null ? var.fleet_config.private_key_secret_kms.kms_key_arn : aws_kms_key.private_key_secret[0].arn
   ) : null
+  application_logs_create_kms_key = var.fleet_config.awslogs.create == true && var.fleet_config.awslogs.kms.enabled == true && var.fleet_config.awslogs.kms.kms_key_arn == null
+  application_logs_kms_key_arn = var.fleet_config.awslogs.create == true && var.fleet_config.awslogs.kms.enabled == true ? (
+    var.fleet_config.awslogs.kms.kms_key_arn != null ? var.fleet_config.awslogs.kms.kms_key_arn : aws_kms_key.application_logs[0].arn
+  ) : null
   software_installers_create_kms_key = var.fleet_config.software_installers.create_kms_key == true && var.fleet_config.software_installers.kms_key_arn == null
   software_installers_kms_key_arn = var.fleet_config.software_installers.create_kms_key == true || var.fleet_config.software_installers.kms_key_arn != null ? (
     var.fleet_config.software_installers.kms_key_arn != null ? var.fleet_config.software_installers.kms_key_arn : aws_kms_key.software_installers[0].arn
@@ -34,6 +38,7 @@ locals {
 
 data "aws_region" "current" {}
 data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
 
 resource "aws_ecs_service" "fleet" {
   name                               = var.fleet_config.service.name
@@ -238,10 +243,57 @@ resource "aws_appautoscaling_policy" "ecs_policy_cpu" {
   }
 }
 
-resource "aws_cloudwatch_log_group" "main" { #tfsec:ignore:aws-cloudwatch-log-group-customer-key:exp:2022-07-01
+data "aws_iam_policy_document" "application_logs_kms" {
+  count = local.application_logs_create_kms_key == true ? 1 : 0
+
+  statement {
+    sid    = "EnableRootPermissions"
+    effect = "Allow"
+    actions = [
+      "kms:*"
+    ]
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+    }
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "AllowCloudWatchLogsUseOfTheKey"
+    effect = "Allow"
+    actions = [
+      "kms:Encrypt*",
+      "kms:Decrypt*",
+      "kms:ReEncrypt*",
+      "kms:GenerateDataKey*",
+      "kms:Describe*"
+    ]
+    principals {
+      type        = "Service"
+      identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
+    }
+    resources = ["*"]
+  }
+}
+
+resource "aws_kms_key" "application_logs" {
+  count               = local.application_logs_create_kms_key == true ? 1 : 0
+  enable_key_rotation = true
+  policy              = data.aws_iam_policy_document.application_logs_kms[0].json
+}
+
+resource "aws_kms_alias" "application_logs" {
+  count         = local.application_logs_create_kms_key == true ? 1 : 0
+  target_key_id = aws_kms_key.application_logs[0].id
+  name          = "alias/${var.fleet_config.awslogs.kms.kms_alias}"
+}
+
+resource "aws_cloudwatch_log_group" "main" {
   count             = var.fleet_config.awslogs.create == true ? 1 : 0
   name              = var.fleet_config.awslogs.name
   retention_in_days = var.fleet_config.awslogs.retention
+  kms_key_id        = local.application_logs_kms_key_arn
 }
 
 resource "aws_security_group" "main" {

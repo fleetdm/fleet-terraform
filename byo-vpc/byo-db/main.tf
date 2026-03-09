@@ -36,12 +36,62 @@ locals {
       create_attachment = try(tg.create_attachment, false)
     })
   }
+  # Adapter for terraform-aws-modules/ecs/aws v7 input renames.
+  # Keep our existing ecs_cluster interface stable by translating:
+  # - *_capacity_providers => cluster_capacity_providers/capacity_providers
+  # - default_capacity_provider_use_fargate => default_capacity_provider_strategy
+  # - cluster_settings => cluster_setting
+  cluster_capacity_providers = distinct(concat(
+    [for k, v in var.ecs_cluster.fargate_capacity_providers : try(v.name, k)],
+    [for k, v in var.ecs_cluster.autoscaling_capacity_providers : try(v.name, k)]
+  ))
+  normalized_capacity_providers = {
+    for k, v in var.ecs_cluster.autoscaling_capacity_providers : k => {
+      name = try(v.name, null)
+      auto_scaling_group_provider = try(v.auto_scaling_group_provider, {
+        auto_scaling_group_arn         = try(v.auto_scaling_group_arn, null)
+        managed_scaling                = try(v.managed_scaling, null)
+        managed_termination_protection = try(v.managed_termination_protection, null)
+      })
+      managed_instances_provider = try(v.managed_instances_provider, null)
+      tags                       = try(v.tags, null)
+    }
+  }
+  default_capacity_providers = merge(
+    { for k, v in var.ecs_cluster.fargate_capacity_providers : k => v if var.ecs_cluster.default_capacity_provider_use_fargate },
+    { for k, v in var.ecs_cluster.autoscaling_capacity_providers : k => v if !var.ecs_cluster.default_capacity_provider_use_fargate }
+  )
+  default_capacity_provider_strategy = {
+    for k, v in local.default_capacity_providers : k => {
+      name   = try(v.name, k)
+      base   = try(v.default_capacity_provider_strategy.base, null)
+      weight = try(v.default_capacity_provider_strategy.weight, null)
+    }
+  }
   fargate_ephemeral_storage_create_kms_key = var.fleet_config.fargate_ephemeral_storage_kms.enabled == true && var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn == null
   fargate_ephemeral_storage_kms_key_arn = var.fleet_config.fargate_ephemeral_storage_kms.enabled == true ? (
     var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn != null ? var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn : aws_kms_key.fargate_ephemeral_storage[0].arn
   ) : null
+  cluster_cloudwatch_log_group_name           = coalesce(try(var.ecs_cluster.cluster_configuration.execute_command_configuration.log_configuration.cloud_watch_log_group_name, null), "/aws/ecs/${var.ecs_cluster.cluster_name}")
+  cluster_cloudwatch_log_group_create_kms_key = var.ecs_cluster.cloudwatch_log_group.create == true && var.ecs_cluster.cloudwatch_log_group.kms.enabled == true && var.ecs_cluster.cloudwatch_log_group.kms.kms_key_arn == null
+  cluster_cloudwatch_log_group_kms_key_arn = var.ecs_cluster.cloudwatch_log_group.create == true && var.ecs_cluster.cloudwatch_log_group.kms.enabled == true ? (
+    var.ecs_cluster.cloudwatch_log_group.kms.kms_key_arn != null ? var.ecs_cluster.cloudwatch_log_group.kms.kms_key_arn : aws_kms_key.cluster_cloudwatch_log_group[0].arn
+  ) : null
   ecs_cluster_configuration = merge(
     var.ecs_cluster.cluster_configuration,
+    local.cluster_cloudwatch_log_group_kms_key_arn != null ? {
+      execute_command_configuration = merge(
+        try(var.ecs_cluster.cluster_configuration.execute_command_configuration, {}),
+        {
+          log_configuration = merge(
+            try(var.ecs_cluster.cluster_configuration.execute_command_configuration.log_configuration, {}),
+            {
+              cloud_watch_encryption_enabled = true
+            }
+          )
+        }
+      )
+    } : {},
     local.fargate_ephemeral_storage_kms_key_arn != null ? {
       managed_storage_configuration = merge(
         try(var.ecs_cluster.cluster_configuration.managed_storage_configuration, {}),
@@ -55,6 +105,7 @@ locals {
 
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
+data "aws_region" "current" {}
 
 module "ecs" {
   source           = "./byo-ecs"
@@ -66,16 +117,20 @@ module "ecs" {
 
 module "cluster" {
   source  = "terraform-aws-modules/ecs/aws"
-  version = "4.1.2"
+  version = "7.4.0"
 
-  autoscaling_capacity_providers        = var.ecs_cluster.autoscaling_capacity_providers
-  cluster_configuration                 = local.ecs_cluster_configuration
-  cluster_name                          = var.ecs_cluster.cluster_name
-  cluster_settings                      = var.ecs_cluster.cluster_settings
-  create                                = var.ecs_cluster.create
-  default_capacity_provider_use_fargate = var.ecs_cluster.default_capacity_provider_use_fargate
-  fargate_capacity_providers            = var.ecs_cluster.fargate_capacity_providers
-  tags                                  = var.ecs_cluster.tags
+  capacity_providers                     = local.normalized_capacity_providers
+  cloudwatch_log_group_kms_key_id        = local.cluster_cloudwatch_log_group_kms_key_arn
+  cloudwatch_log_group_name              = local.cluster_cloudwatch_log_group_name
+  cloudwatch_log_group_retention_in_days = var.ecs_cluster.cloudwatch_log_group.retention_in_days
+  cluster_capacity_providers             = local.cluster_capacity_providers
+  cluster_configuration                  = local.ecs_cluster_configuration
+  cluster_name                           = var.ecs_cluster.cluster_name
+  cluster_setting                        = [var.ecs_cluster.cluster_settings]
+  create_cloudwatch_log_group            = var.ecs_cluster.cloudwatch_log_group.create
+  create                                 = var.ecs_cluster.create
+  default_capacity_provider_strategy     = local.default_capacity_provider_strategy
+  tags                                   = var.ecs_cluster.tags
 }
 
 data "aws_iam_policy_document" "fargate_ephemeral_storage_kms" {
@@ -156,6 +211,52 @@ resource "aws_kms_alias" "fargate_ephemeral_storage" {
   count         = local.fargate_ephemeral_storage_create_kms_key == true ? 1 : 0
   target_key_id = aws_kms_key.fargate_ephemeral_storage[0].id
   name          = "alias/${var.fleet_config.fargate_ephemeral_storage_kms.kms_alias}"
+}
+
+data "aws_iam_policy_document" "cluster_cloudwatch_log_group_kms" {
+  count = local.cluster_cloudwatch_log_group_create_kms_key == true ? 1 : 0
+
+  statement {
+    sid    = "EnableRootPermissions"
+    effect = "Allow"
+    actions = [
+      "kms:*"
+    ]
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+    }
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "AllowCloudWatchLogsUseOfTheKey"
+    effect = "Allow"
+    actions = [
+      "kms:Encrypt*",
+      "kms:Decrypt*",
+      "kms:ReEncrypt*",
+      "kms:GenerateDataKey*",
+      "kms:Describe*"
+    ]
+    principals {
+      type        = "Service"
+      identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
+    }
+    resources = ["*"]
+  }
+}
+
+resource "aws_kms_key" "cluster_cloudwatch_log_group" {
+  count               = local.cluster_cloudwatch_log_group_create_kms_key == true ? 1 : 0
+  enable_key_rotation = true
+  policy              = data.aws_iam_policy_document.cluster_cloudwatch_log_group_kms[0].json
+}
+
+resource "aws_kms_alias" "cluster_cloudwatch_log_group" {
+  count         = local.cluster_cloudwatch_log_group_create_kms_key == true ? 1 : 0
+  target_key_id = aws_kms_key.cluster_cloudwatch_log_group[0].id
+  name          = "alias/${var.ecs_cluster.cloudwatch_log_group.kms.kms_alias}"
 }
 
 module "alb" {

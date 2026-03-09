@@ -62,11 +62,26 @@ variable "fleet_config" {
       create    = optional(bool, true)
       prefix    = optional(string, "fleet")
       retention = optional(number, 5)
+      kms = optional(object({
+        enabled     = optional(bool, false)
+        kms_key_arn = optional(string, null)
+        kms_alias   = optional(string, "fleet-application-logs")
+        }), {
+        enabled     = false
+        kms_key_arn = null
+        kms_alias   = "fleet-application-logs"
+      })
       }), {
       name      = null
       region    = null
+      create    = true
       prefix    = "fleet"
       retention = 5
+      kms = {
+        enabled     = false
+        kms_key_arn = null
+        kms_alias   = "fleet-application-logs"
+      }
     })
     loadbalancer = object({
       arn = string
@@ -184,6 +199,11 @@ variable "fleet_config" {
       create    = true
       prefix    = "fleet"
       retention = 5
+      kms = {
+        enabled     = false
+        kms_key_arn = null
+        kms_alias   = "fleet-application-logs"
+      }
     }
     loadbalancer = {
       arn = null

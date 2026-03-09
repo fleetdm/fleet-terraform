@@ -167,3 +167,15 @@ moved {
   from = module.alb.aws_lb_listener_rule.https_listener_rule[29]
   to   = module.alb.aws_lb_listener_rule.this["https/rule-29"]
 }
+
+# terraform-aws-modules/ecs/aws v4 -> v7 moved these resources into an internal
+# submodule ("module.cluster") under our module.cluster call.
+moved {
+  from = module.cluster.aws_ecs_cluster.this
+  to   = module.cluster.module.cluster.aws_ecs_cluster.this
+}
+
+moved {
+  from = module.cluster.aws_ecs_cluster_capacity_providers.this
+  to   = module.cluster.module.cluster.aws_ecs_cluster_capacity_providers.this
+}
