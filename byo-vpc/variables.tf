@@ -145,7 +145,7 @@ variable "ecs_cluster" {
         kms_alias   = "fleet-ecs-cluster-logs"
       }
     })
-    cluster_settings = optional(map(string), {
+    cluster_settings = optional(any, {
       "name" : "containerInsights",
       "value" : "enabled",
     })

@@ -68,6 +68,8 @@ locals {
       weight = try(v.default_capacity_provider_strategy.weight, null)
     }
   }
+  # Accept both legacy map input and list input for cluster settings.
+  normalized_cluster_settings              = var.ecs_cluster.cluster_settings == null ? [] : flatten([var.ecs_cluster.cluster_settings])
   fargate_ephemeral_storage_create_kms_key = var.fleet_config.fargate_ephemeral_storage_kms.enabled == true && var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn == null
   fargate_ephemeral_storage_kms_key_arn = var.fleet_config.fargate_ephemeral_storage_kms.enabled == true ? (
     var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn != null ? var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn : aws_kms_key.fargate_ephemeral_storage[0].arn
@@ -126,7 +128,7 @@ module "cluster" {
   cluster_capacity_providers             = local.cluster_capacity_providers
   cluster_configuration                  = local.ecs_cluster_configuration
   cluster_name                           = var.ecs_cluster.cluster_name
-  cluster_setting                        = [var.ecs_cluster.cluster_settings]
+  cluster_setting                        = local.normalized_cluster_settings
   create_cloudwatch_log_group            = var.ecs_cluster.cloudwatch_log_group.create
   create                                 = var.ecs_cluster.create
   default_capacity_provider_strategy     = local.default_capacity_provider_strategy
