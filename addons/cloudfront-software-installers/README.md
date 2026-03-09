@@ -113,10 +113,15 @@ Now with those encrypted we could setup the module with something like the follo
 
 ```
 module "cloudfront-software-installers" {
-  source            = "github.com/fleetdm/fleet-terraform/addons/cloudfront-software-installers?ref=tf-mod-addon-cloudfront-software-installers-v1.0.0"
+  source            = "github.com/fleetdm/fleet-terraform/addons/cloudfront-software-installers?ref=tf-mod-addon-cloudfront-software-installers-v1.2.0"
   customer          = "fleet"
   s3_bucket         = module.main.byo-vpc.byo-db.byo-ecs.fleet_s3_software_installers_config.bucket_name
   s3_kms_key_id     = module.main.byo-vpc.byo-db.byo-ecs.fleet_s3_software_installers_config.kms_key_id
+  # OPTIONAL
+  # If you'd like to use an existing key_group_id for your new Cloudfront distribution, uncomment key_group_id and supply the value for the key_group_id
+  # If you're using an existing key_group_id, public_key_id is required. The public_key_id is the value of a public_key that is also part of the key group that you define.
+  # key_group_id      = ""
+  # public_key_id     = ""
   public_key        = data.aws_kms_secrets.cloudfront.plaintext["public_key"]
   private_key       = data.aws_kms_secrets.cloudfront.plaintext["private_key"]
   enable_logging    = true
@@ -164,7 +169,7 @@ No requirements.
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.23.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | n/a |
 
 ## Modules
 
@@ -201,6 +206,7 @@ No requirements.
 | <a name="input_logging_s3_prefix"></a> [logging\_s3\_prefix](#input\_logging\_s3\_prefix) | logging s3 bucket prefix | `string` | `"cloudfront"` | no |
 | <a name="input_private_key"></a> [private\_key](#input\_private\_key) | Private key used for signed URLs | `string` | n/a | yes |
 | <a name="input_public_key"></a> [public\_key](#input\_public\_key) | Public key used for signed URLs | `string` | n/a | yes |
+| <a name="input_public_key_id"></a> [public\_key\_id](#input\_public\_key\_id) | Cloudfront public key id. Required when passing in a key\_group\_id | `string` | `null` | no |
 | <a name="input_s3_bucket"></a> [s3\_bucket](#input\_s3\_bucket) | Name of the S3 bucket that Cloudfront will point to | `string` | n/a | yes |
 | <a name="input_s3_kms_key_id"></a> [s3\_kms\_key\_id](#input\_s3\_kms\_key\_id) | KMS key id used to encrypt the s3 bucket | `string` | `null` | no |
 
