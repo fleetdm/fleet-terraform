@@ -19,10 +19,30 @@ locals {
       credentialsParameter = var.fleet_config.repository_credentials
     }
   } : null
+  private_key_secret_create_kms_key = var.fleet_config.private_key_secret_kms.enabled == true && var.fleet_config.private_key_secret_kms.kms_key_arn == null
+  private_key_secret_kms_key_arn = var.fleet_config.private_key_secret_kms.enabled == true ? (
+    var.fleet_config.private_key_secret_kms.kms_key_arn != null ? var.fleet_config.private_key_secret_kms.kms_key_arn : aws_kms_key.private_key_secret[0].arn
+  ) : null
+  application_logs_create_kms_key = var.fleet_config.awslogs.create == true && var.fleet_config.awslogs.kms.enabled == true && var.fleet_config.awslogs.kms.kms_key_arn == null
+  application_logs_kms_key_arn = var.fleet_config.awslogs.create == true && var.fleet_config.awslogs.kms.enabled == true ? (
+    var.fleet_config.awslogs.kms.kms_key_arn != null ? var.fleet_config.awslogs.kms.kms_key_arn : aws_kms_key.application_logs[0].arn
+  ) : null
+  software_installers_create_kms_key = var.fleet_config.software_installers.create_kms_key == true && var.fleet_config.software_installers.kms_key_arn == null
+  software_installers_kms_key_arn = var.fleet_config.software_installers.create_kms_key == true || var.fleet_config.software_installers.kms_key_arn != null ? (
+    var.fleet_config.software_installers.kms_key_arn != null ? var.fleet_config.software_installers.kms_key_arn : aws_kms_key.software_installers[0].arn
+  ) : null
+  software_installers_kms_key_id = var.fleet_config.software_installers.create_kms_key == true || var.fleet_config.software_installers.kms_key_arn != null ? (
+    var.fleet_config.software_installers.kms_key_arn != null ? data.aws_kms_key.software_installers_provided[0].key_id : aws_kms_key.software_installers[0].id
+  ) : null
 }
 
 data "aws_region" "current" {}
 data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
+data "aws_kms_key" "software_installers_provided" {
+  count  = var.fleet_config.software_installers.kms_key_arn != null ? 1 : 0
+  key_id = var.fleet_config.software_installers.kms_key_arn
+}
 
 resource "aws_ecs_service" "fleet" {
   name                               = var.fleet_config.service.name
@@ -87,7 +107,7 @@ resource "aws_ecs_task_definition" "backend" {
           logDriver = "awslogs"
           options = {
             awslogs-group         = var.fleet_config.awslogs.create == true ? aws_cloudwatch_log_group.main[0].name : var.fleet_config.awslogs.name
-            awslogs-region        = var.fleet_config.awslogs.create == true ? data.aws_region.current.region : var.fleet_config.awslogs.region
+            awslogs-region        = var.fleet_config.awslogs.create == true ? data.aws_region.current.id : var.fleet_config.awslogs.region
             awslogs-stream-prefix = var.fleet_config.awslogs.prefix
           }
         },
@@ -227,10 +247,58 @@ resource "aws_appautoscaling_policy" "ecs_policy_cpu" {
   }
 }
 
-resource "aws_cloudwatch_log_group" "main" { #tfsec:ignore:aws-cloudwatch-log-group-customer-key:exp:2022-07-01
+data "aws_iam_policy_document" "application_logs_kms" {
+  count = local.application_logs_create_kms_key == true ? 1 : 0
+
+  statement {
+    sid    = "EnableRootPermissions"
+    effect = "Allow"
+    actions = [
+      "kms:*"
+    ]
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+    }
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "AllowCloudWatchLogsUseOfTheKey"
+    effect = "Allow"
+    actions = [
+      "kms:Encrypt*",
+      "kms:Decrypt*",
+      "kms:ReEncrypt*",
+      "kms:GenerateDataKey*",
+      "kms:Describe*"
+    ]
+    principals {
+      type        = "Service"
+      identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
+    }
+    resources = ["*"]
+  }
+}
+
+resource "aws_kms_key" "application_logs" {
+  count               = local.application_logs_create_kms_key == true ? 1 : 0
+  description         = "CMK for Fleet application CloudWatch Logs log group encryption."
+  enable_key_rotation = true
+  policy              = data.aws_iam_policy_document.application_logs_kms[0].json
+}
+
+resource "aws_kms_alias" "application_logs" {
+  count         = local.application_logs_create_kms_key == true ? 1 : 0
+  target_key_id = aws_kms_key.application_logs[0].id
+  name          = "alias/${var.fleet_config.awslogs.kms.kms_alias}"
+}
+
+resource "aws_cloudwatch_log_group" "main" {
   count             = var.fleet_config.awslogs.create == true ? 1 : 0
   name              = var.fleet_config.awslogs.name
   retention_in_days = var.fleet_config.awslogs.retention
+  kms_key_id        = local.application_logs_kms_key_arn
 }
 
 resource "aws_security_group" "main" {
@@ -264,7 +332,8 @@ resource "random_password" "fleet_server_private_key" {
 }
 
 resource "aws_secretsmanager_secret" "fleet_server_private_key" {
-  name = var.fleet_config.private_key_secret_name
+  name       = var.fleet_config.private_key_secret_name
+  kms_key_id = local.private_key_secret_kms_key_arn
 
   recovery_window_in_days = "0"
   lifecycle {
@@ -282,14 +351,27 @@ resource "aws_secretsmanager_secret_version" "fleet_server_private_key" {
 // in the future.
 
 resource "aws_kms_key" "software_installers" {
-  count               = var.fleet_config.software_installers.create_kms_key == true ? 1 : 0
+  count               = local.software_installers_create_kms_key == true ? 1 : 0
+  description         = "CMK for Fleet software installers S3 bucket object encryption."
   enable_key_rotation = true
 }
 
 resource "aws_kms_alias" "software_installers" {
-  count         = var.fleet_config.software_installers.create_kms_key == true ? 1 : 0
+  count         = local.software_installers_create_kms_key == true ? 1 : 0
   target_key_id = aws_kms_key.software_installers[0].id
   name          = "alias/${var.fleet_config.software_installers.kms_alias}"
+}
+
+resource "aws_kms_key" "private_key_secret" {
+  count               = local.private_key_secret_create_kms_key == true ? 1 : 0
+  description         = "CMK for Fleet server private key secret encryption in Secrets Manager."
+  enable_key_rotation = true
+}
+
+resource "aws_kms_alias" "private_key_secret" {
+  count         = local.private_key_secret_create_kms_key == true ? 1 : 0
+  target_key_id = aws_kms_key.private_key_secret[0].id
+  name          = "alias/${var.fleet_config.private_key_secret_kms.kms_alias}"
 }
 
 resource "aws_s3_bucket" "software_installers" { #tfsec:ignore:aws-s3-encryption-customer-key:exp:2022-07-01  #tfsec:ignore:aws-s3-enable-versioning #tfsec:ignore:aws-s3-enable-bucket-logging:exp:2022-06-15
@@ -329,7 +411,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "software_installe
   bucket = aws_s3_bucket.software_installers[0].bucket
   rule {
     apply_server_side_encryption_by_default {
-      kms_master_key_id = var.fleet_config.software_installers.create_kms_key == true ? aws_kms_key.software_installers[0].id : null
+      kms_master_key_id = local.software_installers_kms_key_id
       sse_algorithm     = "aws:kms"
     }
   }
