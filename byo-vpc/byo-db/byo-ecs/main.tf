@@ -83,6 +83,12 @@ resource "aws_ecs_task_definition" "backend" {
   cpu                      = var.fleet_config.task_cpu == null ? var.fleet_config.cpu : var.fleet_config.task_cpu
   memory                   = var.fleet_config.task_mem == null ? var.fleet_config.mem : var.fleet_config.task_mem
   pid_mode                 = var.fleet_config.pid_mode
+  dynamic "ephemeral_storage" {
+    for_each = var.fleet_config.ephemeral_storage == null ? [] : [var.fleet_config.ephemeral_storage]
+    content {
+      size_in_gib = ephemeral_storage.value.size_in_gib
+    }
+  }
   container_definitions = jsonencode(
     concat([
       {
