@@ -1,4 +1,7 @@
 locals {
+  service_launch_type             = "FARGATE"
+  service_capacity_provider_names = []
+  task_requires_compatibilities   = ["FARGATE"]
   environment = [for k, v in var.fleet_config.extra_environment_variables : {
     name  = k
     value = v
@@ -46,7 +49,7 @@ data "aws_kms_key" "software_installers_provided" {
 
 resource "aws_ecs_service" "fleet" {
   name                               = var.fleet_config.service.name
-  launch_type                        = "FARGATE"
+  launch_type                        = local.service_launch_type
   cluster                            = var.ecs_cluster
   task_definition                    = aws_ecs_task_definition.backend.arn
   desired_count                      = 1
@@ -77,12 +80,18 @@ resource "aws_ecs_service" "fleet" {
 resource "aws_ecs_task_definition" "backend" {
   family                   = var.fleet_config.family
   network_mode             = "awsvpc"
-  requires_compatibilities = ["FARGATE"]
+  requires_compatibilities = local.task_requires_compatibilities
   task_role_arn            = var.fleet_config.iam_role_arn == null ? aws_iam_role.main[0].arn : var.fleet_config.iam_role_arn
   execution_role_arn       = aws_iam_role.execution.arn
   cpu                      = var.fleet_config.task_cpu == null ? var.fleet_config.cpu : var.fleet_config.task_cpu
   memory                   = var.fleet_config.task_mem == null ? var.fleet_config.mem : var.fleet_config.task_mem
   pid_mode                 = var.fleet_config.pid_mode
+  dynamic "ephemeral_storage" {
+    for_each = var.fleet_config.ephemeral_storage == null ? [] : [var.fleet_config.ephemeral_storage]
+    content {
+      size_in_gib = ephemeral_storage.value.size_in_gib
+    }
+  }
   container_definitions = jsonencode(
     concat([
       {
@@ -204,6 +213,13 @@ resource "aws_ecs_task_definition" "backend" {
           root_directory = lookup(efs_volume_configuration.value, "root_directory", null)
         }
       }
+    }
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.fleet_config.ephemeral_storage == null || local.service_launch_type == "FARGATE" || length(setintersection(toset(local.service_capacity_provider_names), toset(["FARGATE", "FARGATE_SPOT"]))) > 0
+      error_message = "fleet_config.ephemeral_storage can only be set when the ECS service uses the FARGATE launch type or a FARGATE/FARGATE_SPOT capacity provider."
     }
   }
 }

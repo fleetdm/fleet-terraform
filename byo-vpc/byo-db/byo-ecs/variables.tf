@@ -11,8 +11,11 @@ variable "vpc_id" {
 
 variable "fleet_config" {
   type = object({
-    task_mem                     = optional(number, null)
-    task_cpu                     = optional(number, null)
+    task_mem = optional(number, null)
+    task_cpu = optional(number, null)
+    ephemeral_storage = optional(object({
+      size_in_gib = number
+    }), null)
     mem                          = optional(number, 4096)
     cpu                          = optional(number, 512)
     pid_mode                     = optional(string, null)
@@ -156,6 +159,7 @@ variable "fleet_config" {
   default = {
     task_mem                     = null
     task_cpu                     = null
+    ephemeral_storage            = null
     mem                          = 512
     cpu                          = 256
     pid_mode                     = null
