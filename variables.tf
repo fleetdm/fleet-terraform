@@ -443,8 +443,8 @@ variable "fleet_config" {
     task_mem                     = null
     task_cpu                     = null
     ephemeral_storage            = null
-    mem                          = 512
-    cpu                          = 256
+    mem                          = 4096
+    cpu                          = 512
     pid_mode                     = null
     image                        = "fleetdm/fleet:v4.81.2"
     family                       = "fleet"

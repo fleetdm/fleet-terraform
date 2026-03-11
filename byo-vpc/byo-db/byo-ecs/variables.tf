@@ -256,6 +256,10 @@ variable "fleet_config" {
   }
   description = "The configuration object for Fleet itself. Fields that default to null will have their respective resources created if not specified."
   nullable    = false
+  validation {
+    condition     = var.fleet_config.ephemeral_storage == null || (var.fleet_config.ephemeral_storage.size_in_gib >= 21 && var.fleet_config.ephemeral_storage.size_in_gib <= 200)
+    error_message = "fleet_config.ephemeral_storage.size_in_gib must be between 21 and 200 GiB when set."
+  }
 }
 
 variable "migration_config" {
