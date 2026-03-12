@@ -34,11 +34,11 @@ variable "fleet_config" {
     repository_credentials       = optional(string, "")
     private_key_secret_name      = optional(string, "fleet-server-private-key")
     private_key_secret_kms = optional(object({
-      enabled     = optional(bool, false)
+      cmk_enabled = optional(bool, false)
       kms_key_arn = optional(string, null)
       kms_alias   = optional(string, "fleet-server-private-key")
       }), {
-      enabled     = false
+      cmk_enabled = false
       kms_key_arn = null
       kms_alias   = "fleet-server-private-key"
     })
@@ -66,11 +66,11 @@ variable "fleet_config" {
       prefix    = optional(string, "fleet")
       retention = optional(number, 5)
       kms = optional(object({
-        enabled     = optional(bool, false)
+        cmk_enabled = optional(bool, false)
         kms_key_arn = optional(string, null)
         kms_alias   = optional(string, "fleet-application-logs")
         }), {
-        enabled     = false
+        cmk_enabled = false
         kms_key_arn = null
         kms_alias   = "fleet-application-logs"
       })
@@ -81,7 +81,7 @@ variable "fleet_config" {
       prefix    = "fleet"
       retention = 5
       kms = {
-        enabled     = false
+        cmk_enabled = false
         kms_key_arn = null
         kms_alias   = "fleet-application-logs"
       }
@@ -178,7 +178,7 @@ variable "fleet_config" {
     repository_credentials       = ""
     private_key_secret_name      = "fleet-server-private-key"
     private_key_secret_kms = {
-      enabled     = false
+      cmk_enabled = false
       kms_key_arn = null
       kms_alias   = "fleet-server-private-key"
     }
@@ -204,7 +204,7 @@ variable "fleet_config" {
       prefix    = "fleet"
       retention = 5
       kms = {
-        enabled     = false
+        cmk_enabled = false
         kms_key_arn = null
         kms_alias   = "fleet-application-logs"
       }

@@ -70,13 +70,15 @@ locals {
   }
   # Accept both legacy map input and list input for cluster settings.
   normalized_cluster_settings              = var.ecs_cluster.cluster_settings == null ? [] : flatten([var.ecs_cluster.cluster_settings])
-  fargate_ephemeral_storage_create_kms_key = var.fleet_config.fargate_ephemeral_storage_kms.enabled == true && var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn == null
-  fargate_ephemeral_storage_kms_key_arn = var.fleet_config.fargate_ephemeral_storage_kms.enabled == true ? (
+  fargate_ephemeral_storage_cmk_enabled = var.fleet_config.fargate_ephemeral_storage_kms.cmk_enabled
+  fargate_ephemeral_storage_create_kms_key = local.fargate_ephemeral_storage_cmk_enabled == true && var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn == null
+  fargate_ephemeral_storage_kms_key_arn = local.fargate_ephemeral_storage_cmk_enabled == true ? (
     var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn != null ? var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn : aws_kms_key.fargate_ephemeral_storage[0].arn
   ) : null
   cluster_cloudwatch_log_group_name           = coalesce(try(var.ecs_cluster.cluster_configuration.execute_command_configuration.log_configuration.cloud_watch_log_group_name, null), "/aws/ecs/${var.ecs_cluster.cluster_name}")
-  cluster_cloudwatch_log_group_create_kms_key = var.ecs_cluster.cloudwatch_log_group.create == true && var.ecs_cluster.cloudwatch_log_group.kms.enabled == true && var.ecs_cluster.cloudwatch_log_group.kms.kms_key_arn == null
-  cluster_cloudwatch_log_group_kms_key_arn = var.ecs_cluster.cloudwatch_log_group.create == true && var.ecs_cluster.cloudwatch_log_group.kms.enabled == true ? (
+  cluster_cloudwatch_log_group_cmk_enabled = var.ecs_cluster.cloudwatch_log_group.kms.cmk_enabled
+  cluster_cloudwatch_log_group_create_kms_key = var.ecs_cluster.cloudwatch_log_group.create == true && local.cluster_cloudwatch_log_group_cmk_enabled == true && var.ecs_cluster.cloudwatch_log_group.kms.kms_key_arn == null
+  cluster_cloudwatch_log_group_kms_key_arn = var.ecs_cluster.cloudwatch_log_group.create == true && local.cluster_cloudwatch_log_group_cmk_enabled == true ? (
     var.ecs_cluster.cloudwatch_log_group.kms.kms_key_arn != null ? var.ecs_cluster.cloudwatch_log_group.kms.kms_key_arn : aws_kms_key.cluster_cloudwatch_log_group[0].arn
   ) : null
   ecs_cluster_configuration = merge(
