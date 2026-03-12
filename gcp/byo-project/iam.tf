@@ -30,21 +30,16 @@ resource "google_project_iam_member" "fleet_run_sa_monitoring_writer" {
 }
 
 
-resource "google_secret_manager_secret_iam_member" "fleet_run_sa_db_secret_access" {
+resource "google_secret_manager_secret_iam_member" "fleet_run_sa_secret_access" {
+  for_each = local.fleet_secrets_env_vars
+
   project   = var.project_id
-  secret_id = google_secret_manager_secret.database_password.id
+  secret_id = each.value.secret
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.fleet_run_sa.email}"
 
-  depends_on = [google_secret_manager_secret.database_password]
+  depends_on = [
+    google_secret_manager_secret.database_password,
+    google_secret_manager_secret.private_key,
+  ]
 }
-
-resource "google_secret_manager_secret_iam_member" "fleet_run_sa_private_key_secret_access" {
-  project   = var.project_id
-  secret_id = google_secret_manager_secret.private_key.id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.fleet_run_sa.email}"
-
-  depends_on = [google_secret_manager_secret.private_key]
-}
-
