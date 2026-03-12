@@ -19,12 +19,12 @@ locals {
       credentialsParameter = var.fleet_config.repository_credentials
     }
   } : null
-  private_key_secret_cmk_enabled = var.fleet_config.private_key_secret_kms.cmk_enabled
+  private_key_secret_cmk_enabled = coalesce(var.fleet_config.private_key_secret_kms.cmk_enabled, var.fleet_config.private_key_secret_kms.enabled, false)
   private_key_secret_create_kms_key = local.private_key_secret_cmk_enabled == true && var.fleet_config.private_key_secret_kms.kms_key_arn == null
   private_key_secret_kms_key_arn = local.private_key_secret_cmk_enabled == true ? (
     var.fleet_config.private_key_secret_kms.kms_key_arn != null ? var.fleet_config.private_key_secret_kms.kms_key_arn : aws_kms_key.private_key_secret[0].arn
   ) : null
-  application_logs_cmk_enabled = var.fleet_config.awslogs.kms.cmk_enabled
+  application_logs_cmk_enabled = coalesce(var.fleet_config.awslogs.kms.cmk_enabled, var.fleet_config.awslogs.kms.enabled, false)
   application_logs_create_kms_key = var.fleet_config.awslogs.create == true && local.application_logs_cmk_enabled == true && var.fleet_config.awslogs.kms.kms_key_arn == null
   application_logs_kms_key_arn = var.fleet_config.awslogs.create == true && local.application_logs_cmk_enabled == true ? (
     var.fleet_config.awslogs.kms.kms_key_arn != null ? var.fleet_config.awslogs.kms.kms_key_arn : aws_kms_key.application_logs[0].arn
@@ -36,6 +36,20 @@ locals {
   software_installers_kms_key_id = var.fleet_config.software_installers.create_kms_key == true || var.fleet_config.software_installers.kms_key_arn != null ? (
     var.fleet_config.software_installers.kms_key_arn != null ? data.aws_kms_key.software_installers_provided[0].key_id : aws_kms_key.software_installers[0].id
   ) : null
+}
+
+check "deprecated_fleet_config_private_key_secret_kms_enabled" {
+  assert {
+    condition     = var.fleet_config.private_key_secret_kms.enabled == null
+    error_message = "fleet_config.private_key_secret_kms.enabled is deprecated; use fleet_config.private_key_secret_kms.cmk_enabled instead."
+  }
+}
+
+check "deprecated_fleet_config_awslogs_kms_enabled" {
+  assert {
+    condition     = var.fleet_config.awslogs.kms.enabled == null
+    error_message = "fleet_config.awslogs.kms.enabled is deprecated; use fleet_config.awslogs.kms.cmk_enabled instead."
+  }
 }
 
 data "aws_region" "current" {}
