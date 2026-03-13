@@ -23,7 +23,7 @@ variable "rds_config" {
     db_cluster_parameter_group_name = optional(string)
     db_cluster_parameters           = optional(map(string), {})
     enabled_cloudwatch_logs_exports = optional(list(string), [])
-    final_snapshot_identifier      = optional(string, null)
+    final_snapshot_identifier       = optional(string, null)
     password_secret_kms = optional(object({
       cmk_enabled = optional(bool, false)
       kms_key_arn = optional(string, null)
@@ -113,7 +113,7 @@ variable "rds_config" {
     db_cluster_parameter_group_name = null
     db_cluster_parameters           = {}
     enabled_cloudwatch_logs_exports = []
-    final_snapshot_identifier      = null
+    final_snapshot_identifier       = null
     password_secret_kms = {
       cmk_enabled = false
       kms_key_arn = null

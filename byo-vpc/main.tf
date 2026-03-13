@@ -31,19 +31,19 @@ locals {
     } : {}
   )
 
-  rds_storage_cmk_enabled = var.rds_config.storage_kms.cmk_enabled
+  rds_storage_cmk_enabled    = var.rds_config.storage_kms.cmk_enabled
   rds_storage_create_kms_key = local.rds_storage_cmk_enabled == true && var.rds_config.storage_kms.kms_key_arn == null
   rds_storage_kms_key_arn = local.rds_storage_cmk_enabled == true ? (
     var.rds_config.storage_kms.kms_key_arn != null ? var.rds_config.storage_kms.kms_key_arn : aws_kms_key.rds_storage[0].arn
   ) : null
 
-  rds_password_secret_cmk_enabled = var.rds_config.password_secret_kms.cmk_enabled
+  rds_password_secret_cmk_enabled    = var.rds_config.password_secret_kms.cmk_enabled
   rds_password_secret_create_kms_key = local.rds_password_secret_cmk_enabled == true && var.rds_config.password_secret_kms.kms_key_arn == null
   rds_password_secret_kms_key_arn = local.rds_password_secret_cmk_enabled == true ? (
     var.rds_config.password_secret_kms.kms_key_arn != null ? var.rds_config.password_secret_kms.kms_key_arn : aws_kms_key.rds_password_secret[0].arn
   ) : null
 
-  rds_observability_cmk_enabled = var.rds_config.observability.kms.cmk_enabled
+  rds_observability_cmk_enabled    = var.rds_config.observability.kms.cmk_enabled
   rds_observability_create_kms_key = var.rds_config.observability.performance_insights_enabled == true && local.rds_observability_cmk_enabled == true && var.rds_config.observability.kms.kms_key_arn == null
   rds_observability_kms_key_arn = var.rds_config.observability.performance_insights_enabled == true && local.rds_observability_cmk_enabled == true ? (
     var.rds_config.observability.kms.kms_key_arn != null ? var.rds_config.observability.kms.kms_key_arn : aws_kms_key.rds_observability[0].arn
@@ -55,7 +55,7 @@ locals {
   ) : null
   rds_cluster_monitoring_interval = var.rds_config.observability.database_insights_mode == "advanced" ? var.rds_config.monitoring_interval : 0
 
-  rds_cloudwatch_log_group_cmk_enabled = var.rds_config.cloudwatch_log_group.kms.cmk_enabled
+  rds_cloudwatch_log_group_cmk_enabled    = var.rds_config.cloudwatch_log_group.kms.cmk_enabled
   rds_cloudwatch_log_group_create_kms_key = length(var.rds_config.enabled_cloudwatch_logs_exports) > 0 && local.rds_cloudwatch_log_group_cmk_enabled == true && var.rds_config.cloudwatch_log_group.kms.kms_key_arn == null
   rds_cloudwatch_log_group_kms_key_arn = length(var.rds_config.enabled_cloudwatch_logs_exports) > 0 && local.rds_cloudwatch_log_group_cmk_enabled == true ? (
     var.rds_config.cloudwatch_log_group.kms.kms_key_arn != null ? var.rds_config.cloudwatch_log_group.kms.kms_key_arn : aws_kms_key.rds_cloudwatch_log_group[0].arn
@@ -66,7 +66,7 @@ locals {
     local.rds_cloudwatch_log_group_kms_key_arn != null
   )
 
-  redis_at_rest_cmk_enabled = var.redis_config.at_rest_kms.cmk_enabled
+  redis_at_rest_cmk_enabled    = var.redis_config.at_rest_kms.cmk_enabled
   redis_at_rest_create_kms_key = var.redis_config.at_rest_encryption_enabled == true && local.redis_at_rest_cmk_enabled == true && var.redis_config.at_rest_kms.kms_key_arn == null
   redis_at_rest_kms_key_arn = var.redis_config.at_rest_encryption_enabled == true && local.redis_at_rest_cmk_enabled == true ? (
     var.redis_config.at_rest_kms.kms_key_arn != null ? var.redis_config.at_rest_kms.kms_key_arn : aws_kms_key.redis_at_rest[0].arn
@@ -76,7 +76,7 @@ locals {
     for idx, config in var.redis_config.log_delivery_configuration :
     tostring(idx) => config if try(lower(config.destination_type), "") == "cloudwatch-logs" && try(config.destination, null) != null
   }
-  redis_cloudwatch_log_group_cmk_enabled = var.redis_config.cloudwatch_log_group.kms.cmk_enabled
+  redis_cloudwatch_log_group_cmk_enabled    = var.redis_config.cloudwatch_log_group.kms.cmk_enabled
   redis_cloudwatch_log_group_create_kms_key = length(local.redis_cloudwatch_log_group_destinations) > 0 && local.redis_cloudwatch_log_group_cmk_enabled == true && var.redis_config.cloudwatch_log_group.kms.kms_key_arn == null
   redis_cloudwatch_log_group_kms_key_arn = length(local.redis_cloudwatch_log_group_destinations) > 0 && local.redis_cloudwatch_log_group_cmk_enabled == true ? (
     var.redis_config.cloudwatch_log_group.kms.kms_key_arn != null ? var.redis_config.cloudwatch_log_group.kms.kms_key_arn : aws_kms_key.redis_cloudwatch_log_group[0].arn
