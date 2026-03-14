@@ -1065,7 +1065,6 @@ if [[ "$CLEANUP_ONLY" != "true" ]]; then
     terraform_reconcile_restored_byo_vpc
   fi
 else
-  log "artifact directory: $ARTIFACT_DIR"
   load_cleanup_manifest
   log "cleanup-only mode using manifest: $MANIFEST_FILE"
   log "current cluster identifier: $CURRENT_CLUSTER_IDENTIFIER"
