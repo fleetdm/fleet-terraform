@@ -23,6 +23,7 @@ Options:
   --terraform-dir <dir>         Terraform working directory. Default: .
   --config-file <path>          Terraform file that contains the inline rds_config object.
                                 Default: main.tf (relative to --terraform-dir if not absolute)
+  --manifest <path>             Existing manifest.json to use with --cleanup-only.
   --module-address <addr>       Full Terraform address for the byo-vpc module instance.
                                 Auto-detected when exactly one match exists.
   --region <region>             AWS region. Default: AWS_REGION / AWS_DEFAULT_REGION
@@ -32,6 +33,8 @@ Options:
   --old-final-snapshot-id <id>  Final snapshot identifier when deleting the old cluster.
   --skip-old-final-snapshot     Delete the old cluster without a final snapshot.
   --keep-old-resources          Leave the old Aurora resources in AWS after cutover.
+  --cleanup-only                Skip migration steps and only run AWS cleanup from --manifest.
+  --confirm                     Prompt before each AWS cleanup command executes.
   --dry-run                     Show the planned actions without mutating Terraform, state, or AWS.
   --help                        Show this help text.
 
@@ -125,6 +128,48 @@ aws_cmd() {
   fi
 }
 
+print_shell_command() {
+  local first=1
+  local arg=""
+
+  for arg in "$@"; do
+    if [[ "$first" -eq 1 ]]; then
+      printf '%q' "$arg"
+      first=0
+    else
+      printf ' %q' "$arg"
+    fi
+  done
+  printf '\n'
+}
+
+confirm_cleanup_command() {
+  local command_display="$1"
+  local reply=""
+
+  [[ "$CONFIRM_CLEANUP" == "true" ]] || return 0
+  [[ -t 0 ]] || die "--confirm requires an interactive terminal"
+
+  printf '[rds-storage-kms-migration] about to run: %s\n' "$command_display" >&2
+  printf '[rds-storage-kms-migration] continue? [y/N] ' >&2
+  read -r reply
+  case "$reply" in
+    y|Y|yes|YES)
+      return 0
+      ;;
+    *)
+      die "cleanup aborted at user request"
+      ;;
+  esac
+}
+
+aws_cleanup_cmd() {
+  local display=""
+  display="$(print_shell_command aws ${AWS_REGION_ARG:+--region "$AWS_REGION_ARG"} "$@")"
+  confirm_cleanup_command "$display"
+  aws_cmd "$@"
+}
+
 auto_detect_module_address() {
   local matches_text=""
   local matches=()
@@ -141,9 +186,31 @@ auto_detect_module_address() {
 }
 
 state_resources_query='
-  def resources(m):
-    (m.resources // []) + [ (m.child_modules // [])[] | resources(.) ] | flatten;
-  resources(.values.root_module)
+  def instance_address($resource; $instance):
+    (($resource.module // "") + (if ($resource.module // "") != "" then "." else "" end)) +
+    (if $resource.mode == "data" then "data." else "" end) +
+    $resource.type + "." + $resource.name +
+    (
+      if ($instance.index_key? == null) then ""
+      elif (($instance.index_key | type) == "number") then "[\($instance.index_key)]"
+      else "[\($instance.index_key | tojson)]"
+      end
+    );
+
+  [
+    .resources[]
+    | . as $resource
+    | .instances[]?
+    | {
+        address: instance_address($resource; .),
+        module: ($resource.module // ""),
+        mode: $resource.mode,
+        type: $resource.type,
+        name: $resource.name,
+        index_key: (.index_key // null),
+        values: ((.attributes // {}) + (.attributes_flat // {}))
+      }
+  ]
 '
 
 load_state_snapshot() {
@@ -159,10 +226,24 @@ state_value() {
   jq -r --arg addr "$address" ".[] | select(.address == \$addr) | ${jq_filter}" "$STATE_RESOURCES_FILE"
 }
 
+resolve_target_storage_kms_id() {
+  if [[ -n "$TARGET_STORAGE_KMS_KEY_ARN" ]]; then
+    RESOLVED_TARGET_STORAGE_KMS_ID="$TARGET_STORAGE_KMS_KEY_ARN"
+    return
+  fi
+
+  local key_address="${MODULE_ADDRESS}.aws_kms_key.rds_storage[0]"
+  RESOLVED_TARGET_STORAGE_KMS_ID="$(state_value "$key_address" '.values.arn')"
+  RESOLVED_TARGET_STORAGE_KMS_ID="${RESOLVED_TARGET_STORAGE_KMS_ID//$'\r'/}"
+  if [[ -z "$RESOLVED_TARGET_STORAGE_KMS_ID" || "$RESOLVED_TARGET_STORAGE_KMS_ID" == "null" ]]; then
+    die "could not determine the created storage CMK ARN from ${key_address}"
+  fi
+}
+
 collect_state_addresses_for_removal() {
   local pattern
   local matches_text=""
-  pattern="^${MODULE_ADDRESS//./\\.}\\.(module\\.rds\\.|module\\.secrets-manager-1\\.|random_password\\.rds$|random_id\\.rds_final_snapshot_identifier(\\[0\\])?$|aws_db_parameter_group\\.main(\\[0\\])?$|aws_rds_cluster_parameter_group\\.main(\\[0\\])?$)"
+  pattern="^${MODULE_ADDRESS//./\\.}\\.(module\\.rds\\.|module\\.secrets-manager-1\\.|random_id\\.rds_final_snapshot_identifier(\\[0\\])?$|aws_db_parameter_group\\.main(\\[0\\])?$|aws_rds_cluster_parameter_group\\.main(\\[0\\])?$)"
   matches_text="$(terraform_cmd state list | grep -E "$pattern" | sort || true)"
   array_from_newline_text STATE_REMOVE_ADDRESSES "$matches_text"
   if [[ "${#STATE_REMOVE_ADDRESSES[@]}" -eq 0 ]]; then
@@ -184,6 +265,7 @@ write_manifest() {
     --argjson old_instance_identifiers "$OLD_INSTANCE_IDENTIFIERS_JSON" \
     --argjson old_security_group_ids "$OLD_SECURITY_GROUP_IDS_JSON" \
     --argjson old_secrets "$OLD_SECRETS_JSON" \
+    --argjson old_monitoring_roles "$OLD_MONITORING_ROLES_JSON" \
     --argjson old_parameter_groups "$OLD_PARAMETER_GROUPS_JSON" \
     --argjson old_db_subnet_groups "$OLD_DB_SUBNET_GROUPS_JSON" \
     --argjson state_remove_addresses "$STATE_REMOVE_ADDRESSES_JSON" \
@@ -194,16 +276,17 @@ write_manifest() {
       restored_name: $restored_name,
       source_snapshot_id: $source_snapshot_id,
       copied_snapshot_id: $copied_snapshot_id,
-      old_final_snapshot_id: ($old_final_snapshot_id | select(length > 0)),
-      storage_kms_key_arn: ($storage_kms_key_arn | select(length > 0)),
-      storage_kms_alias: ($storage_kms_alias | select(length > 0)),
+      old_final_snapshot_id: ($old_final_snapshot_id | if length > 0 then . else null end),
+      storage_kms_key_arn: ($storage_kms_key_arn | if length > 0 then . else null end),
+      storage_kms_alias: ($storage_kms_alias | if length > 0 then . else null end),
       old_instance_identifiers: $old_instance_identifiers,
       old_security_group_ids: $old_security_group_ids,
       old_secrets: $old_secrets,
+      old_monitoring_roles: $old_monitoring_roles,
       old_parameter_groups: $old_parameter_groups,
       old_db_subnet_groups: $old_db_subnet_groups,
       state_remove_addresses: $state_remove_addresses
-    }' >"$ARTIFACT_DIR/manifest.json"
+    } | with_entries(select(.value != null))' >"$ARTIFACT_DIR/manifest.json"
 }
 
 update_rds_config_file() {
@@ -345,7 +428,7 @@ sub upsert_simple_attribute {
   }
 
   my $indent = object_indent($object_text);
-  $object_text =~ s/\n\}$/\n$indent$key = $value_text\n}/s;
+  $object_text =~ s/\n([ \t]*)\}$/\n$indent$key = $value_text\n$1}/s;
   return $object_text;
 }
 
@@ -355,7 +438,7 @@ sub upsert_storage_kms_block {
   my $nested_indent = $indent . "  ";
 
   my $replacement = "${indent}storage_kms = {\n";
-  $replacement .= "${nested_indent}enabled = true\n";
+  $replacement .= "${nested_indent}cmk_enabled = true\n";
   if (length($kms_key_arn)) {
     $replacement .= "${nested_indent}kms_key_arn = " . quote_hcl($kms_key_arn) . "\n";
   } else {
@@ -374,7 +457,7 @@ sub upsert_storage_kms_block {
     return $object_text;
   }
 
-  $object_text =~ s/\n\}$/\n$replacement\n}/s;
+  $object_text =~ s/\n([ \t]*)\}$/\n$replacement\n$1}/s;
   return $object_text;
 }
 
@@ -409,12 +492,7 @@ create_source_snapshot() {
 }
 
 copy_snapshot_with_target_kms() {
-  local kms_id
-  if [[ -n "$TARGET_STORAGE_KMS_KEY_ARN" ]]; then
-    kms_id="$TARGET_STORAGE_KMS_KEY_ARN"
-  else
-    kms_id="alias/${TARGET_STORAGE_KMS_ALIAS}"
-  fi
+  local kms_id="$RESOLVED_TARGET_STORAGE_KMS_ID"
 
   log "copying snapshot ${SOURCE_SNAPSHOT_ID} to ${COPIED_SNAPSHOT_ID} with ${kms_id}"
   aws_cmd rds copy-db-cluster-snapshot \
@@ -437,9 +515,37 @@ terraform_apply_storage_kms_only() {
   terraform_cmd apply -auto-approve "${targets[@]}"
 }
 
+terraform_apply_byo_vpc_only() {
+  log "running targeted terraform apply for ${MODULE_ADDRESS}"
+  terraform_cmd apply -auto-approve "-target=${MODULE_ADDRESS}"
+}
+
+terraform_reconcile_restored_byo_vpc() {
+  log "running a second targeted terraform apply for ${MODULE_ADDRESS} to reconcile post-restore in-place updates"
+  terraform_cmd apply -auto-approve "-target=${MODULE_ADDRESS}"
+}
+
 remove_old_rds_state() {
   log "removing old Aurora resources from Terraform state"
   terraform_cmd state rm "${STATE_REMOVE_ADDRESSES[@]}"
+}
+
+load_cleanup_manifest() {
+  [[ -f "$MANIFEST_FILE" ]] || die "manifest file does not exist: $MANIFEST_FILE"
+
+  CURRENT_CLUSTER_IDENTIFIER="$(jq -r '.current_cluster_identifier // empty' "$MANIFEST_FILE")"
+  CURRENT_CLUSTER_IDENTIFIER="${CURRENT_CLUSTER_IDENTIFIER//$'\r'/}"
+  [[ -n "$CURRENT_CLUSTER_IDENTIFIER" ]] || die "manifest is missing current_cluster_identifier"
+
+  OLD_FINAL_SNAPSHOT_ID="$(jq -r '.old_final_snapshot_id // empty' "$MANIFEST_FILE")"
+
+  array_from_newline_text OLD_INSTANCE_IDENTIFIERS "$(jq -r '.old_instance_identifiers[]? // empty' "$MANIFEST_FILE")"
+  array_from_newline_text OLD_SECURITY_GROUP_IDS "$(jq -r '.old_security_group_ids[]? // empty' "$MANIFEST_FILE")"
+  array_from_newline_text OLD_SECRET_IDS "$(jq -r '.old_secrets[]? | .arn // .name // empty' "$MANIFEST_FILE")"
+  array_from_newline_text OLD_DB_PARAMETER_GROUP_NAMES "$(jq -r '.old_parameter_groups.db_parameter_groups[]? // empty' "$MANIFEST_FILE")"
+  array_from_newline_text OLD_DB_CLUSTER_PARAMETER_GROUP_NAMES "$(jq -r '.old_parameter_groups.db_cluster_parameter_groups[]? // empty' "$MANIFEST_FILE")"
+  array_from_newline_text OLD_DB_SUBNET_GROUP_NAMES "$(jq -r '.old_db_subnet_groups[]? // empty' "$MANIFEST_FILE")"
+  OLD_MONITORING_ROLES_JSON="$(jq -c '.old_monitoring_roles // []' "$MANIFEST_FILE")"
 }
 
 delete_old_cluster_resources() {
@@ -449,14 +555,14 @@ delete_old_cluster_resources() {
   fi
 
   if [[ "$DRY_RUN" == "true" ]]; then
-    log "dry run: would delete old Aurora instances, cluster, secret, parameter groups, subnet groups, and security groups"
+    log "dry run: would delete old Aurora instances, cluster, secret, enhanced monitoring IAM role, parameter groups, subnet groups, and security groups"
     return
   fi
 
   local instance_id
   for instance_id in "${OLD_INSTANCE_IDENTIFIERS[@]}"; do
     log "deleting old Aurora instance ${instance_id}"
-    aws_cmd rds delete-db-instance \
+    aws_cleanup_cmd rds delete-db-instance \
       --db-instance-identifier "$instance_id" \
       --skip-final-snapshot \
       >/dev/null || true
@@ -464,55 +570,73 @@ delete_old_cluster_resources() {
 
   for instance_id in "${OLD_INSTANCE_IDENTIFIERS[@]}"; do
     log "waiting for old Aurora instance ${instance_id} to be deleted"
-    aws_cmd rds wait db-instance-deleted --db-instance-identifier "$instance_id" || true
+    aws_cleanup_cmd rds wait db-instance-deleted --db-instance-identifier "$instance_id" || true
   done
 
   if [[ "$SKIP_OLD_FINAL_SNAPSHOT" == "true" ]]; then
     log "deleting old Aurora cluster ${CURRENT_CLUSTER_IDENTIFIER} without a final snapshot"
-    aws_cmd rds delete-db-cluster \
+    aws_cleanup_cmd rds delete-db-cluster \
       --db-cluster-identifier "$CURRENT_CLUSTER_IDENTIFIER" \
       --skip-final-snapshot \
       >/dev/null || true
   else
     log "deleting old Aurora cluster ${CURRENT_CLUSTER_IDENTIFIER} with final snapshot ${OLD_FINAL_SNAPSHOT_ID}"
-    aws_cmd rds delete-db-cluster \
+    aws_cleanup_cmd rds delete-db-cluster \
       --db-cluster-identifier "$CURRENT_CLUSTER_IDENTIFIER" \
       --final-db-snapshot-identifier "$OLD_FINAL_SNAPSHOT_ID" \
       >/dev/null || true
   fi
 
   log "waiting for old Aurora cluster ${CURRENT_CLUSTER_IDENTIFIER} to be deleted"
-  aws_cmd rds wait db-cluster-deleted --db-cluster-identifier "$CURRENT_CLUSTER_IDENTIFIER" || true
+  aws_cleanup_cmd rds wait db-cluster-deleted --db-cluster-identifier "$CURRENT_CLUSTER_IDENTIFIER" || true
 
   local secret_id
   for secret_id in "${OLD_SECRET_IDS[@]}"; do
     log "deleting old secret ${secret_id}"
-    aws_cmd secretsmanager delete-secret \
+    aws_cleanup_cmd secretsmanager delete-secret \
       --secret-id "$secret_id" \
       --force-delete-without-recovery \
       >/dev/null || true
   done
 
+  local role_name
+  local policy_arn
+  while IFS= read -r role_name; do
+    [[ -n "$role_name" ]] || continue
+
+    while IFS= read -r policy_arn; do
+      [[ -n "$policy_arn" ]] || continue
+      log "detaching managed policy ${policy_arn} from IAM role ${role_name}"
+      aws_cleanup_cmd iam detach-role-policy \
+        --role-name "$role_name" \
+        --policy-arn "$policy_arn" \
+        >/dev/null || true
+    done < <(jq -r --arg role_name "$role_name" '.[] | select(.name == $role_name) | .attached_policy_arns[]?' <<<"$OLD_MONITORING_ROLES_JSON")
+
+    log "deleting old enhanced monitoring IAM role ${role_name}"
+    aws_cleanup_cmd iam delete-role --role-name "$role_name" >/dev/null || true
+  done < <(jq -r '.[].name // empty' <<<"$OLD_MONITORING_ROLES_JSON")
+
   local group_name
   for group_name in "${OLD_DB_PARAMETER_GROUP_NAMES[@]}"; do
     log "deleting old DB parameter group ${group_name}"
-    aws_cmd rds delete-db-parameter-group --db-parameter-group-name "$group_name" >/dev/null || true
+    aws_cleanup_cmd rds delete-db-parameter-group --db-parameter-group-name "$group_name" >/dev/null || true
   done
 
   for group_name in "${OLD_DB_CLUSTER_PARAMETER_GROUP_NAMES[@]}"; do
     log "deleting old DB cluster parameter group ${group_name}"
-    aws_cmd rds delete-db-cluster-parameter-group --db-cluster-parameter-group-name "$group_name" >/dev/null || true
+    aws_cleanup_cmd rds delete-db-cluster-parameter-group --db-cluster-parameter-group-name "$group_name" >/dev/null || true
   done
 
   for group_name in "${OLD_DB_SUBNET_GROUP_NAMES[@]}"; do
     log "deleting old DB subnet group ${group_name}"
-    aws_cmd rds delete-db-subnet-group --db-subnet-group-name "$group_name" >/dev/null || true
+    aws_cleanup_cmd rds delete-db-subnet-group --db-subnet-group-name "$group_name" >/dev/null || true
   done
 
   local sg_id
   for sg_id in "${OLD_SECURITY_GROUP_IDS[@]}"; do
     log "deleting old security group ${sg_id}"
-    aws_cmd ec2 delete-security-group --group-id "$sg_id" >/dev/null || true
+    aws_cleanup_cmd ec2 delete-security-group --group-id "$sg_id" >/dev/null || true
   done
 }
 
@@ -523,17 +647,21 @@ copy_file() {
 }
 
 CONFIG_FILE=""
+MANIFEST_FILE=""
 TERRAFORM_DIR="."
 MODULE_ADDRESS=""
 AWS_REGION_ARG="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
 TARGET_STORAGE_KMS_KEY_ARN=""
 TARGET_STORAGE_KMS_ALIAS=""
+RESOLVED_TARGET_STORAGE_KMS_ID=""
 RESTORED_NAME=""
 SOURCE_SNAPSHOT_ID=""
 COPIED_SNAPSHOT_ID=""
 OLD_FINAL_SNAPSHOT_ID=""
 SKIP_OLD_FINAL_SNAPSHOT="false"
 KEEP_OLD_RESOURCES="false"
+CONFIRM_CLEANUP="false"
+CLEANUP_ONLY="false"
 DRY_RUN="false"
 
 while [[ $# -gt 0 ]]; do
@@ -544,6 +672,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --config-file)
       CONFIG_FILE="$2"
+      shift 2
+      ;;
+    --manifest)
+      MANIFEST_FILE="$2"
       shift 2
       ;;
     --module-address)
@@ -586,6 +718,14 @@ while [[ $# -gt 0 ]]; do
       KEEP_OLD_RESOURCES="true"
       shift
       ;;
+    --confirm)
+      CONFIRM_CLEANUP="true"
+      shift
+      ;;
+    --cleanup-only)
+      CLEANUP_ONLY="true"
+      shift
+      ;;
     --dry-run)
       DRY_RUN="true"
       shift
@@ -602,15 +742,21 @@ done
 
 require_cmd aws
 require_cmd jq
-require_cmd perl
-require_cmd terraform
-
-if [[ -z "$TARGET_STORAGE_KMS_KEY_ARN" && -z "$TARGET_STORAGE_KMS_ALIAS" ]]; then
-  die "set either --storage-kms-key-arn or --storage-kms-alias"
+if [[ "$CLEANUP_ONLY" != "true" ]]; then
+  require_cmd perl
+  require_cmd terraform
 fi
 
-if [[ -n "$TARGET_STORAGE_KMS_KEY_ARN" && -n "$TARGET_STORAGE_KMS_ALIAS" ]]; then
-  die "use either --storage-kms-key-arn or --storage-kms-alias, not both"
+if [[ "$CLEANUP_ONLY" == "true" ]]; then
+  [[ -n "$MANIFEST_FILE" ]] || die "--cleanup-only requires --manifest"
+else
+  if [[ -z "$TARGET_STORAGE_KMS_KEY_ARN" && -z "$TARGET_STORAGE_KMS_ALIAS" ]]; then
+    die "set either --storage-kms-key-arn or --storage-kms-alias"
+  fi
+
+  if [[ -n "$TARGET_STORAGE_KMS_KEY_ARN" && -n "$TARGET_STORAGE_KMS_ALIAS" ]]; then
+    die "use either --storage-kms-key-arn or --storage-kms-alias, not both"
+  fi
 fi
 
 if [[ -z "$AWS_REGION_ARG" ]]; then
@@ -621,66 +767,66 @@ if [[ ! -d "$TERRAFORM_DIR" ]]; then
   die "terraform directory does not exist: $TERRAFORM_DIR"
 fi
 
-if [[ -z "$CONFIG_FILE" ]]; then
-  CONFIG_FILE="main.tf"
-fi
-
-if [[ "$CONFIG_FILE" != /* ]]; then
-  CONFIG_FILE="${TERRAFORM_DIR%/}/$CONFIG_FILE"
-fi
-
-if [[ ! -f "$CONFIG_FILE" ]]; then
-  die "config file does not exist: $CONFIG_FILE"
-fi
-
-terraform_cmd init -no-color >/dev/null
-
-if [[ -z "$MODULE_ADDRESS" ]]; then
-  auto_detect_module_address
-fi
-
 STAMP="$(date +%Y%m%d%H%M%S)"
 ARTIFACT_DIR="${TERRAFORM_DIR%/}/.rds-storage-kms-migration-${STAMP}"
 mkdir -p "$ARTIFACT_DIR"
+if [[ "$CLEANUP_ONLY" != "true" ]]; then
+  if [[ -z "$CONFIG_FILE" ]]; then
+    CONFIG_FILE="main.tf"
+  fi
 
-copy_file "$CONFIG_FILE" "$ARTIFACT_DIR/$(basename "$CONFIG_FILE").original"
-load_state_snapshot
+  if [[ "$CONFIG_FILE" != /* ]]; then
+    CONFIG_FILE="${TERRAFORM_DIR%/}/$CONFIG_FILE"
+  fi
 
-CURRENT_CLUSTER_ADDRESS="${MODULE_ADDRESS}.module.rds.aws_rds_cluster.this[0]"
-CURRENT_CLUSTER_IDENTIFIER="$(state_value "$CURRENT_CLUSTER_ADDRESS" '.values.cluster_identifier // .values.id')"
-CURRENT_CLUSTER_IDENTIFIER="${CURRENT_CLUSTER_IDENTIFIER//$'\r'/}"
-if [[ -z "$CURRENT_CLUSTER_IDENTIFIER" || "$CURRENT_CLUSTER_IDENTIFIER" == "null" ]]; then
-  die "could not determine the current Aurora cluster identifier from ${CURRENT_CLUSTER_ADDRESS}"
-fi
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    die "config file does not exist: $CONFIG_FILE"
+  fi
 
-if [[ -z "$RESTORED_NAME" ]]; then
-  RESTORED_NAME="$(sanitize_identifier "${CURRENT_CLUSTER_IDENTIFIER}-kms-${STAMP}" 63)"
-fi
-if [[ -z "$SOURCE_SNAPSHOT_ID" ]]; then
-  SOURCE_SNAPSHOT_ID="$(sanitize_identifier "${CURRENT_CLUSTER_IDENTIFIER}-kms-source-${STAMP}" 63)"
-fi
-if [[ -z "$COPIED_SNAPSHOT_ID" ]]; then
-  COPIED_SNAPSHOT_ID="$(sanitize_identifier "${CURRENT_CLUSTER_IDENTIFIER}-kms-copy-${STAMP}" 63)"
-fi
-if [[ -z "$OLD_FINAL_SNAPSHOT_ID" && "$SKIP_OLD_FINAL_SNAPSHOT" != "true" ]]; then
-  OLD_FINAL_SNAPSHOT_ID="$(sanitize_identifier "${CURRENT_CLUSTER_IDENTIFIER}-pre-kms-retirement-${STAMP}" 63)"
-fi
+  terraform_cmd init -no-color >/dev/null
 
-array_from_newline_text OLD_INSTANCE_IDENTIFIERS "$(jq -r --arg prefix "${MODULE_ADDRESS}.module.rds.aws_rds_cluster_instance." '
+  if [[ -z "$MODULE_ADDRESS" ]]; then
+    auto_detect_module_address
+  fi
+
+  copy_file "$CONFIG_FILE" "$ARTIFACT_DIR/$(basename "$CONFIG_FILE").original"
+  load_state_snapshot
+
+  CURRENT_CLUSTER_ADDRESS="${MODULE_ADDRESS}.module.rds.aws_rds_cluster.this[0]"
+  CURRENT_CLUSTER_IDENTIFIER="$(state_value "$CURRENT_CLUSTER_ADDRESS" '.values.cluster_identifier // .values.id')"
+  CURRENT_CLUSTER_IDENTIFIER="${CURRENT_CLUSTER_IDENTIFIER//$'\r'/}"
+  if [[ -z "$CURRENT_CLUSTER_IDENTIFIER" || "$CURRENT_CLUSTER_IDENTIFIER" == "null" ]]; then
+    die "could not determine the current Aurora cluster identifier from ${CURRENT_CLUSTER_ADDRESS}"
+  fi
+
+  if [[ -z "$RESTORED_NAME" ]]; then
+    RESTORED_NAME="$(sanitize_identifier "${CURRENT_CLUSTER_IDENTIFIER}-kms-${STAMP}" 63)"
+  fi
+  if [[ -z "$SOURCE_SNAPSHOT_ID" ]]; then
+    SOURCE_SNAPSHOT_ID="$(sanitize_identifier "${CURRENT_CLUSTER_IDENTIFIER}-kms-source-${STAMP}" 63)"
+  fi
+  if [[ -z "$COPIED_SNAPSHOT_ID" ]]; then
+    COPIED_SNAPSHOT_ID="$(sanitize_identifier "${CURRENT_CLUSTER_IDENTIFIER}-kms-copy-${STAMP}" 63)"
+  fi
+  if [[ -z "$OLD_FINAL_SNAPSHOT_ID" && "$SKIP_OLD_FINAL_SNAPSHOT" != "true" ]]; then
+    OLD_FINAL_SNAPSHOT_ID="$(sanitize_identifier "${CURRENT_CLUSTER_IDENTIFIER}-pre-kms-retirement-${STAMP}" 63)"
+  fi
+
+  array_from_newline_text OLD_INSTANCE_IDENTIFIERS "$(jq -r --arg prefix "${MODULE_ADDRESS}.module.rds.aws_rds_cluster_instance." '
   .[]
   | select(.address | startswith($prefix))
   | .values.identifier
 ' "$STATE_RESOURCES_FILE" | sed '/^null$/d')"
-OLD_INSTANCE_IDENTIFIERS_JSON="$(printf '%s\n' "${OLD_INSTANCE_IDENTIFIERS[@]:-}" | json_array_from_lines)"
+  OLD_INSTANCE_IDENTIFIERS_JSON="$(printf '%s\n' "${OLD_INSTANCE_IDENTIFIERS[@]:-}" | json_array_from_lines)"
 
-array_from_newline_text OLD_SECURITY_GROUP_IDS "$(jq -r --arg prefix "${MODULE_ADDRESS}.module.rds.aws_security_group." '
+  array_from_newline_text OLD_SECURITY_GROUP_IDS "$(jq -r --arg prefix "${MODULE_ADDRESS}.module.rds.aws_security_group." '
   .[]
   | select(.address | startswith($prefix))
   | .values.id
 ' "$STATE_RESOURCES_FILE" | sed '/^null$/d')"
-OLD_SECURITY_GROUP_IDS_JSON="$(printf '%s\n' "${OLD_SECURITY_GROUP_IDS[@]:-}" | json_array_from_lines)"
+  OLD_SECURITY_GROUP_IDS_JSON="$(printf '%s\n' "${OLD_SECURITY_GROUP_IDS[@]:-}" | json_array_from_lines)"
 
-OLD_SECRETS_JSON="$(jq -c --arg prefix "${MODULE_ADDRESS}.module.secrets-manager-1." '
+  OLD_SECRETS_JSON="$(jq -c --arg prefix "${MODULE_ADDRESS}.module.secrets-manager-1." '
   [
     .[]
     | select(.address | startswith($prefix))
@@ -688,9 +834,26 @@ OLD_SECRETS_JSON="$(jq -c --arg prefix "${MODULE_ADDRESS}.module.secrets-manager
     | {name: .values.name, arn: .values.arn}
   ]
 ' "$STATE_RESOURCES_FILE")"
-array_from_newline_text OLD_SECRET_IDS "$(jq -r '.[] | .arn // .name' <<<"$OLD_SECRETS_JSON")"
+  array_from_newline_text OLD_SECRET_IDS "$(jq -r '.[] | .arn // .name' <<<"$OLD_SECRETS_JSON")"
 
-OLD_PARAMETER_GROUPS_JSON="$(jq -c --arg db_addr "${MODULE_ADDRESS}.aws_db_parameter_group.main[0]" --arg cluster_addr "${MODULE_ADDRESS}.aws_rds_cluster_parameter_group.main[0]" '
+  OLD_MONITORING_ROLES_JSON="$(jq -c --arg role_prefix "${MODULE_ADDRESS}.module.rds.aws_iam_role.rds_enhanced_monitoring" --arg attachment_prefix "${MODULE_ADDRESS}.module.rds.aws_iam_role_policy_attachment.rds_enhanced_monitoring" '
+  . as $all
+  | [
+      $all[] as $resource
+      | select($resource.address | startswith($role_prefix))
+      | {
+          name: $resource.values.name,
+          attached_policy_arns: [
+            $all[]
+            | select(.address | startswith($attachment_prefix))
+            | select(.values.role == $resource.values.name)
+            | .values.policy_arn
+          ]
+        }
+    ]
+' "$STATE_RESOURCES_FILE")"
+
+  OLD_PARAMETER_GROUPS_JSON="$(jq -c --arg db_addr "${MODULE_ADDRESS}.aws_db_parameter_group.main[0]" --arg cluster_addr "${MODULE_ADDRESS}.aws_rds_cluster_parameter_group.main[0]" '
   {
     db_parameter_groups: [
       .[]
@@ -704,79 +867,110 @@ OLD_PARAMETER_GROUPS_JSON="$(jq -c --arg db_addr "${MODULE_ADDRESS}.aws_db_param
     ]
   }
 ' "$STATE_RESOURCES_FILE")"
-array_from_newline_text OLD_DB_PARAMETER_GROUP_NAMES "$(jq -r '.db_parameter_groups[]?' <<<"$OLD_PARAMETER_GROUPS_JSON")"
-array_from_newline_text OLD_DB_CLUSTER_PARAMETER_GROUP_NAMES "$(jq -r '.db_cluster_parameter_groups[]?' <<<"$OLD_PARAMETER_GROUPS_JSON")"
+  array_from_newline_text OLD_DB_PARAMETER_GROUP_NAMES "$(jq -r '.db_parameter_groups[]?' <<<"$OLD_PARAMETER_GROUPS_JSON")"
+  array_from_newline_text OLD_DB_CLUSTER_PARAMETER_GROUP_NAMES "$(jq -r '.db_cluster_parameter_groups[]?' <<<"$OLD_PARAMETER_GROUPS_JSON")"
 
-OLD_DB_SUBNET_GROUPS_JSON="$(jq -c --arg prefix "${MODULE_ADDRESS}.module.rds.aws_db_subnet_group." '
+  OLD_DB_SUBNET_GROUPS_JSON="$(jq -c --arg prefix "${MODULE_ADDRESS}.module.rds.aws_db_subnet_group." '
   [
     .[]
     | select(.address | startswith($prefix))
     | .values.name
   ]
 ' "$STATE_RESOURCES_FILE")"
-array_from_newline_text OLD_DB_SUBNET_GROUP_NAMES "$(jq -r '.[]?' <<<"$OLD_DB_SUBNET_GROUPS_JSON")"
+  array_from_newline_text OLD_DB_SUBNET_GROUP_NAMES "$(jq -r '.[]?' <<<"$OLD_DB_SUBNET_GROUPS_JSON")"
 
-collect_state_addresses_for_removal
-STATE_REMOVE_ADDRESSES_JSON="$(printf '%s\n' "${STATE_REMOVE_ADDRESSES[@]}" | json_array_from_lines)"
-write_manifest
+  collect_state_addresses_for_removal
+  STATE_REMOVE_ADDRESSES_JSON="$(printf '%s\n' "${STATE_REMOVE_ADDRESSES[@]}" | json_array_from_lines)"
+  write_manifest
 
-log "artifact directory: $ARTIFACT_DIR"
-log "module address: $MODULE_ADDRESS"
-log "current cluster identifier: $CURRENT_CLUSTER_IDENTIFIER"
-log "restored cluster name: $RESTORED_NAME"
-log "source snapshot id: $SOURCE_SNAPSHOT_ID"
-log "copied snapshot id: $COPIED_SNAPSHOT_ID"
-if [[ "$SKIP_OLD_FINAL_SNAPSHOT" != "true" ]]; then
-  log "old final snapshot id: $OLD_FINAL_SNAPSHOT_ID"
-fi
+  log "artifact directory: $ARTIFACT_DIR"
+  log "module address: $MODULE_ADDRESS"
+  log "current cluster identifier: $CURRENT_CLUSTER_IDENTIFIER"
+  log "restored cluster name: $RESTORED_NAME"
+  log "source snapshot id: $SOURCE_SNAPSHOT_ID"
+  log "copied snapshot id: $COPIED_SNAPSHOT_ID"
+  if [[ "$SKIP_OLD_FINAL_SNAPSHOT" != "true" ]]; then
+    log "old final snapshot id: $OLD_FINAL_SNAPSHOT_ID"
+  fi
 
-if [[ "$DRY_RUN" == "true" ]]; then
-  log "dry run: would update ${CONFIG_FILE} in kms-bootstrap mode"
-else
-  update_rds_config_file "$CONFIG_FILE" "kms-bootstrap"
-  copy_file "$CONFIG_FILE" "$ARTIFACT_DIR/$(basename "$CONFIG_FILE").after-kms-bootstrap"
-  terraform fmt "$CONFIG_FILE" >/dev/null
-fi
-
-if [[ -n "$TARGET_STORAGE_KMS_ALIAS" ]]; then
   if [[ "$DRY_RUN" == "true" ]]; then
-    log "dry run: would target apply ${MODULE_ADDRESS}.aws_kms_key.rds_storage[0] and ${MODULE_ADDRESS}.aws_kms_alias.rds_storage[0]"
+    log "dry run: would update ${CONFIG_FILE} in kms-bootstrap mode"
   else
-    terraform_apply_storage_kms_only
+    update_rds_config_file "$CONFIG_FILE" "kms-bootstrap"
+    copy_file "$CONFIG_FILE" "$ARTIFACT_DIR/$(basename "$CONFIG_FILE").after-kms-bootstrap"
+    terraform fmt "$CONFIG_FILE" >/dev/null
+  fi
+
+  if [[ -n "$TARGET_STORAGE_KMS_ALIAS" ]]; then
+    if [[ "$DRY_RUN" == "true" ]]; then
+      log "dry run: would target apply ${MODULE_ADDRESS}.aws_kms_key.rds_storage[0] and ${MODULE_ADDRESS}.aws_kms_alias.rds_storage[0]"
+    else
+      terraform_apply_storage_kms_only
+      load_state_snapshot
+      resolve_target_storage_kms_id
+    fi
+  else
+    resolve_target_storage_kms_id
+  fi
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "dry run: would create source snapshot ${SOURCE_SNAPSHOT_ID}"
+    if [[ -n "$TARGET_STORAGE_KMS_KEY_ARN" ]]; then
+      log "dry run: would create encrypted snapshot copy ${COPIED_SNAPSHOT_ID} with ${TARGET_STORAGE_KMS_KEY_ARN}"
+    else
+      log "dry run: would create encrypted snapshot copy ${COPIED_SNAPSHOT_ID} with the created storage CMK resolved from Terraform state"
+    fi
+  else
+    create_source_snapshot
+    copy_snapshot_with_target_kms
+  fi
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "dry run: would update ${CONFIG_FILE} in restore mode"
+  else
+    update_rds_config_file "$CONFIG_FILE" "restore"
+    copy_file "$CONFIG_FILE" "$ARTIFACT_DIR/$(basename "$CONFIG_FILE").after-restore"
+    terraform fmt "$CONFIG_FILE" >/dev/null
+  fi
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "dry run: would remove these Terraform addresses from state:"
+    printf '%s\n' "${STATE_REMOVE_ADDRESSES[@]}" >&2
+  else
+    remove_old_rds_state
+  fi
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "dry run: would run a targeted terraform apply for ${MODULE_ADDRESS} to restore the new Aurora cluster from ${COPIED_SNAPSHOT_ID}"
+  else
+    terraform_apply_byo_vpc_only
+  fi
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "dry run: would run a second targeted terraform apply for ${MODULE_ADDRESS} to reconcile any post-restore in-place updates before cleanup"
+  else
+    terraform_reconcile_restored_byo_vpc
+  fi
+else
+  log "artifact directory: $ARTIFACT_DIR"
+  load_cleanup_manifest
+  log "cleanup-only mode using manifest: $MANIFEST_FILE"
+  log "current cluster identifier: $CURRENT_CLUSTER_IDENTIFIER"
+  if [[ "$SKIP_OLD_FINAL_SNAPSHOT" != "true" && -n "$OLD_FINAL_SNAPSHOT_ID" ]]; then
+    log "old final snapshot id: $OLD_FINAL_SNAPSHOT_ID"
   fi
 fi
 
-if [[ "$DRY_RUN" == "true" ]]; then
-  log "dry run: would create source snapshot ${SOURCE_SNAPSHOT_ID}"
-  log "dry run: would create encrypted snapshot copy ${COPIED_SNAPSHOT_ID}"
-else
-  create_source_snapshot
-  copy_snapshot_with_target_kms
-fi
+delete_old_cluster_resources
 
-if [[ "$DRY_RUN" == "true" ]]; then
-  log "dry run: would update ${CONFIG_FILE} in restore mode"
+if [[ "$CLEANUP_ONLY" == "true" ]]; then
+  log "cleanup-only mode complete"
+elif [[ "$DRY_RUN" == "true" ]]; then
+  log "dry run: would run a full terraform apply after the restored cluster is in place"
 else
-  update_rds_config_file "$CONFIG_FILE" "restore"
-  copy_file "$CONFIG_FILE" "$ARTIFACT_DIR/$(basename "$CONFIG_FILE").after-restore"
-  terraform fmt "$CONFIG_FILE" >/dev/null
-fi
-
-if [[ "$DRY_RUN" == "true" ]]; then
-  log "dry run: would remove these Terraform addresses from state:"
-  printf '%s\n' "${STATE_REMOVE_ADDRESSES[@]}" >&2
-else
-  remove_old_rds_state
-fi
-
-if [[ "$DRY_RUN" == "true" ]]; then
-  log "dry run: would run a full terraform apply to restore the new Aurora cluster from ${COPIED_SNAPSHOT_ID}"
-else
-  log "running full terraform apply for the restored Aurora cluster"
+  log "running final full terraform apply after the restored cluster is in place"
   terraform_cmd apply -auto-approve
 fi
-
-delete_old_cluster_resources
 
 log "migration complete"
 log "caller config now points at the restored cluster and keeps snapshot_identifier pinned to ${COPIED_SNAPSHOT_ID}"

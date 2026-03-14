@@ -144,6 +144,21 @@ Important operational notes for the helper:
 * The helper leaves `rds_config.snapshot_identifier` pinned to the copied snapshot after the migration. Removing it later would force Terraform to replace the restored cluster.
 * Run the helper during a maintenance window. It automates the infrastructure steps, but you still need to plan for application cutover timing and validation.
 * Use `--dry-run` first to inspect the exact names, snapshots, and Terraform state addresses it will touch.
+* `--dry-run` also writes a `manifest.json` artifact with the exact `state_remove_addresses` and AWS-side identifiers that cleanup will use later.
+* If you do not want to delete the old Aurora resources immediately after cutover, use `--keep-old-resources` during the main migration run. You can perform cleanup later from the saved manifest.
+* If you want an interactive safety rail during AWS cleanup, add `--confirm`. The helper will print each AWS CLI command and prompt before it runs.
+
+To defer old-resource cleanup until after you have validated the restored cluster, run the migration with `--keep-old-resources`, then later run:
+
+```bash
+./byo-vpc/scripts/rds_storage_kms_migration.sh \
+  --cleanup-only \
+  --manifest ./.rds-storage-kms-migration-<timestamp>/manifest.json \
+  --region us-east-2 \
+  --confirm
+```
+
+`--cleanup-only` requires `--manifest` and skips the snapshot, Terraform, and state-migration steps. It only deletes the old AWS resources recorded in the manifest, such as the retired cluster, instances, secret, enhanced monitoring IAM role, parameter groups, subnet group, and security group.
 
 ### Aurora database password secret encryption (`rds_config.password_secret_kms`)
 

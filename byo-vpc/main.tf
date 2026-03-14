@@ -81,11 +81,13 @@ locals {
   redis_cloudwatch_log_group_kms_key_arn = length(local.redis_cloudwatch_log_group_destinations) > 0 && local.redis_cloudwatch_log_group_cmk_enabled == true ? (
     var.redis_config.cloudwatch_log_group.kms.kms_key_arn != null ? var.redis_config.cloudwatch_log_group.kms.kms_key_arn : aws_kms_key.redis_cloudwatch_log_group[0].arn
   ) : null
-  redis_manage_cloudwatch_log_groups = var.redis_config.cloudwatch_log_group.retention_in_days != null || var.redis_config.cloudwatch_log_group.skip_destroy == true || local.redis_cloudwatch_log_group_kms_key_arn != null
-  redis_cloudwatch_log_groups = {
-    for idx, config in local.redis_cloudwatch_log_group_destinations :
-    idx => config if local.redis_manage_cloudwatch_log_groups
-  }
+  # Keep the decision to manage Redis log groups based only on input-known values
+  # so it can be used safely in for_each.
+  redis_manage_cloudwatch_log_groups = length(local.redis_cloudwatch_log_group_destinations) > 0 && (
+    var.redis_config.cloudwatch_log_group.retention_in_days != null ||
+    var.redis_config.cloudwatch_log_group.skip_destroy == true ||
+    local.redis_cloudwatch_log_group_cmk_enabled == true
+  )
 }
 
 data "aws_caller_identity" "current" {}
@@ -528,7 +530,7 @@ module "secrets-manager-1" {
 }
 
 resource "aws_cloudwatch_log_group" "redis" {
-  for_each = local.redis_cloudwatch_log_groups
+  for_each = local.redis_manage_cloudwatch_log_groups ? local.redis_cloudwatch_log_group_destinations : {}
 
   name              = each.value.destination
   retention_in_days = var.redis_config.cloudwatch_log_group.retention_in_days
