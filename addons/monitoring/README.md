@@ -29,6 +29,8 @@ https://github.com/fleetdm/fleet-terraform/blob/main/example/main.tf for details
 
 > Note: If you haven't specified defined `local.customer` or customized service names, the default is "fleet" for anywhere that `local.customer` is specified below.
 
+If the Fleet database password secret is encrypted with a CMK, also pass `mysql_password_secret_kms_key_arn` so the cron-monitoring Lambda can decrypt it. When using the `byo-vpc` module, wire this from `module.<fleet_module>.byo-vpc.rds_password_secret_kms_key_arn`.
+
 ```
 module "monitoring" {
   source                 = "github.com/fleetdm/fleet-terraform//addons/monitoring?ref=tf-mod-addon-monitoring-v1.9.0"
@@ -69,6 +71,7 @@ module "monitoring" {
     mysql_database             = module.fleet.byo-vpc.rds.cluster_database_name
     mysql_user                 = module.fleet.byo-vpc.rds.cluster_master_username
     mysql_password_secret_name = "${local.customer}-database-password"
+    mysql_password_secret_kms_key_arn = module.fleet.byo-vpc.rds_password_secret_kms_key_arn
     mysql_tls_config           = "true"
     rds_security_group_id      = module.fleet.byo-vpc.rds.security_group_id
     subnet_ids                 = module.fleet.vpc.private_subnets

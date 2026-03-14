@@ -53,7 +53,7 @@ locals {
   rds_performance_insights_retention_period = local.rds_performance_insights_enabled == true ? (
     var.rds_config.observability.database_insights_mode == "advanced" ? coalesce(var.rds_config.observability.retention_period, 465) : var.rds_config.observability.retention_period
   ) : null
-  rds_cluster_monitoring_interval = var.rds_config.observability.database_insights_mode == "advanced" ? var.rds_config.monitoring_interval : 0
+  rds_cluster_monitoring_interval = var.rds_config.monitoring_interval
 
   rds_cloudwatch_log_group_cmk_enabled    = var.rds_config.cloudwatch_log_group.kms.cmk_enabled
   rds_cloudwatch_log_group_create_kms_key = length(var.rds_config.enabled_cloudwatch_logs_exports) > 0 && local.rds_cloudwatch_log_group_cmk_enabled == true && var.rds_config.cloudwatch_log_group.kms.kms_key_arn == null
@@ -88,6 +88,65 @@ locals {
     var.redis_config.cloudwatch_log_group.skip_destroy == true ||
     local.redis_cloudwatch_log_group_cmk_enabled == true
   )
+  kms_root_statement = {
+    sid                   = "EnableRootPermissions"
+    actions               = ["kms:*"]
+    principal_type        = "AWS"
+    principal_identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+  }
+  kms_service_statements = {
+    rds = {
+      sid = "AllowRDSUseOfTheKey"
+      actions = [
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:CreateGrant",
+        "kms:DescribeKey"
+      ]
+      principal_type        = "Service"
+      principal_identifiers = ["rds.amazonaws.com"]
+    }
+    secretsmanager = {
+      sid = "AllowSecretsManagerUseOfTheKey"
+      actions = [
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:CreateGrant",
+        "kms:DescribeKey"
+      ]
+      principal_type        = "Service"
+      principal_identifiers = ["secretsmanager.amazonaws.com"]
+    }
+    cloudwatch_logs = {
+      sid = "AllowCloudWatchLogsUseOfTheKey"
+      actions = [
+        "kms:Encrypt*",
+        "kms:Decrypt*",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:Describe*"
+      ]
+      principal_type        = "Service"
+      principal_identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
+    }
+    elasticache = {
+      sid = "AllowElastiCacheUseOfTheKey"
+      actions = [
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:CreateGrant",
+        "kms:DescribeKey"
+      ]
+      principal_type        = "Service"
+      principal_identifiers = ["elasticache.amazonaws.com"]
+    }
+  }
 }
 
 data "aws_caller_identity" "current" {}
@@ -97,35 +156,18 @@ data "aws_region" "current" {}
 data "aws_iam_policy_document" "rds_storage_kms" {
   count = local.rds_storage_create_kms_key == true ? 1 : 0
 
-  statement {
-    sid    = "EnableRootPermissions"
-    effect = "Allow"
-    actions = [
-      "kms:*"
-    ]
-    principals {
-      type        = "AWS"
-      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+  dynamic "statement" {
+    for_each = [local.kms_root_statement, local.kms_service_statements.rds]
+    content {
+      sid     = statement.value.sid
+      effect  = "Allow"
+      actions = statement.value.actions
+      resources = ["*"]
+      principals {
+        type        = statement.value.principal_type
+        identifiers = statement.value.principal_identifiers
+      }
     }
-    resources = ["*"]
-  }
-
-  statement {
-    sid    = "AllowRDSUseOfTheKey"
-    effect = "Allow"
-    actions = [
-      "kms:Encrypt",
-      "kms:Decrypt",
-      "kms:ReEncrypt*",
-      "kms:GenerateDataKey*",
-      "kms:CreateGrant",
-      "kms:DescribeKey"
-    ]
-    principals {
-      type        = "Service"
-      identifiers = ["rds.amazonaws.com"]
-    }
-    resources = ["*"]
   }
 }
 
@@ -145,35 +187,18 @@ resource "aws_kms_alias" "rds_storage" {
 data "aws_iam_policy_document" "rds_password_secret_kms" {
   count = local.rds_password_secret_create_kms_key == true ? 1 : 0
 
-  statement {
-    sid    = "EnableRootPermissions"
-    effect = "Allow"
-    actions = [
-      "kms:*"
-    ]
-    principals {
-      type        = "AWS"
-      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+  dynamic "statement" {
+    for_each = [local.kms_root_statement, local.kms_service_statements.secretsmanager]
+    content {
+      sid     = statement.value.sid
+      effect  = "Allow"
+      actions = statement.value.actions
+      resources = ["*"]
+      principals {
+        type        = statement.value.principal_type
+        identifiers = statement.value.principal_identifiers
+      }
     }
-    resources = ["*"]
-  }
-
-  statement {
-    sid    = "AllowSecretsManagerUseOfTheKey"
-    effect = "Allow"
-    actions = [
-      "kms:Encrypt",
-      "kms:Decrypt",
-      "kms:ReEncrypt*",
-      "kms:GenerateDataKey*",
-      "kms:CreateGrant",
-      "kms:DescribeKey"
-    ]
-    principals {
-      type        = "Service"
-      identifiers = ["secretsmanager.amazonaws.com"]
-    }
-    resources = ["*"]
   }
 }
 
@@ -193,35 +218,18 @@ resource "aws_kms_alias" "rds_password_secret" {
 data "aws_iam_policy_document" "rds_observability_kms" {
   count = local.rds_observability_create_kms_key == true ? 1 : 0
 
-  statement {
-    sid    = "EnableRootPermissions"
-    effect = "Allow"
-    actions = [
-      "kms:*"
-    ]
-    principals {
-      type        = "AWS"
-      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+  dynamic "statement" {
+    for_each = [local.kms_root_statement, local.kms_service_statements.rds]
+    content {
+      sid     = statement.value.sid
+      effect  = "Allow"
+      actions = statement.value.actions
+      resources = ["*"]
+      principals {
+        type        = statement.value.principal_type
+        identifiers = statement.value.principal_identifiers
+      }
     }
-    resources = ["*"]
-  }
-
-  statement {
-    sid    = "AllowRDSUseOfTheKey"
-    effect = "Allow"
-    actions = [
-      "kms:Encrypt",
-      "kms:Decrypt",
-      "kms:ReEncrypt*",
-      "kms:GenerateDataKey*",
-      "kms:CreateGrant",
-      "kms:DescribeKey"
-    ]
-    principals {
-      type        = "Service"
-      identifiers = ["rds.amazonaws.com"]
-    }
-    resources = ["*"]
   }
 }
 
@@ -241,34 +249,18 @@ resource "aws_kms_alias" "rds_observability" {
 data "aws_iam_policy_document" "rds_cloudwatch_log_group_kms" {
   count = local.rds_cloudwatch_log_group_create_kms_key == true ? 1 : 0
 
-  statement {
-    sid    = "EnableRootPermissions"
-    effect = "Allow"
-    actions = [
-      "kms:*"
-    ]
-    principals {
-      type        = "AWS"
-      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+  dynamic "statement" {
+    for_each = [local.kms_root_statement, local.kms_service_statements.cloudwatch_logs]
+    content {
+      sid     = statement.value.sid
+      effect  = "Allow"
+      actions = statement.value.actions
+      resources = ["*"]
+      principals {
+        type        = statement.value.principal_type
+        identifiers = statement.value.principal_identifiers
+      }
     }
-    resources = ["*"]
-  }
-
-  statement {
-    sid    = "AllowCloudWatchLogsUseOfTheKey"
-    effect = "Allow"
-    actions = [
-      "kms:Encrypt*",
-      "kms:Decrypt*",
-      "kms:ReEncrypt*",
-      "kms:GenerateDataKey*",
-      "kms:Describe*"
-    ]
-    principals {
-      type        = "Service"
-      identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
-    }
-    resources = ["*"]
   }
 }
 
@@ -288,35 +280,18 @@ resource "aws_kms_alias" "rds_cloudwatch_log_group" {
 data "aws_iam_policy_document" "redis_at_rest_kms" {
   count = local.redis_at_rest_create_kms_key == true ? 1 : 0
 
-  statement {
-    sid    = "EnableRootPermissions"
-    effect = "Allow"
-    actions = [
-      "kms:*"
-    ]
-    principals {
-      type        = "AWS"
-      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+  dynamic "statement" {
+    for_each = [local.kms_root_statement, local.kms_service_statements.elasticache]
+    content {
+      sid     = statement.value.sid
+      effect  = "Allow"
+      actions = statement.value.actions
+      resources = ["*"]
+      principals {
+        type        = statement.value.principal_type
+        identifiers = statement.value.principal_identifiers
+      }
     }
-    resources = ["*"]
-  }
-
-  statement {
-    sid    = "AllowElastiCacheUseOfTheKey"
-    effect = "Allow"
-    actions = [
-      "kms:Encrypt",
-      "kms:Decrypt",
-      "kms:ReEncrypt*",
-      "kms:GenerateDataKey*",
-      "kms:CreateGrant",
-      "kms:DescribeKey"
-    ]
-    principals {
-      type        = "Service"
-      identifiers = ["elasticache.amazonaws.com"]
-    }
-    resources = ["*"]
   }
 }
 
@@ -336,34 +311,18 @@ resource "aws_kms_alias" "redis_at_rest" {
 data "aws_iam_policy_document" "redis_cloudwatch_log_group_kms" {
   count = local.redis_cloudwatch_log_group_create_kms_key == true ? 1 : 0
 
-  statement {
-    sid    = "EnableRootPermissions"
-    effect = "Allow"
-    actions = [
-      "kms:*"
-    ]
-    principals {
-      type        = "AWS"
-      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+  dynamic "statement" {
+    for_each = [local.kms_root_statement, local.kms_service_statements.cloudwatch_logs]
+    content {
+      sid     = statement.value.sid
+      effect  = "Allow"
+      actions = statement.value.actions
+      resources = ["*"]
+      principals {
+        type        = statement.value.principal_type
+        identifiers = statement.value.principal_identifiers
+      }
     }
-    resources = ["*"]
-  }
-
-  statement {
-    sid    = "AllowCloudWatchLogsUseOfTheKey"
-    effect = "Allow"
-    actions = [
-      "kms:Encrypt*",
-      "kms:Decrypt*",
-      "kms:ReEncrypt*",
-      "kms:GenerateDataKey*",
-      "kms:Describe*"
-    ]
-    principals {
-      type        = "Service"
-      identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
-    }
-    resources = ["*"]
   }
 }
 
@@ -458,7 +417,6 @@ module "rds" {
   storage_encrypted                             = true
   kms_key_id                                    = local.rds_storage_kms_key_arn
   apply_immediately                             = var.rds_config.apply_immediately
-  monitoring_interval                           = var.rds_config.monitoring_interval
   backtrack_window                              = var.rds_config.backtrack_window
 
   db_parameter_group_name         = var.rds_config.db_parameter_group_name == null ? aws_db_parameter_group.main[0].id : var.rds_config.db_parameter_group_name

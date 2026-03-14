@@ -50,6 +50,33 @@ AWS has announced the Performance Insights console end of life for **June 30, 20
 * Set it explicitly if you want a fixed final snapshot name.
 * Leave it `null` to preserve the legacy generated naming pattern: `final-<rds_config.name>-<8-digit-hex>`.
 
+# Monitoring Addon Secret KMS Wiring
+
+If you enable `rds_config.password_secret_kms`, the `byo-vpc` module also exposes `rds_password_secret_kms_key_arn`.
+
+That output is intended to be passed through to the monitoring addon so the cron-monitoring Lambda can decrypt the Fleet database password secret when it is encrypted with a CMK.
+
+Example:
+
+```hcl
+module "fleet_byo_vpc" {
+  source = "github.com/fleetdm/fleet-terraform//byo-vpc?depth=1&ref=tf-mod-byo-vpc-v1.24.0"
+
+  # ...
+}
+
+module "monitoring" {
+  source = "github.com/fleetdm/fleet-terraform//addons/monitoring?ref=tf-mod-addon-monitoring-v1.9.0"
+
+  # ...
+  cron_monitoring = {
+    # ...
+    mysql_password_secret_name        = "${local.customer}-database-password"
+    mysql_password_secret_kms_key_arn = module.fleet_byo_vpc.rds_password_secret_kms_key_arn
+  }
+}
+```
+
 # Example
 
 ```hcl

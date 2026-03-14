@@ -36,6 +36,39 @@ locals {
   software_installers_kms_key_id = var.fleet_config.software_installers.create_kms_key == true || var.fleet_config.software_installers.kms_key_arn != null ? (
     var.fleet_config.software_installers.kms_key_arn != null ? data.aws_kms_key.software_installers_provided[0].key_id : aws_kms_key.software_installers[0].id
   ) : null
+  kms_root_statement = {
+    sid                   = "EnableRootPermissions"
+    actions               = ["kms:*"]
+    principal_type        = "AWS"
+    principal_identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+  }
+  kms_service_statements = {
+    cloudwatch_logs = {
+      sid = "AllowCloudWatchLogsUseOfTheKey"
+      actions = [
+        "kms:Encrypt*",
+        "kms:Decrypt*",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:Describe*"
+      ]
+      principal_type        = "Service"
+      principal_identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
+    }
+    secretsmanager = {
+      sid = "AllowSecretsManagerUseOfTheKey"
+      actions = [
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:CreateGrant",
+        "kms:DescribeKey"
+      ]
+      principal_type        = "Service"
+      principal_identifiers = ["secretsmanager.amazonaws.com"]
+    }
+  }
 }
 
 check "deprecated_fleet_config_private_key_secret_kms_enabled" {
@@ -272,34 +305,18 @@ resource "aws_appautoscaling_policy" "ecs_policy_cpu" {
 data "aws_iam_policy_document" "application_logs_kms" {
   count = local.application_logs_create_kms_key == true ? 1 : 0
 
-  statement {
-    sid    = "EnableRootPermissions"
-    effect = "Allow"
-    actions = [
-      "kms:*"
-    ]
-    principals {
-      type        = "AWS"
-      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+  dynamic "statement" {
+    for_each = [local.kms_root_statement, local.kms_service_statements.cloudwatch_logs]
+    content {
+      sid       = statement.value.sid
+      effect    = "Allow"
+      actions   = statement.value.actions
+      resources = ["*"]
+      principals {
+        type        = statement.value.principal_type
+        identifiers = statement.value.principal_identifiers
+      }
     }
-    resources = ["*"]
-  }
-
-  statement {
-    sid    = "AllowCloudWatchLogsUseOfTheKey"
-    effect = "Allow"
-    actions = [
-      "kms:Encrypt*",
-      "kms:Decrypt*",
-      "kms:ReEncrypt*",
-      "kms:GenerateDataKey*",
-      "kms:Describe*"
-    ]
-    principals {
-      type        = "Service"
-      identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
-    }
-    resources = ["*"]
   }
 }
 
@@ -388,6 +405,25 @@ resource "aws_kms_key" "private_key_secret" {
   count               = local.private_key_secret_create_kms_key == true ? 1 : 0
   description         = "CMK for Fleet server private key secret encryption in Secrets Manager."
   enable_key_rotation = true
+  policy              = data.aws_iam_policy_document.private_key_secret_kms[0].json
+}
+
+data "aws_iam_policy_document" "private_key_secret_kms" {
+  count = local.private_key_secret_create_kms_key == true ? 1 : 0
+
+  dynamic "statement" {
+    for_each = [local.kms_root_statement, local.kms_service_statements.secretsmanager]
+    content {
+      sid       = statement.value.sid
+      effect    = "Allow"
+      actions   = statement.value.actions
+      resources = ["*"]
+      principals {
+        type        = statement.value.principal_type
+        identifiers = statement.value.principal_identifiers
+      }
+    }
+  }
 }
 
 resource "aws_kms_alias" "private_key_secret" {

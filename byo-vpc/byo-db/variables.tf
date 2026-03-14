@@ -73,7 +73,8 @@ variable "ecs_cluster" {
       create            = true
       retention_in_days = 90
       kms = {
-        cmk_enabled = false
+        cmk_enabled = null
+        enabled     = null
         kms_key_arn = null
         kms_alias   = "fleet-ecs-cluster-logs"
       }
