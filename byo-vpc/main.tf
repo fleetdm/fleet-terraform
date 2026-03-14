@@ -454,9 +454,6 @@ module "rds" {
   cloudwatch_log_group_skip_destroy             = local.rds_manage_cloudwatch_log_groups ? var.rds_config.cloudwatch_log_group.skip_destroy : null
   database_insights_mode                        = var.rds_config.observability.database_insights_mode
   manage_master_user_password                   = false
-  performance_insights_enabled                  = local.rds_performance_insights_enabled
-  performance_insights_kms_key_id               = local.rds_observability_kms_key_arn
-  performance_insights_retention_period         = local.rds_performance_insights_retention_period
   storage_encrypted                             = true
   kms_key_id                                    = local.rds_storage_kms_key_arn
   apply_immediately                             = var.rds_config.apply_immediately

@@ -32,6 +32,8 @@ Options:
   --copied-snapshot-id <id>     Encrypted DB cluster snapshot copy identifier to create.
   --old-final-snapshot-id <id>  Final snapshot identifier when deleting the old cluster.
   --skip-old-final-snapshot     Delete the old cluster without a final snapshot.
+  --include-performance-insights
+                                Also enable Performance Insights CMK configuration during restore.
   --keep-old-resources          Leave the old Aurora resources in AWS after cutover.
   --cleanup-only                Skip migration steps and only run AWS cleanup from --manifest.
   --confirm                     Prompt before each AWS cleanup command executes.
@@ -42,6 +44,8 @@ Notes:
 * This assumes the caller passes rds_config as a direct inline object literal in the config file.
 * The helper intentionally leaves rds_config.snapshot_identifier pinned to the copied snapshot.
   Clearing it later would force Terraform to replace the restored cluster.
+* --include-performance-insights updates rds_config.observability during restore so the
+  recreated cluster can adopt Performance Insights CMK settings at creation time.
 * Run this during a maintenance window. The snapshot/copy/restore path is not an in-place re-key.
 EOF
 }
@@ -148,11 +152,11 @@ confirm_cleanup_command() {
   local reply=""
 
   [[ "$CONFIRM_CLEANUP" == "true" ]] || return 0
-  [[ -t 0 ]] || die "--confirm requires an interactive terminal"
+  [[ -r /dev/tty ]] || die "--confirm requires an interactive terminal"
 
   printf '[rds-storage-kms-migration] about to run: %s\n' "$command_display" >&2
-  printf '[rds-storage-kms-migration] continue? [y/N] ' >&2
-  read -r reply
+  printf '[rds-storage-kms-migration] continue? [y/N] ' >/dev/tty
+  read -r reply </dev/tty
   case "$reply" in
     y|Y|yes|YES)
       return 0
@@ -262,6 +266,7 @@ write_manifest() {
     --arg old_final_snapshot_id "$OLD_FINAL_SNAPSHOT_ID" \
     --arg storage_kms_key_arn "$TARGET_STORAGE_KMS_KEY_ARN" \
     --arg storage_kms_alias "$TARGET_STORAGE_KMS_ALIAS" \
+    --argjson include_performance_insights "$INCLUDE_PERFORMANCE_INSIGHTS_JSON" \
     --argjson old_instance_identifiers "$OLD_INSTANCE_IDENTIFIERS_JSON" \
     --argjson old_security_group_ids "$OLD_SECURITY_GROUP_IDS_JSON" \
     --argjson old_secrets "$OLD_SECRETS_JSON" \
@@ -279,6 +284,7 @@ write_manifest() {
       old_final_snapshot_id: ($old_final_snapshot_id | if length > 0 then . else null end),
       storage_kms_key_arn: ($storage_kms_key_arn | if length > 0 then . else null end),
       storage_kms_alias: ($storage_kms_alias | if length > 0 then . else null end),
+      include_performance_insights: $include_performance_insights,
       old_instance_identifiers: $old_instance_identifiers,
       old_security_group_ids: $old_security_group_ids,
       old_secrets: $old_secrets,
@@ -298,6 +304,7 @@ update_rds_config_file() {
   CONFIG_EDIT_SOURCE_SNAPSHOT_ID="${COPIED_SNAPSHOT_ID:-}" \
   CONFIG_EDIT_TARGET_STORAGE_KMS_KEY_ARN="${TARGET_STORAGE_KMS_KEY_ARN:-}" \
   CONFIG_EDIT_TARGET_STORAGE_KMS_ALIAS="${TARGET_STORAGE_KMS_ALIAS:-}" \
+  CONFIG_EDIT_INCLUDE_PERFORMANCE_INSIGHTS="${INCLUDE_PERFORMANCE_INSIGHTS:-false}" \
   perl -i -0pe '
 use strict;
 use warnings;
@@ -307,6 +314,7 @@ my $restored_name = $ENV{CONFIG_EDIT_RESTORED_NAME} // "";
 my $snapshot_id = $ENV{CONFIG_EDIT_SOURCE_SNAPSHOT_ID} // "";
 my $kms_key_arn = $ENV{CONFIG_EDIT_TARGET_STORAGE_KMS_KEY_ARN} // "";
 my $kms_alias = $ENV{CONFIG_EDIT_TARGET_STORAGE_KMS_ALIAS} // "";
+my $include_performance_insights = $ENV{CONFIG_EDIT_INCLUDE_PERFORMANCE_INSIGHTS} // "false";
 
 sub quote_hcl {
   my ($value) = @_;
@@ -461,6 +469,63 @@ sub upsert_storage_kms_block {
   return $object_text;
 }
 
+sub upsert_observability_kms_block {
+  my ($observability_text) = @_;
+  my $indent = object_indent($observability_text);
+  my $nested_indent = $indent . "  ";
+
+  my $replacement = "${indent}kms = {\n";
+  $replacement .= "${nested_indent}cmk_enabled = true\n";
+  $replacement .= "${indent}}";
+
+  if ($observability_text =~ /^([ \t]*)kms[ \t]*=[ \t]*\{/m) {
+    my $kms_start = $-[0];
+    my $kms_brace = index($observability_text, "{", $kms_start);
+    my $kms_end = find_matching_brace($observability_text, $kms_brace);
+    my $existing = substr($observability_text, $kms_start, $kms_end - $kms_start + 1);
+    $existing = upsert_simple_attribute($existing, "cmk_enabled", "true");
+    substr($observability_text, $kms_start, $kms_end - $kms_start + 1, $existing);
+    return $observability_text;
+  }
+
+  $observability_text =~ s/\n([ \t]*)\}$/\n$replacement\n$1}/s;
+  return $observability_text;
+}
+
+sub upsert_observability_block {
+  my ($object_text) = @_;
+  my $indent = object_indent($object_text);
+  my $nested_indent = $indent . "  ";
+
+  if ($object_text =~ /^([ \t]*)observability[ \t]*=[ \t]*\{/m) {
+    my $observability_start = $-[0];
+    my $observability_brace = index($object_text, "{", $observability_start);
+    my $observability_end = find_matching_brace($object_text, $observability_brace);
+    my $existing = substr($object_text, $observability_start, $observability_end - $observability_start + 1);
+    $existing = upsert_simple_attribute($existing, "performance_insights_enabled", "true");
+    $existing = upsert_observability_kms_block($existing);
+    substr($object_text, $observability_start, $observability_end - $observability_start + 1, $existing);
+    return $object_text;
+  }
+
+  my $replacement = "${indent}observability = {\n";
+  $replacement .= "${nested_indent}performance_insights_enabled = true\n";
+  $replacement .= "${nested_indent}kms = {\n";
+  $replacement .= "${nested_indent}  cmk_enabled = true\n";
+  $replacement .= "${nested_indent}}\n";
+  $replacement .= "${indent}}";
+
+  $object_text =~ s/\n([ \t]*)\}$/\n$replacement\n$1}/s;
+  return $object_text;
+}
+
+sub replace_optional_mysql_password_secret_name {
+  my ($text, $restored_name) = @_;
+  my $replacement = quote_hcl($restored_name . "-database-password");
+  $text =~ s/^([ \t]*mysql_password_secret_name[ \t]*=[ \t]*).*$/$1$replacement/mg;
+  return $text;
+}
+
 my ($start_index, $end_index) = find_rds_config_span($_);
 my $object_text = substr($_, $start_index, $end_index - $start_index + 1);
 
@@ -473,11 +538,17 @@ if ($mode eq "kms-bootstrap") {
   $object_text = upsert_simple_attribute($object_text, "snapshot_identifier", quote_hcl($snapshot_id));
   $object_text = upsert_simple_attribute($object_text, "restore_to_point_in_time", "{}");
   $object_text = upsert_storage_kms_block($object_text, $kms_key_arn, $kms_alias);
+  if ($include_performance_insights eq "true") {
+    $object_text = upsert_observability_block($object_text);
+  }
 } else {
   die "unexpected CONFIG_EDIT_MODE=$mode\n";
 }
 
 substr($_, $start_index, $end_index - $start_index + 1, $object_text);
+if ($mode eq "restore") {
+  $_ = replace_optional_mysql_password_secret_name($_, $restored_name);
+}
   ' "$file"
 }
 
@@ -659,6 +730,7 @@ SOURCE_SNAPSHOT_ID=""
 COPIED_SNAPSHOT_ID=""
 OLD_FINAL_SNAPSHOT_ID=""
 SKIP_OLD_FINAL_SNAPSHOT="false"
+INCLUDE_PERFORMANCE_INSIGHTS="false"
 KEEP_OLD_RESOURCES="false"
 CONFIRM_CLEANUP="false"
 CLEANUP_ONLY="false"
@@ -714,6 +786,10 @@ while [[ $# -gt 0 ]]; do
       SKIP_OLD_FINAL_SNAPSHOT="true"
       shift
       ;;
+    --include-performance-insights)
+      INCLUDE_PERFORMANCE_INSIGHTS="true"
+      shift
+      ;;
     --keep-old-resources)
       KEEP_OLD_RESOURCES="true"
       shift
@@ -767,10 +843,15 @@ if [[ ! -d "$TERRAFORM_DIR" ]]; then
   die "terraform directory does not exist: $TERRAFORM_DIR"
 fi
 
+INCLUDE_PERFORMANCE_INSIGHTS_JSON="false"
+if [[ "$INCLUDE_PERFORMANCE_INSIGHTS" == "true" ]]; then
+  INCLUDE_PERFORMANCE_INSIGHTS_JSON="true"
+fi
+
 STAMP="$(date +%Y%m%d%H%M%S)"
-ARTIFACT_DIR="${TERRAFORM_DIR%/}/.rds-storage-kms-migration-${STAMP}"
-mkdir -p "$ARTIFACT_DIR"
 if [[ "$CLEANUP_ONLY" != "true" ]]; then
+  ARTIFACT_DIR="${TERRAFORM_DIR%/}/.rds-storage-kms-migration-${STAMP}"
+  mkdir -p "$ARTIFACT_DIR"
   if [[ -z "$CONFIG_FILE" ]]; then
     CONFIG_FILE="main.tf"
   fi
@@ -927,6 +1008,9 @@ if [[ "$CLEANUP_ONLY" != "true" ]]; then
 
   if [[ "$DRY_RUN" == "true" ]]; then
     log "dry run: would update ${CONFIG_FILE} in restore mode"
+    if [[ "$INCLUDE_PERFORMANCE_INSIGHTS" == "true" ]]; then
+      log "dry run: would also enable Performance Insights CMK configuration during restore"
+    fi
   else
     update_rds_config_file "$CONFIG_FILE" "restore"
     copy_file "$CONFIG_FILE" "$ARTIFACT_DIR/$(basename "$CONFIG_FILE").after-restore"
@@ -972,6 +1056,10 @@ else
   terraform_cmd apply -auto-approve
 fi
 
-log "migration complete"
-log "caller config now points at the restored cluster and keeps snapshot_identifier pinned to ${COPIED_SNAPSHOT_ID}"
-log "artifacts saved under ${ARTIFACT_DIR}"
+if [[ "$CLEANUP_ONLY" == "true" ]]; then
+  log "cleanup complete"
+else
+  log "migration complete"
+  log "caller config now points at the restored cluster and keeps snapshot_identifier pinned to ${COPIED_SNAPSHOT_ID}"
+  log "artifacts saved under ${ARTIFACT_DIR}"
+fi

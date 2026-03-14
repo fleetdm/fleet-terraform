@@ -142,6 +142,7 @@ Important operational notes for the helper:
 
 * The restored cluster uses a new `rds_config.name`. The helper generates one automatically unless you pass `--restored-name`.
 * The helper leaves `rds_config.snapshot_identifier` pinned to the copied snapshot after the migration. Removing it later would force Terraform to replace the restored cluster.
+* If you also want the recreated cluster to adopt a Performance Insights / Database Insights CMK at cluster creation time, add `--include-performance-insights`. This updates `rds_config.observability` during restore so the recreated cluster is born with Performance Insights CMK configuration instead of trying to change it later.
 * Run the helper during a maintenance window. It automates the infrastructure steps, but you still need to plan for application cutover timing and validation.
 * Use `--dry-run` first to inspect the exact names, snapshots, and Terraform state addresses it will touch.
 * `--dry-run` also writes a `manifest.json` artifact with the exact `state_remove_addresses` and AWS-side identifiers that cleanup will use later.
