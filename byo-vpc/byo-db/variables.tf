@@ -156,17 +156,19 @@ variable "fleet_config" {
       name = "fleet"
     })
     database = optional(object({
-      password_secret_arn = string
-      user                = string
-      database            = string
-      address             = string
-      rr_address          = optional(string, null)
+      password_secret_arn         = string
+      password_secret_kms_key_arn = optional(string, null)
+      user                        = string
+      database                    = string
+      address                     = string
+      rr_address                  = optional(string, null)
       }), {
-      password_secret_arn = null
-      user                = null
-      database            = null
-      address             = null
-      rr_address          = null
+      password_secret_arn         = null
+      password_secret_kms_key_arn = null
+      user                        = null
+      database                    = null
+      address                     = null
+      rr_address                  = null
     })
     redis = optional(object({
       address = string

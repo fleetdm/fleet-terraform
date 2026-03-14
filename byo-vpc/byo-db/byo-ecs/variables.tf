@@ -51,11 +51,12 @@ variable "fleet_config" {
       name = "fleet"
     })
     database = object({
-      password_secret_arn = string
-      user                = string
-      database            = string
-      address             = string
-      rr_address          = optional(string, null)
+      password_secret_arn         = string
+      password_secret_kms_key_arn = optional(string, null)
+      user                        = string
+      database                    = string
+      address                     = string
+      rr_address                  = optional(string, null)
     })
     redis = object({
       address = string

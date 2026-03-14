@@ -34,6 +34,8 @@ Options:
   --skip-old-final-snapshot     Delete the old cluster without a final snapshot.
   --include-performance-insights
                                 Also enable Performance Insights CMK configuration during restore.
+  --performance-insights-kms-alias <alias>
+                                Set rds_config.observability.kms.kms_alias during restore.
   --keep-old-resources          Leave the old Aurora resources in AWS after cutover.
   --cleanup-only                Skip migration steps and only run AWS cleanup from --manifest.
   --confirm                     Prompt before each AWS cleanup command executes.
@@ -46,6 +48,8 @@ Notes:
   Clearing it later would force Terraform to replace the restored cluster.
 * --include-performance-insights updates rds_config.observability during restore so the
   recreated cluster can adopt Performance Insights CMK settings at creation time.
+* --performance-insights-kms-alias controls the alias written to
+  rds_config.observability.kms.kms_alias during restore.
 * Run this during a maintenance window. The snapshot/copy/restore path is not an in-place re-key.
 EOF
 }
@@ -266,6 +270,7 @@ write_manifest() {
     --arg old_final_snapshot_id "$OLD_FINAL_SNAPSHOT_ID" \
     --arg storage_kms_key_arn "$TARGET_STORAGE_KMS_KEY_ARN" \
     --arg storage_kms_alias "$TARGET_STORAGE_KMS_ALIAS" \
+    --arg performance_insights_kms_alias "$PERFORMANCE_INSIGHTS_KMS_ALIAS" \
     --argjson include_performance_insights "$INCLUDE_PERFORMANCE_INSIGHTS_JSON" \
     --argjson old_instance_identifiers "$OLD_INSTANCE_IDENTIFIERS_JSON" \
     --argjson old_security_group_ids "$OLD_SECURITY_GROUP_IDS_JSON" \
@@ -284,6 +289,7 @@ write_manifest() {
       old_final_snapshot_id: ($old_final_snapshot_id | if length > 0 then . else null end),
       storage_kms_key_arn: ($storage_kms_key_arn | if length > 0 then . else null end),
       storage_kms_alias: ($storage_kms_alias | if length > 0 then . else null end),
+      performance_insights_kms_alias: ($performance_insights_kms_alias | if length > 0 then . else null end),
       include_performance_insights: $include_performance_insights,
       old_instance_identifiers: $old_instance_identifiers,
       old_security_group_ids: $old_security_group_ids,
@@ -305,6 +311,7 @@ update_rds_config_file() {
   CONFIG_EDIT_TARGET_STORAGE_KMS_KEY_ARN="${TARGET_STORAGE_KMS_KEY_ARN:-}" \
   CONFIG_EDIT_TARGET_STORAGE_KMS_ALIAS="${TARGET_STORAGE_KMS_ALIAS:-}" \
   CONFIG_EDIT_INCLUDE_PERFORMANCE_INSIGHTS="${INCLUDE_PERFORMANCE_INSIGHTS:-false}" \
+  CONFIG_EDIT_PERFORMANCE_INSIGHTS_KMS_ALIAS="${PERFORMANCE_INSIGHTS_KMS_ALIAS:-}" \
   perl -i -0pe '
 use strict;
 use warnings;
@@ -315,6 +322,7 @@ my $snapshot_id = $ENV{CONFIG_EDIT_SOURCE_SNAPSHOT_ID} // "";
 my $kms_key_arn = $ENV{CONFIG_EDIT_TARGET_STORAGE_KMS_KEY_ARN} // "";
 my $kms_alias = $ENV{CONFIG_EDIT_TARGET_STORAGE_KMS_ALIAS} // "";
 my $include_performance_insights = $ENV{CONFIG_EDIT_INCLUDE_PERFORMANCE_INSIGHTS} // "false";
+my $performance_insights_kms_alias = $ENV{CONFIG_EDIT_PERFORMANCE_INSIGHTS_KMS_ALIAS} // "";
 
 sub quote_hcl {
   my ($value) = @_;
@@ -470,12 +478,15 @@ sub upsert_storage_kms_block {
 }
 
 sub upsert_observability_kms_block {
-  my ($observability_text) = @_;
+  my ($observability_text, $kms_alias) = @_;
   my $indent = object_indent($observability_text);
   my $nested_indent = $indent . "  ";
 
   my $replacement = "${indent}kms = {\n";
   $replacement .= "${nested_indent}cmk_enabled = true\n";
+  if (length($kms_alias)) {
+    $replacement .= "${nested_indent}kms_alias = " . quote_hcl($kms_alias) . "\n";
+  }
   $replacement .= "${indent}}";
 
   if ($observability_text =~ /^([ \t]*)kms[ \t]*=[ \t]*\{/m) {
@@ -484,6 +495,9 @@ sub upsert_observability_kms_block {
     my $kms_end = find_matching_brace($observability_text, $kms_brace);
     my $existing = substr($observability_text, $kms_start, $kms_end - $kms_start + 1);
     $existing = upsert_simple_attribute($existing, "cmk_enabled", "true");
+    if (length($kms_alias)) {
+      $existing = upsert_simple_attribute($existing, "kms_alias", quote_hcl($kms_alias));
+    }
     substr($observability_text, $kms_start, $kms_end - $kms_start + 1, $existing);
     return $observability_text;
   }
@@ -493,7 +507,7 @@ sub upsert_observability_kms_block {
 }
 
 sub upsert_observability_block {
-  my ($object_text) = @_;
+  my ($object_text, $kms_alias) = @_;
   my $indent = object_indent($object_text);
   my $nested_indent = $indent . "  ";
 
@@ -503,7 +517,7 @@ sub upsert_observability_block {
     my $observability_end = find_matching_brace($object_text, $observability_brace);
     my $existing = substr($object_text, $observability_start, $observability_end - $observability_start + 1);
     $existing = upsert_simple_attribute($existing, "performance_insights_enabled", "true");
-    $existing = upsert_observability_kms_block($existing);
+    $existing = upsert_observability_kms_block($existing, $kms_alias);
     substr($object_text, $observability_start, $observability_end - $observability_start + 1, $existing);
     return $object_text;
   }
@@ -512,6 +526,9 @@ sub upsert_observability_block {
   $replacement .= "${nested_indent}performance_insights_enabled = true\n";
   $replacement .= "${nested_indent}kms = {\n";
   $replacement .= "${nested_indent}  cmk_enabled = true\n";
+  if (length($kms_alias)) {
+    $replacement .= "${nested_indent}  kms_alias = " . quote_hcl($kms_alias) . "\n";
+  }
   $replacement .= "${nested_indent}}\n";
   $replacement .= "${indent}}";
 
@@ -539,7 +556,7 @@ if ($mode eq "kms-bootstrap") {
   $object_text = upsert_simple_attribute($object_text, "restore_to_point_in_time", "{}");
   $object_text = upsert_storage_kms_block($object_text, $kms_key_arn, $kms_alias);
   if ($include_performance_insights eq "true") {
-    $object_text = upsert_observability_block($object_text);
+    $object_text = upsert_observability_block($object_text, $performance_insights_kms_alias);
   }
 } else {
   die "unexpected CONFIG_EDIT_MODE=$mode\n";
@@ -724,6 +741,7 @@ MODULE_ADDRESS=""
 AWS_REGION_ARG="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
 TARGET_STORAGE_KMS_KEY_ARN=""
 TARGET_STORAGE_KMS_ALIAS=""
+PERFORMANCE_INSIGHTS_KMS_ALIAS=""
 RESOLVED_TARGET_STORAGE_KMS_ID=""
 RESTORED_NAME=""
 SOURCE_SNAPSHOT_ID=""
@@ -790,6 +808,10 @@ while [[ $# -gt 0 ]]; do
       INCLUDE_PERFORMANCE_INSIGHTS="true"
       shift
       ;;
+    --performance-insights-kms-alias)
+      PERFORMANCE_INSIGHTS_KMS_ALIAS="${2#alias/}"
+      shift 2
+      ;;
     --keep-old-resources)
       KEEP_OLD_RESOURCES="true"
       shift
@@ -841,6 +863,10 @@ fi
 
 if [[ ! -d "$TERRAFORM_DIR" ]]; then
   die "terraform directory does not exist: $TERRAFORM_DIR"
+fi
+
+if [[ -n "$PERFORMANCE_INSIGHTS_KMS_ALIAS" && "$INCLUDE_PERFORMANCE_INSIGHTS" != "true" ]]; then
+  die "--performance-insights-kms-alias requires --include-performance-insights"
 fi
 
 INCLUDE_PERFORMANCE_INSIGHTS_JSON="false"
@@ -1010,6 +1036,9 @@ if [[ "$CLEANUP_ONLY" != "true" ]]; then
     log "dry run: would update ${CONFIG_FILE} in restore mode"
     if [[ "$INCLUDE_PERFORMANCE_INSIGHTS" == "true" ]]; then
       log "dry run: would also enable Performance Insights CMK configuration during restore"
+      if [[ -n "$PERFORMANCE_INSIGHTS_KMS_ALIAS" ]]; then
+        log "dry run: would set observability.kms.kms_alias to ${PERFORMANCE_INSIGHTS_KMS_ALIAS}"
+      fi
     fi
   else
     update_rds_config_file "$CONFIG_FILE" "restore"

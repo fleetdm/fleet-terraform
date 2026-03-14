@@ -390,6 +390,7 @@ module "byo-db" {
       database            = "fleet"
       user                = "fleet"
       password_secret_arn = module.secrets-manager-1.secret_arns["${var.rds_config.name}-database-password"]
+      password_secret_kms_key_arn = local.rds_password_secret_kms_key_arn
     }
     redis = {
       address = "${module.redis.endpoint}:${module.redis.port}"

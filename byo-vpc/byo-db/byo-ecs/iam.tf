@@ -27,7 +27,16 @@ locals {
     resources = [local.private_key_secret_kms_key_arn]
     effect    = "Allow"
   }] : []
-  execution_kms_policy = local.private_key_secret_kms_policy
+  database_password_secret_kms_policy = var.fleet_config.database.password_secret_kms_key_arn != null ? [{
+    sid = "AllowFleetDatabasePasswordSecretKMSAccess"
+    actions = [
+      "kms:Decrypt",
+      "kms:DescribeKey"
+    ]
+    resources = [var.fleet_config.database.password_secret_kms_key_arn]
+    effect    = "Allow"
+  }] : []
+  execution_kms_policy = concat(local.private_key_secret_kms_policy, local.database_password_secret_kms_policy)
 }
 
 data "aws_iam_policy_document" "software_installers" {
