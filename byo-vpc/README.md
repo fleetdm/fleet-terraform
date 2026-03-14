@@ -317,5 +317,6 @@ Edit `.header.md`, run `terraform init`, then run `terraform-docs markdown --hea
 |------|-------------|
 | <a name="output_byo-db"></a> [byo-db](#output\_byo-db) | n/a |
 | <a name="output_rds"></a> [rds](#output\_rds) | n/a |
+| <a name="output_rds_password_secret_kms_key_arn"></a> [rds\_password\_secret\_kms\_key\_arn](#output\_rds\_password\_secret\_kms\_key\_arn) | n/a |
 | <a name="output_redis"></a> [redis](#output\_redis) | n/a |
 | <a name="output_secrets"></a> [secrets](#output\_secrets) | n/a |

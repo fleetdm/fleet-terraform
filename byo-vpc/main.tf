@@ -63,7 +63,7 @@ locals {
   rds_manage_cloudwatch_log_groups = length(var.rds_config.enabled_cloudwatch_logs_exports) > 0 && (
     var.rds_config.cloudwatch_log_group.retention_in_days != null ||
     var.rds_config.cloudwatch_log_group.skip_destroy == true ||
-    local.rds_cloudwatch_log_group_kms_key_arn != null
+    local.rds_cloudwatch_log_group_cmk_enabled == true
   )
 
   redis_at_rest_cmk_enabled    = var.redis_config.at_rest_kms.cmk_enabled
