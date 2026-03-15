@@ -474,6 +474,22 @@ data "aws_iam_policy_document" "cron_monitoring_lambda" {
 
   }
 
+  dynamic "statement" {
+    for_each = var.cron_monitoring != null && try(var.cron_monitoring.mysql_password_secret_kms_key_arn, null) != null ? [var.cron_monitoring.mysql_password_secret_kms_key_arn] : []
+    content {
+      sid = "KMSDecryptMysqlPasswordSecret"
+
+      actions = [
+        "kms:Decrypt",
+        "kms:DescribeKey"
+      ]
+
+      resources = [statement.value]
+
+      effect = "Allow"
+    }
+  }
+
   statement {
     sid = "SNSPublish"
 

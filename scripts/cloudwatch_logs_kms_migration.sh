@@ -37,10 +37,33 @@ if [[ -z "$NEW_KMS_KEY_ARN" ]]; then
   exit 1
 fi
 
-CLOUDTRAIL_JSON="$(aws cloudtrail lookup-events \
-  --region "$REGION" \
-  --lookup-attributes AttributeKey=EventName,AttributeValue=AssociateKmsKey \
-  --output json)"
+CLOUDTRAIL_JSON='{"Events":[]}'
+CLOUDTRAIL_NEXT_TOKEN=''
+while :; do
+  if [[ -n "$CLOUDTRAIL_NEXT_TOKEN" ]]; then
+    CLOUDTRAIL_PAGE_JSON="$(aws cloudtrail lookup-events \
+      --region "$REGION" \
+      --lookup-attributes AttributeKey=EventName,AttributeValue=AssociateKmsKey \
+      --starting-token "$CLOUDTRAIL_NEXT_TOKEN" \
+      --output json)"
+  else
+    CLOUDTRAIL_PAGE_JSON="$(aws cloudtrail lookup-events \
+      --region "$REGION" \
+      --lookup-attributes AttributeKey=EventName,AttributeValue=AssociateKmsKey \
+      --output json)"
+  fi
+
+  CLOUDTRAIL_JSON="$(jq -c --argjson page "$CLOUDTRAIL_PAGE_JSON" '
+    {
+      Events: ((.Events // []) + ($page.Events // []))
+    }
+  ' <<<"$CLOUDTRAIL_JSON")"
+
+  CLOUDTRAIL_NEXT_TOKEN="$(jq -r '.NextToken // empty' <<<"$CLOUDTRAIL_PAGE_JSON")"
+  if [[ -z "$CLOUDTRAIL_NEXT_TOKEN" ]]; then
+    break
+  fi
+done
 
 CUTOFF_ISO="$(jq -r --arg lg "$LOG_GROUP_NAME" --arg kms "$NEW_KMS_KEY_ARN" '
   [
@@ -92,9 +115,13 @@ done
 OLD_STREAMS_JSON="$(jq --argjson cutoff "$CUTOFF_MS" '
   [
     .[]
-    | select((.lastEventTimestamp // 0) > 0)
-    | select(.lastEventTimestamp < $cutoff)
-    | {logStreamName, lastEventTimestamp}
+    | select((.creationTime // 0) > 0)
+    | select(.creationTime < $cutoff)
+    | {
+        logStreamName,
+        creationTime,
+        lastEventTimestamp
+      }
   ]
 ' <<<"$ALL_STREAMS_JSON")"
 
@@ -106,7 +133,7 @@ echo "new_kms_key_arn:   $NEW_KMS_KEY_ARN"
 echo "associate_kms_at:  $CUTOFF_ISO"
 echo "old_stream_count:  $OLD_COUNT"
 echo
-echo "Old streams (lastEventTimestamp < associate_kms_at):"
+echo "Streams created before associate_kms_at (creationTime < associate_kms_at):"
 jq '.' <<<"$OLD_STREAMS_JSON"
 echo
 

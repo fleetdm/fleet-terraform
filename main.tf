@@ -1,5 +1,64 @@
 terraform {
-  required_version = ">= 1.3.8"
+  required_version = ">= 1.5.0"
+}
+
+locals {
+  vpc_flow_log_cloudwatch_log_group_cmk_enabled = var.vpc.flow_log_cloudwatch_log_group_kms.cmk_enabled
+  vpc_flow_log_cloudwatch_log_group_create_kms_key = var.vpc.enable_flow_log == true && var.vpc.create_flow_log_cloudwatch_log_group == true && local.vpc_flow_log_cloudwatch_log_group_cmk_enabled == true && var.vpc.flow_log_cloudwatch_log_group_kms.kms_key_arn == null
+  vpc_flow_log_cloudwatch_log_group_kms_key_arn = var.vpc.enable_flow_log == true && var.vpc.create_flow_log_cloudwatch_log_group == true && local.vpc_flow_log_cloudwatch_log_group_cmk_enabled == true ? (
+    var.vpc.flow_log_cloudwatch_log_group_kms.kms_key_arn != null ? var.vpc.flow_log_cloudwatch_log_group_kms.kms_key_arn : aws_kms_key.vpc_flow_log_cloudwatch_log_group[0].arn
+  ) : null
+}
+
+data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
+data "aws_region" "current" {}
+
+data "aws_iam_policy_document" "vpc_flow_log_cloudwatch_log_group_kms" {
+  count = local.vpc_flow_log_cloudwatch_log_group_create_kms_key == true ? 1 : 0
+
+  statement {
+    sid    = "EnableRootPermissions"
+    effect = "Allow"
+    actions = [
+      "kms:*"
+    ]
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+    }
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "AllowCloudWatchLogsUseOfTheKey"
+    effect = "Allow"
+    actions = [
+      "kms:Encrypt*",
+      "kms:Decrypt*",
+      "kms:ReEncrypt*",
+      "kms:GenerateDataKey*",
+      "kms:Describe*"
+    ]
+    principals {
+      type        = "Service"
+      identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
+    }
+    resources = ["*"]
+  }
+}
+
+resource "aws_kms_key" "vpc_flow_log_cloudwatch_log_group" {
+  count               = local.vpc_flow_log_cloudwatch_log_group_create_kms_key == true ? 1 : 0
+  description         = "CMK for VPC flow log CloudWatch Logs encryption."
+  enable_key_rotation = true
+  policy              = data.aws_iam_policy_document.vpc_flow_log_cloudwatch_log_group_kms[0].json
+}
+
+resource "aws_kms_alias" "vpc_flow_log_cloudwatch_log_group" {
+  count         = local.vpc_flow_log_cloudwatch_log_group_create_kms_key == true ? 1 : 0
+  target_key_id = aws_kms_key.vpc_flow_log_cloudwatch_log_group[0].id
+  name          = "alias/${var.vpc.flow_log_cloudwatch_log_group_kms.kms_alias}"
 }
 
 module "vpc" {
@@ -28,6 +87,7 @@ module "vpc" {
   flow_log_max_aggregation_interval         = var.vpc.flow_log_max_aggregation_interval
   flow_log_cloudwatch_log_group_name_prefix = var.vpc.flow_log_cloudwatch_log_group_name_prefix
   flow_log_cloudwatch_log_group_name_suffix = var.vpc.flow_log_cloudwatch_log_group_name_suffix
+  flow_log_cloudwatch_log_group_kms_key_id  = local.vpc_flow_log_cloudwatch_log_group_kms_key_arn
   vpc_flow_log_tags                         = var.vpc.vpc_flow_log_tags
   enable_dns_hostnames                      = var.vpc.enable_dns_hostnames
   enable_dns_support                        = var.vpc.enable_dns_support

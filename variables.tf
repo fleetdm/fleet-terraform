@@ -24,7 +24,16 @@ variable "vpc" {
     flow_log_max_aggregation_interval         = optional(number, 600)
     flow_log_cloudwatch_log_group_name_prefix = optional(string, "/aws/vpc-flow-log/")
     flow_log_cloudwatch_log_group_name_suffix = optional(string, "")
-    vpc_flow_log_tags                         = optional(map(string), {})
+    flow_log_cloudwatch_log_group_kms = optional(object({
+      cmk_enabled = optional(bool, false)
+      kms_key_arn = optional(string, null)
+      kms_alias   = optional(string, "fleet-vpc-flow-logs")
+      }), {
+      cmk_enabled = false
+      kms_key_arn = null
+      kms_alias   = "fleet-vpc-flow-logs"
+    })
+    vpc_flow_log_tags = optional(map(string), {})
   })
   default = {
     name                = "fleet"
@@ -51,7 +60,12 @@ variable "vpc" {
     flow_log_max_aggregation_interval         = 600
     flow_log_cloudwatch_log_group_name_prefix = "/aws/vpc-flow-log/"
     flow_log_cloudwatch_log_group_name_suffix = ""
-    vpc_flow_log_tags                         = {}
+    flow_log_cloudwatch_log_group_kms = {
+      cmk_enabled = false
+      kms_key_arn = null
+      kms_alias   = "fleet-vpc-flow-logs"
+    }
+    vpc_flow_log_tags = {}
   }
 }
 
@@ -69,21 +83,85 @@ variable "rds_config" {
     allowed_cidr_blocks             = optional(list(string), [])
     apply_immediately               = optional(bool, true)
     monitoring_interval             = optional(number, 10)
+    backtrack_window                = optional(number, null)
     db_parameter_group_name         = optional(string)
     db_parameters                   = optional(map(string), {})
     db_cluster_parameter_group_name = optional(string)
     db_cluster_parameters           = optional(map(string), {})
     enabled_cloudwatch_logs_exports = optional(list(string), [])
-    master_username                 = optional(string, "fleet")
-    snapshot_identifier             = optional(string)
-    cluster_tags                    = optional(map(string), {})
-    skip_final_snapshot             = optional(bool, true)
-    backup_retention_period         = optional(number, 7)
-    replicas                        = optional(number, 2)
-    serverless                      = optional(bool, false)
-    serverless_min_capacity         = optional(number, 2)
-    serverless_max_capacity         = optional(number, 10)
-    restore_to_point_in_time        = optional(map(string), {})
+    final_snapshot_identifier       = optional(string, null)
+    password_secret_kms = optional(object({
+      cmk_enabled = optional(bool, false)
+      kms_key_arn = optional(string, null)
+      kms_alias   = optional(string, "fleet-rds-password-secret")
+      }), {
+      cmk_enabled = false
+      kms_key_arn = null
+      kms_alias   = "fleet-rds-password-secret"
+    })
+    storage_kms = optional(object({
+      cmk_enabled = optional(bool, false)
+      kms_key_arn = optional(string, null)
+      kms_alias   = optional(string, "fleet-rds-storage")
+      }), {
+      cmk_enabled = false
+      kms_key_arn = null
+      kms_alias   = "fleet-rds-storage"
+    })
+    observability = optional(object({
+      performance_insights_enabled = optional(bool, true)
+      retention_period             = optional(number, null)
+      database_insights_mode       = optional(string, null)
+      kms = optional(object({
+        cmk_enabled = optional(bool, false)
+        kms_key_arn = optional(string, null)
+        kms_alias   = optional(string, "fleet-rds-performance-insights")
+        }), {
+        cmk_enabled = false
+        kms_key_arn = null
+        kms_alias   = "fleet-rds-performance-insights"
+      })
+      }), {
+      performance_insights_enabled = true
+      retention_period             = null
+      database_insights_mode       = null
+      kms = {
+        cmk_enabled = false
+        kms_key_arn = null
+        kms_alias   = "fleet-rds-performance-insights"
+      }
+    })
+    cloudwatch_log_group = optional(object({
+      retention_in_days = optional(number, null)
+      skip_destroy      = optional(bool, false)
+      kms = optional(object({
+        cmk_enabled = optional(bool, false)
+        kms_key_arn = optional(string, null)
+        kms_alias   = optional(string, "fleet-rds-logs")
+        }), {
+        cmk_enabled = false
+        kms_key_arn = null
+        kms_alias   = "fleet-rds-logs"
+      })
+      }), {
+      retention_in_days = null
+      skip_destroy      = false
+      kms = {
+        cmk_enabled = false
+        kms_key_arn = null
+        kms_alias   = "fleet-rds-logs"
+      }
+    })
+    master_username          = optional(string, "fleet")
+    snapshot_identifier      = optional(string)
+    cluster_tags             = optional(map(string), {})
+    skip_final_snapshot      = optional(bool, true)
+    backup_retention_period  = optional(number, 7)
+    replicas                 = optional(number, 2)
+    serverless               = optional(bool, false)
+    serverless_min_capacity  = optional(number, 2)
+    serverless_max_capacity  = optional(number, 10)
+    restore_to_point_in_time = optional(map(string), {})
   })
   default = {
     name                            = "fleet"
@@ -94,24 +172,79 @@ variable "rds_config" {
     allowed_cidr_blocks             = []
     apply_immediately               = true
     monitoring_interval             = 10
+    backtrack_window                = null
     db_parameter_group_name         = null
     db_parameters                   = {}
     db_cluster_parameter_group_name = null
     db_cluster_parameters           = {}
     enabled_cloudwatch_logs_exports = []
-    master_username                 = "fleet"
-    snapshot_identifier             = null
-    cluster_tags                    = {}
-    skip_final_snapshot             = true
-    backup_retention_period         = 7
-    replicas                        = 2
-    serverless                      = false
-    serverless_min_capacity         = 2
-    serverless_max_capacity         = 10
-    restore_to_point_in_time        = {}
+    final_snapshot_identifier       = null
+    password_secret_kms = {
+      cmk_enabled = false
+      kms_key_arn = null
+      kms_alias   = "fleet-rds-password-secret"
+    }
+    storage_kms = {
+      cmk_enabled = false
+      kms_key_arn = null
+      kms_alias   = "fleet-rds-storage"
+    }
+    observability = {
+      performance_insights_enabled = true
+      retention_period             = null
+      database_insights_mode       = null
+      kms = {
+        cmk_enabled = false
+        kms_key_arn = null
+        kms_alias   = "fleet-rds-performance-insights"
+      }
+    }
+    cloudwatch_log_group = {
+      retention_in_days = null
+      skip_destroy      = false
+      kms = {
+        cmk_enabled = false
+        kms_key_arn = null
+        kms_alias   = "fleet-rds-logs"
+      }
+    }
+    master_username          = "fleet"
+    snapshot_identifier      = null
+    cluster_tags             = {}
+    skip_final_snapshot      = true
+    backup_retention_period  = 7
+    replicas                 = 2
+    serverless               = false
+    serverless_min_capacity  = 2
+    serverless_max_capacity  = 10
+    restore_to_point_in_time = {}
   }
   description = "The config for the terraform-aws-modules/rds-aurora/aws module"
   nullable    = false
+  validation {
+    condition     = var.rds_config.backtrack_window == null || (var.rds_config.backtrack_window >= 0 && var.rds_config.backtrack_window <= 259200)
+    error_message = "rds_config.backtrack_window must be null or between 0 and 259200 seconds."
+  }
+  validation {
+    condition     = var.rds_config.observability.database_insights_mode == null || contains(["standard", "advanced"], var.rds_config.observability.database_insights_mode)
+    error_message = "rds_config.observability.database_insights_mode must be null, \"standard\", or \"advanced\"."
+  }
+  validation {
+    condition     = var.rds_config.observability.database_insights_mode != "advanced" || var.rds_config.observability.performance_insights_enabled == true
+    error_message = "rds_config.observability.performance_insights_enabled must be true when database_insights_mode is \"advanced\"."
+  }
+  validation {
+    condition     = var.rds_config.observability.database_insights_mode != "advanced" || var.rds_config.monitoring_interval > 0
+    error_message = "rds_config.monitoring_interval must be greater than 0 when database_insights_mode is \"advanced\"."
+  }
+  validation {
+    condition     = var.rds_config.observability.database_insights_mode != "advanced" || var.rds_config.observability.retention_period == null || var.rds_config.observability.retention_period >= 465
+    error_message = "rds_config.observability.retention_period must be at least 465 when database_insights_mode is \"advanced\"."
+  }
+  validation {
+    condition     = var.rds_config.observability.performance_insights_enabled == true || (var.rds_config.observability.database_insights_mode == null && var.rds_config.observability.kms.cmk_enabled == false && var.rds_config.observability.kms.kms_key_arn == null)
+    error_message = "When performance_insights_enabled is false, database_insights_mode must be null and observability KMS must be disabled."
+  }
 }
 
 variable "redis_config" {
@@ -130,11 +263,41 @@ variable "redis_config" {
     engine_version                = optional(string, "7.1")
     family                        = optional(string, "redis7")
     at_rest_encryption_enabled    = optional(bool, true)
-    transit_encryption_enabled    = optional(bool, true)
+    at_rest_kms = optional(object({
+      cmk_enabled = optional(bool, false)
+      kms_key_arn = optional(string, null)
+      kms_alias   = optional(string, "fleet-redis-at-rest")
+      }), {
+      cmk_enabled = false
+      kms_key_arn = null
+      kms_alias   = "fleet-redis-at-rest"
+    })
+    transit_encryption_enabled = optional(bool, true)
     parameter = optional(list(object({
       name  = string
       value = string
     })), [])
+    cloudwatch_log_group = optional(object({
+      retention_in_days = optional(number, null)
+      skip_destroy      = optional(bool, false)
+      kms = optional(object({
+        cmk_enabled = optional(bool, false)
+        kms_key_arn = optional(string, null)
+        kms_alias   = optional(string, "fleet-redis-logs")
+        }), {
+        cmk_enabled = false
+        kms_key_arn = null
+        kms_alias   = "fleet-redis-logs"
+      })
+      }), {
+      retention_in_days = null
+      skip_destroy      = false
+      kms = {
+        cmk_enabled = false
+        kms_key_arn = null
+        kms_alias   = "fleet-redis-logs"
+      }
+    })
     log_delivery_configuration = optional(list(map(any)), [])
     tags                       = optional(map(string), {})
   })
@@ -153,10 +316,24 @@ variable "redis_config" {
     engine_version                = "7.1"
     family                        = "redis7"
     at_rest_encryption_enabled    = true
-    transit_encryption_enabled    = true
-    parameter                     = []
-    log_delivery_configuration    = []
-    tags                          = {}
+    at_rest_kms = {
+      cmk_enabled = false
+      kms_key_arn = null
+      kms_alias   = "fleet-redis-at-rest"
+    }
+    transit_encryption_enabled = true
+    parameter                  = []
+    cloudwatch_log_group = {
+      retention_in_days = null
+      skip_destroy      = false
+      kms = {
+        cmk_enabled = false
+        kms_key_arn = null
+        kms_alias   = "fleet-redis-logs"
+      }
+    }
+    log_delivery_configuration = []
+    tags                       = {}
   }
 }
 
@@ -176,11 +353,13 @@ variable "ecs_cluster" {
       create            = optional(bool, true)
       retention_in_days = optional(number, 90)
       kms = optional(object({
-        enabled     = optional(bool, false)
+        cmk_enabled = optional(bool, null)
+        enabled     = optional(bool, null)
         kms_key_arn = optional(string, null)
         kms_alias   = optional(string, "fleet-ecs-cluster-logs")
         }), {
-        enabled     = false
+        cmk_enabled = null
+        enabled     = null
         kms_key_arn = null
         kms_alias   = "fleet-ecs-cluster-logs"
       })
@@ -188,7 +367,8 @@ variable "ecs_cluster" {
       create            = true
       retention_in_days = 90
       kms = {
-        enabled     = false
+        cmk_enabled = null
+        enabled     = null
         kms_key_arn = null
         kms_alias   = "fleet-ecs-cluster-logs"
       }
@@ -228,7 +408,8 @@ variable "ecs_cluster" {
       create            = true
       retention_in_days = 90
       kms = {
-        enabled     = false
+        cmk_enabled = null
+        enabled     = null
         kms_key_arn = null
         kms_alias   = "fleet-ecs-cluster-logs"
       }
@@ -253,7 +434,7 @@ variable "ecs_cluster" {
     }
     tags = {}
   }
-  description = "The config for the terraform-aws-modules/ecs/aws module"
+  description = "The config for the terraform-aws-modules/ecs/aws module. For published KMS blocks, legacy `enabled` is deprecated and still accepted; prefer `cmk_enabled`."
   nullable    = false
 }
 
@@ -282,20 +463,24 @@ variable "fleet_config" {
     repository_credentials       = optional(string, "")
     private_key_secret_name      = optional(string, "fleet-server-private-key")
     private_key_secret_kms = optional(object({
-      enabled     = optional(bool, false)
+      cmk_enabled = optional(bool, null)
+      enabled     = optional(bool, null)
       kms_key_arn = optional(string, null)
       kms_alias   = optional(string, "fleet-server-private-key")
       }), {
-      enabled     = false
+      cmk_enabled = null
+      enabled     = null
       kms_key_arn = null
       kms_alias   = "fleet-server-private-key"
     })
     fargate_ephemeral_storage_kms = optional(object({
-      enabled     = optional(bool, false)
+      cmk_enabled = optional(bool, null)
+      enabled     = optional(bool, null)
       kms_key_arn = optional(string, null)
       kms_alias   = optional(string, "fleet-fargate-ephemeral-storage")
       }), {
-      enabled     = false
+      cmk_enabled = null
+      enabled     = null
       kms_key_arn = null
       kms_alias   = "fleet-fargate-ephemeral-storage"
     })
@@ -306,17 +491,19 @@ variable "fleet_config" {
       name = "fleet"
     })
     database = optional(object({
-      password_secret_arn = string
-      user                = string
-      database            = string
-      address             = string
-      rr_address          = optional(string, null)
+      password_secret_arn         = string
+      password_secret_kms_key_arn = optional(string, null)
+      user                        = string
+      database                    = string
+      address                     = string
+      rr_address                  = optional(string, null)
       }), {
-      password_secret_arn = null
-      user                = null
-      database            = null
-      address             = null
-      rr_address          = null
+      password_secret_arn         = null
+      password_secret_kms_key_arn = null
+      user                        = null
+      database                    = null
+      address                     = null
+      rr_address                  = null
     })
     redis = optional(object({
       address = string
@@ -332,11 +519,13 @@ variable "fleet_config" {
       prefix    = optional(string, "fleet")
       retention = optional(number, 5)
       kms = optional(object({
-        enabled     = optional(bool, false)
+        cmk_enabled = optional(bool, null)
+        enabled     = optional(bool, null)
         kms_key_arn = optional(string, null)
         kms_alias   = optional(string, "fleet-application-logs")
         }), {
-        enabled     = false
+        cmk_enabled = null
+        enabled     = null
         kms_key_arn = null
         kms_alias   = "fleet-application-logs"
       })
@@ -347,7 +536,8 @@ variable "fleet_config" {
       prefix    = "fleet"
       retention = 5
       kms = {
-        enabled     = false
+        cmk_enabled = null
+        enabled     = null
         kms_key_arn = null
         kms_alias   = "fleet-application-logs"
       }
@@ -462,12 +652,14 @@ variable "fleet_config" {
     repository_credentials       = ""
     private_key_secret_name      = "fleet-server-private-key"
     private_key_secret_kms = {
-      enabled     = false
+      cmk_enabled = null
+      enabled     = null
       kms_key_arn = null
       kms_alias   = "fleet-server-private-key"
     }
     fargate_ephemeral_storage_kms = {
-      enabled     = false
+      cmk_enabled = null
+      enabled     = null
       kms_key_arn = null
       kms_alias   = "fleet-fargate-ephemeral-storage"
     }
@@ -493,7 +685,8 @@ variable "fleet_config" {
       prefix    = "fleet"
       retention = 5
       kms = {
-        enabled     = false
+        cmk_enabled = null
+        enabled     = null
         kms_key_arn = null
         kms_alias   = "fleet-application-logs"
       }
@@ -543,7 +736,7 @@ variable "fleet_config" {
       tags                               = {}
     }
   }
-  description = "The configuration object for Fleet itself. Fields that default to null will have their respective resources created if not specified."
+  description = "The configuration object for Fleet itself. Fields that default to null will have their respective resources created if not specified. For published KMS blocks, legacy `enabled` is deprecated and still accepted; prefer `cmk_enabled`."
   nullable    = false
 }
 

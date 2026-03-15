@@ -18,11 +18,13 @@ variable "ecs_cluster" {
       create            = optional(bool, true)
       retention_in_days = optional(number, 90)
       kms = optional(object({
-        enabled     = optional(bool, false)
+        cmk_enabled = optional(bool, null)
+        enabled     = optional(bool, null)
         kms_key_arn = optional(string, null)
         kms_alias   = optional(string, "fleet-ecs-cluster-logs")
         }), {
-        enabled     = false
+        cmk_enabled = null
+        enabled     = null
         kms_key_arn = null
         kms_alias   = "fleet-ecs-cluster-logs"
       })
@@ -30,7 +32,8 @@ variable "ecs_cluster" {
       create            = true
       retention_in_days = 90
       kms = {
-        enabled     = false
+        cmk_enabled = null
+        enabled     = null
         kms_key_arn = null
         kms_alias   = "fleet-ecs-cluster-logs"
       }
@@ -70,7 +73,8 @@ variable "ecs_cluster" {
       create            = true
       retention_in_days = 90
       kms = {
-        enabled     = false
+        cmk_enabled = null
+        enabled     = null
         kms_key_arn = null
         kms_alias   = "fleet-ecs-cluster-logs"
       }
@@ -95,7 +99,7 @@ variable "ecs_cluster" {
     }
     tags = {}
   }
-  description = "The config for the terraform-aws-modules/ecs/aws module"
+  description = "The config for the terraform-aws-modules/ecs/aws module. For published KMS blocks, legacy `enabled` is deprecated and still accepted; prefer `cmk_enabled`."
   nullable    = false
 }
 
@@ -125,20 +129,24 @@ variable "fleet_config" {
     repository_credentials       = optional(string, "")
     private_key_secret_name      = optional(string, "fleet-server-private-key")
     private_key_secret_kms = optional(object({
-      enabled     = optional(bool, false)
+      cmk_enabled = optional(bool, null)
+      enabled     = optional(bool, null)
       kms_key_arn = optional(string, null)
       kms_alias   = optional(string, "fleet-server-private-key")
       }), {
-      enabled     = false
+      cmk_enabled = null
+      enabled     = null
       kms_key_arn = null
       kms_alias   = "fleet-server-private-key"
     })
     fargate_ephemeral_storage_kms = optional(object({
-      enabled     = optional(bool, false)
+      cmk_enabled = optional(bool, null)
+      enabled     = optional(bool, null)
       kms_key_arn = optional(string, null)
       kms_alias   = optional(string, "fleet-fargate-ephemeral-storage")
       }), {
-      enabled     = false
+      cmk_enabled = null
+      enabled     = null
       kms_key_arn = null
       kms_alias   = "fleet-fargate-ephemeral-storage"
     })
@@ -149,17 +157,19 @@ variable "fleet_config" {
       name = "fleet"
     })
     database = optional(object({
-      password_secret_arn = string
-      user                = string
-      database            = string
-      address             = string
-      rr_address          = optional(string, null)
+      password_secret_arn         = string
+      password_secret_kms_key_arn = optional(string, null)
+      user                        = string
+      database                    = string
+      address                     = string
+      rr_address                  = optional(string, null)
       }), {
-      password_secret_arn = null
-      user                = null
-      database            = null
-      address             = null
-      rr_address          = null
+      password_secret_arn         = null
+      password_secret_kms_key_arn = null
+      user                        = null
+      database                    = null
+      address                     = null
+      rr_address                  = null
     })
     redis = optional(object({
       address = string
@@ -175,11 +185,13 @@ variable "fleet_config" {
       prefix    = optional(string, "fleet")
       retention = optional(number, 5)
       kms = optional(object({
-        enabled     = optional(bool, false)
+        cmk_enabled = optional(bool, null)
+        enabled     = optional(bool, null)
         kms_key_arn = optional(string, null)
         kms_alias   = optional(string, "fleet-application-logs")
         }), {
-        enabled     = false
+        cmk_enabled = null
+        enabled     = null
         kms_key_arn = null
         kms_alias   = "fleet-application-logs"
       })
@@ -190,7 +202,8 @@ variable "fleet_config" {
       prefix    = "fleet"
       retention = 5
       kms = {
-        enabled     = false
+        cmk_enabled = null
+        enabled     = null
         kms_key_arn = null
         kms_alias   = "fleet-application-logs"
       }
@@ -305,12 +318,14 @@ variable "fleet_config" {
     repository_credentials       = ""
     private_key_secret_name      = "fleet-server-private-key"
     private_key_secret_kms = {
-      enabled     = false
+      cmk_enabled = null
+      enabled     = null
       kms_key_arn = null
       kms_alias   = "fleet-server-private-key"
     }
     fargate_ephemeral_storage_kms = {
-      enabled     = false
+      cmk_enabled = null
+      enabled     = null
       kms_key_arn = null
       kms_alias   = "fleet-fargate-ephemeral-storage"
     }
@@ -336,7 +351,8 @@ variable "fleet_config" {
       prefix    = "fleet"
       retention = 5
       kms = {
-        enabled     = false
+        cmk_enabled = null
+        enabled     = null
         kms_key_arn = null
         kms_alias   = "fleet-application-logs"
       }
@@ -386,7 +402,7 @@ variable "fleet_config" {
       tags                               = {}
     }
   }
-  description = "The configuration object for Fleet itself. Fields that default to null will have their respective resources created if not specified."
+  description = "The configuration object for Fleet itself. Fields that default to null will have their respective resources created if not specified. For published KMS blocks, legacy `enabled` is deprecated and still accepted; prefer `cmk_enabled`."
   nullable    = false
 }
 

@@ -70,13 +70,15 @@ locals {
   }
   # Accept both legacy map input and list input for cluster settings.
   normalized_cluster_settings              = var.ecs_cluster.cluster_settings == null ? [] : flatten([var.ecs_cluster.cluster_settings])
-  fargate_ephemeral_storage_create_kms_key = var.fleet_config.fargate_ephemeral_storage_kms.enabled == true && var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn == null
-  fargate_ephemeral_storage_kms_key_arn = var.fleet_config.fargate_ephemeral_storage_kms.enabled == true ? (
+  fargate_ephemeral_storage_cmk_enabled = coalesce(var.fleet_config.fargate_ephemeral_storage_kms.cmk_enabled, var.fleet_config.fargate_ephemeral_storage_kms.enabled, false)
+  fargate_ephemeral_storage_create_kms_key = local.fargate_ephemeral_storage_cmk_enabled == true && var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn == null
+  fargate_ephemeral_storage_kms_key_arn = local.fargate_ephemeral_storage_cmk_enabled == true ? (
     var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn != null ? var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn : aws_kms_key.fargate_ephemeral_storage[0].arn
   ) : null
   cluster_cloudwatch_log_group_name           = coalesce(try(var.ecs_cluster.cluster_configuration.execute_command_configuration.log_configuration.cloud_watch_log_group_name, null), "/aws/ecs/${var.ecs_cluster.cluster_name}")
-  cluster_cloudwatch_log_group_create_kms_key = var.ecs_cluster.cloudwatch_log_group.create == true && var.ecs_cluster.cloudwatch_log_group.kms.enabled == true && var.ecs_cluster.cloudwatch_log_group.kms.kms_key_arn == null
-  cluster_cloudwatch_log_group_kms_key_arn = var.ecs_cluster.cloudwatch_log_group.create == true && var.ecs_cluster.cloudwatch_log_group.kms.enabled == true ? (
+  cluster_cloudwatch_log_group_cmk_enabled = coalesce(var.ecs_cluster.cloudwatch_log_group.kms.cmk_enabled, var.ecs_cluster.cloudwatch_log_group.kms.enabled, false)
+  cluster_cloudwatch_log_group_create_kms_key = var.ecs_cluster.cloudwatch_log_group.create == true && local.cluster_cloudwatch_log_group_cmk_enabled == true && var.ecs_cluster.cloudwatch_log_group.kms.kms_key_arn == null
+  cluster_cloudwatch_log_group_kms_key_arn = var.ecs_cluster.cloudwatch_log_group.create == true && local.cluster_cloudwatch_log_group_cmk_enabled == true ? (
     var.ecs_cluster.cloudwatch_log_group.kms.kms_key_arn != null ? var.ecs_cluster.cloudwatch_log_group.kms.kms_key_arn : aws_kms_key.cluster_cloudwatch_log_group[0].arn
   ) : null
   ecs_cluster_configuration = merge(
@@ -103,6 +105,85 @@ locals {
       )
     } : {}
   )
+  kms_root_statement = {
+    sid                   = "EnableRootPermissions"
+    actions               = ["kms:*"]
+    principal_type        = "AWS"
+    principal_identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+  }
+  kms_service_statements = {
+    cloudwatch_logs = {
+      sid = "AllowCloudWatchLogsUseOfTheKey"
+      actions = [
+        "kms:Encrypt*",
+        "kms:Decrypt*",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:Describe*"
+      ]
+      principal_type        = "Service"
+      principal_identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
+    }
+    fargate_generate_data_key = {
+      sid = "AllowGenerateDataKeyWithoutPlaintextForFargateTasks"
+      actions = [
+        "kms:GenerateDataKeyWithoutPlaintext"
+      ]
+      principal_type        = "Service"
+      principal_identifiers = ["fargate.amazonaws.com"]
+      conditions = [
+        {
+          test     = "StringEquals"
+          variable = "kms:EncryptionContext:aws:ecs:clusterAccount"
+          values   = [data.aws_caller_identity.current.account_id]
+        },
+        {
+          test     = "StringEquals"
+          variable = "kms:EncryptionContext:aws:ecs:clusterName"
+          values   = [var.ecs_cluster.cluster_name]
+        }
+      ]
+    }
+    fargate_create_grant = {
+      sid = "AllowCreateGrantForFargateTasks"
+      actions = [
+        "kms:CreateGrant"
+      ]
+      principal_type        = "Service"
+      principal_identifiers = ["fargate.amazonaws.com"]
+      conditions = [
+        {
+          test     = "StringEquals"
+          variable = "kms:EncryptionContext:aws:ecs:clusterAccount"
+          values   = [data.aws_caller_identity.current.account_id]
+        },
+        {
+          test     = "StringEquals"
+          variable = "kms:EncryptionContext:aws:ecs:clusterName"
+          values   = [var.ecs_cluster.cluster_name]
+        },
+        {
+          test     = "ForAllValues:StringEquals"
+          variable = "kms:GrantOperations"
+          values   = ["Decrypt"]
+        }
+      ]
+    }
+  }
+}
+
+check "deprecated_ecs_cluster_cloudwatch_log_group_kms_enabled" {
+  assert {
+    condition     = var.ecs_cluster.cloudwatch_log_group.kms.enabled == null
+    error_message = "ecs_cluster.cloudwatch_log_group.kms.enabled is deprecated; use ecs_cluster.cloudwatch_log_group.kms.cmk_enabled instead."
+  }
+}
+
+check "deprecated_fleet_config_fargate_ephemeral_storage_kms_enabled" {
+  assert {
+    condition     = var.fleet_config.fargate_ephemeral_storage_kms.enabled == null
+    error_message = "fleet_config.fargate_ephemeral_storage_kms.enabled is deprecated; use fleet_config.fargate_ephemeral_storage_kms.cmk_enabled instead."
+  }
 }
 
 data "aws_caller_identity" "current" {}
@@ -138,67 +219,29 @@ module "cluster" {
 data "aws_iam_policy_document" "fargate_ephemeral_storage_kms" {
   count = local.fargate_ephemeral_storage_create_kms_key == true ? 1 : 0
 
-  statement {
-    sid    = "EnableRootPermissions"
-    effect = "Allow"
-    actions = [
-      "kms:*"
+  dynamic "statement" {
+    for_each = [
+      local.kms_root_statement,
+      local.kms_service_statements.fargate_generate_data_key,
+      local.kms_service_statements.fargate_create_grant,
     ]
-    principals {
-      type        = "AWS"
-      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
-    }
-    resources = ["*"]
-  }
-
-  statement {
-    sid    = "AllowGenerateDataKeyWithoutPlaintextForFargateTasks"
-    effect = "Allow"
-    actions = [
-      "kms:GenerateDataKeyWithoutPlaintext"
-    ]
-    principals {
-      type        = "Service"
-      identifiers = ["fargate.amazonaws.com"]
-    }
-    resources = ["*"]
-    condition {
-      test     = "StringEquals"
-      variable = "kms:EncryptionContext:aws:ecs:clusterAccount"
-      values   = [data.aws_caller_identity.current.account_id]
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "kms:EncryptionContext:aws:ecs:clusterName"
-      values   = [var.ecs_cluster.cluster_name]
-    }
-  }
-
-  statement {
-    sid    = "AllowCreateGrantForFargateTasks"
-    effect = "Allow"
-    actions = [
-      "kms:CreateGrant"
-    ]
-    principals {
-      type        = "Service"
-      identifiers = ["fargate.amazonaws.com"]
-    }
-    resources = ["*"]
-    condition {
-      test     = "StringEquals"
-      variable = "kms:EncryptionContext:aws:ecs:clusterAccount"
-      values   = [data.aws_caller_identity.current.account_id]
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "kms:EncryptionContext:aws:ecs:clusterName"
-      values   = [var.ecs_cluster.cluster_name]
-    }
-    condition {
-      test     = "ForAllValues:StringEquals"
-      variable = "kms:GrantOperations"
-      values   = ["Decrypt"]
+    content {
+      sid       = statement.value.sid
+      effect    = "Allow"
+      actions   = statement.value.actions
+      resources = ["*"]
+      principals {
+        type        = statement.value.principal_type
+        identifiers = statement.value.principal_identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
     }
   }
 }
@@ -219,34 +262,18 @@ resource "aws_kms_alias" "fargate_ephemeral_storage" {
 data "aws_iam_policy_document" "cluster_cloudwatch_log_group_kms" {
   count = local.cluster_cloudwatch_log_group_create_kms_key == true ? 1 : 0
 
-  statement {
-    sid    = "EnableRootPermissions"
-    effect = "Allow"
-    actions = [
-      "kms:*"
-    ]
-    principals {
-      type        = "AWS"
-      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+  dynamic "statement" {
+    for_each = [local.kms_root_statement, local.kms_service_statements.cloudwatch_logs]
+    content {
+      sid       = statement.value.sid
+      effect    = "Allow"
+      actions   = statement.value.actions
+      resources = ["*"]
+      principals {
+        type        = statement.value.principal_type
+        identifiers = statement.value.principal_identifiers
+      }
     }
-    resources = ["*"]
-  }
-
-  statement {
-    sid    = "AllowCloudWatchLogsUseOfTheKey"
-    effect = "Allow"
-    actions = [
-      "kms:Encrypt*",
-      "kms:Decrypt*",
-      "kms:ReEncrypt*",
-      "kms:GenerateDataKey*",
-      "kms:Describe*"
-    ]
-    principals {
-      type        = "Service"
-      identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
-    }
-    resources = ["*"]
   }
 }
 
