@@ -88,15 +88,27 @@ locals {
     var.redis_config.cloudwatch_log_group.skip_destroy == true ||
     local.redis_cloudwatch_log_group_cmk_enabled == true
   )
-  kms_root_statement = {
-    sid                   = "EnableRootPermissions"
-    actions               = ["kms:*"]
-    principal_type        = "AWS"
-    principal_identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
-  }
+  kms_base_policy_statements = var.kms_policy != null ? var.kms_policy : [
+    {
+      sid    = "EnableRootPermissions"
+      effect = "Allow"
+      principals = {
+        type        = "AWS"
+        identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+      }
+      actions    = ["kms:*"]
+      resources  = ["*"]
+      conditions = []
+    }
+  ]
   kms_service_statements = {
     rds = {
-      sid = "AllowRDSUseOfTheKey"
+      sid    = "AllowRDSUseOfTheKey"
+      effect = "Allow"
+      principals = {
+        type        = "Service"
+        identifiers = ["rds.amazonaws.com"]
+      }
       actions = [
         "kms:Encrypt",
         "kms:Decrypt",
@@ -105,11 +117,16 @@ locals {
         "kms:CreateGrant",
         "kms:DescribeKey"
       ]
-      principal_type        = "Service"
-      principal_identifiers = ["rds.amazonaws.com"]
+      resources  = ["*"]
+      conditions = []
     }
     secretsmanager = {
-      sid = "AllowSecretsManagerUseOfTheKey"
+      sid    = "AllowSecretsManagerUseOfTheKey"
+      effect = "Allow"
+      principals = {
+        type        = "Service"
+        identifiers = ["secretsmanager.amazonaws.com"]
+      }
       actions = [
         "kms:Encrypt",
         "kms:Decrypt",
@@ -118,11 +135,16 @@ locals {
         "kms:CreateGrant",
         "kms:DescribeKey"
       ]
-      principal_type        = "Service"
-      principal_identifiers = ["secretsmanager.amazonaws.com"]
+      resources  = ["*"]
+      conditions = []
     }
     cloudwatch_logs = {
-      sid = "AllowCloudWatchLogsUseOfTheKey"
+      sid    = "AllowCloudWatchLogsUseOfTheKey"
+      effect = "Allow"
+      principals = {
+        type        = "Service"
+        identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
+      }
       actions = [
         "kms:Encrypt*",
         "kms:Decrypt*",
@@ -130,11 +152,16 @@ locals {
         "kms:GenerateDataKey*",
         "kms:Describe*"
       ]
-      principal_type        = "Service"
-      principal_identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
+      resources  = ["*"]
+      conditions = []
     }
     elasticache = {
-      sid = "AllowElastiCacheUseOfTheKey"
+      sid    = "AllowElastiCacheUseOfTheKey"
+      effect = "Allow"
+      principals = {
+        type        = "Service"
+        identifiers = ["elasticache.amazonaws.com"]
+      }
       actions = [
         "kms:Encrypt",
         "kms:Decrypt",
@@ -143,8 +170,8 @@ locals {
         "kms:CreateGrant",
         "kms:DescribeKey"
       ]
-      principal_type        = "Service"
-      principal_identifiers = ["elasticache.amazonaws.com"]
+      resources  = ["*"]
+      conditions = []
     }
   }
 }
@@ -157,15 +184,26 @@ data "aws_iam_policy_document" "rds_storage_kms" {
   count = local.rds_storage_create_kms_key == true ? 1 : 0
 
   dynamic "statement" {
-    for_each = [local.kms_root_statement, local.kms_service_statements.rds]
+    for_each = concat(
+      local.kms_base_policy_statements,
+      [local.kms_service_statements.rds]
+    )
     content {
-      sid     = statement.value.sid
-      effect  = "Allow"
-      actions = statement.value.actions
-      resources = ["*"]
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
       principals {
-        type        = statement.value.principal_type
-        identifiers = statement.value.principal_identifiers
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
       }
     }
   }
@@ -188,15 +226,26 @@ data "aws_iam_policy_document" "rds_password_secret_kms" {
   count = local.rds_password_secret_create_kms_key == true ? 1 : 0
 
   dynamic "statement" {
-    for_each = [local.kms_root_statement, local.kms_service_statements.secretsmanager]
+    for_each = concat(
+      local.kms_base_policy_statements,
+      [local.kms_service_statements.secretsmanager]
+    )
     content {
-      sid     = statement.value.sid
-      effect  = "Allow"
-      actions = statement.value.actions
-      resources = ["*"]
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
       principals {
-        type        = statement.value.principal_type
-        identifiers = statement.value.principal_identifiers
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
       }
     }
   }
@@ -219,15 +268,26 @@ data "aws_iam_policy_document" "rds_observability_kms" {
   count = local.rds_observability_create_kms_key == true ? 1 : 0
 
   dynamic "statement" {
-    for_each = [local.kms_root_statement, local.kms_service_statements.rds]
+    for_each = concat(
+      local.kms_base_policy_statements,
+      [local.kms_service_statements.rds]
+    )
     content {
-      sid     = statement.value.sid
-      effect  = "Allow"
-      actions = statement.value.actions
-      resources = ["*"]
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
       principals {
-        type        = statement.value.principal_type
-        identifiers = statement.value.principal_identifiers
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
       }
     }
   }
@@ -250,15 +310,26 @@ data "aws_iam_policy_document" "rds_cloudwatch_log_group_kms" {
   count = local.rds_cloudwatch_log_group_create_kms_key == true ? 1 : 0
 
   dynamic "statement" {
-    for_each = [local.kms_root_statement, local.kms_service_statements.cloudwatch_logs]
+    for_each = concat(
+      local.kms_base_policy_statements,
+      [local.kms_service_statements.cloudwatch_logs]
+    )
     content {
-      sid     = statement.value.sid
-      effect  = "Allow"
-      actions = statement.value.actions
-      resources = ["*"]
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
       principals {
-        type        = statement.value.principal_type
-        identifiers = statement.value.principal_identifiers
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
       }
     }
   }
@@ -281,15 +352,26 @@ data "aws_iam_policy_document" "redis_at_rest_kms" {
   count = local.redis_at_rest_create_kms_key == true ? 1 : 0
 
   dynamic "statement" {
-    for_each = [local.kms_root_statement, local.kms_service_statements.elasticache]
+    for_each = concat(
+      local.kms_base_policy_statements,
+      [local.kms_service_statements.elasticache]
+    )
     content {
-      sid     = statement.value.sid
-      effect  = "Allow"
-      actions = statement.value.actions
-      resources = ["*"]
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
       principals {
-        type        = statement.value.principal_type
-        identifiers = statement.value.principal_identifiers
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
       }
     }
   }
@@ -312,15 +394,26 @@ data "aws_iam_policy_document" "redis_cloudwatch_log_group_kms" {
   count = local.redis_cloudwatch_log_group_create_kms_key == true ? 1 : 0
 
   dynamic "statement" {
-    for_each = [local.kms_root_statement, local.kms_service_statements.cloudwatch_logs]
+    for_each = concat(
+      local.kms_base_policy_statements,
+      [local.kms_service_statements.cloudwatch_logs]
+    )
     content {
-      sid     = statement.value.sid
-      effect  = "Allow"
-      actions = statement.value.actions
-      resources = ["*"]
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
       principals {
-        type        = statement.value.principal_type
-        identifiers = statement.value.principal_identifiers
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
       }
     }
   }
@@ -340,15 +433,16 @@ resource "aws_kms_alias" "redis_cloudwatch_log_group" {
 }
 
 module "byo-db" {
-  source = "./byo-db"
-  vpc_id = var.vpc_config.vpc_id
+  source     = "./byo-db"
+  vpc_id     = var.vpc_config.vpc_id
+  kms_policy = var.kms_policy
   fleet_config = merge(var.fleet_config, {
     database = {
-      address             = module.rds.cluster_endpoint
-      rr_address          = module.rds.cluster_reader_endpoint
-      database            = "fleet"
-      user                = "fleet"
-      password_secret_arn = module.secrets-manager-1.secret_arns["${var.rds_config.name}-database-password"]
+      address                     = module.rds.cluster_endpoint
+      rr_address                  = module.rds.cluster_reader_endpoint
+      database                    = "fleet"
+      user                        = "fleet"
+      password_secret_arn         = module.secrets-manager-1.secret_arns["${var.rds_config.name}-database-password"]
       password_secret_kms_key_arn = local.rds_password_secret_kms_key_arn
     }
     redis = {

@@ -70,13 +70,13 @@ locals {
   }
   # Accept both legacy map input and list input for cluster settings.
   normalized_cluster_settings              = var.ecs_cluster.cluster_settings == null ? [] : flatten([var.ecs_cluster.cluster_settings])
-  fargate_ephemeral_storage_cmk_enabled = coalesce(var.fleet_config.fargate_ephemeral_storage_kms.cmk_enabled, var.fleet_config.fargate_ephemeral_storage_kms.enabled, false)
+  fargate_ephemeral_storage_cmk_enabled    = coalesce(var.fleet_config.fargate_ephemeral_storage_kms.cmk_enabled, var.fleet_config.fargate_ephemeral_storage_kms.enabled, false)
   fargate_ephemeral_storage_create_kms_key = local.fargate_ephemeral_storage_cmk_enabled == true && var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn == null
   fargate_ephemeral_storage_kms_key_arn = local.fargate_ephemeral_storage_cmk_enabled == true ? (
     var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn != null ? var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn : aws_kms_key.fargate_ephemeral_storage[0].arn
   ) : null
   cluster_cloudwatch_log_group_name           = coalesce(try(var.ecs_cluster.cluster_configuration.execute_command_configuration.log_configuration.cloud_watch_log_group_name, null), "/aws/ecs/${var.ecs_cluster.cluster_name}")
-  cluster_cloudwatch_log_group_cmk_enabled = coalesce(var.ecs_cluster.cloudwatch_log_group.kms.cmk_enabled, var.ecs_cluster.cloudwatch_log_group.kms.enabled, false)
+  cluster_cloudwatch_log_group_cmk_enabled    = coalesce(var.ecs_cluster.cloudwatch_log_group.kms.cmk_enabled, var.ecs_cluster.cloudwatch_log_group.kms.enabled, false)
   cluster_cloudwatch_log_group_create_kms_key = var.ecs_cluster.cloudwatch_log_group.create == true && local.cluster_cloudwatch_log_group_cmk_enabled == true && var.ecs_cluster.cloudwatch_log_group.kms.kms_key_arn == null
   cluster_cloudwatch_log_group_kms_key_arn = var.ecs_cluster.cloudwatch_log_group.create == true && local.cluster_cloudwatch_log_group_cmk_enabled == true ? (
     var.ecs_cluster.cloudwatch_log_group.kms.kms_key_arn != null ? var.ecs_cluster.cloudwatch_log_group.kms.kms_key_arn : aws_kms_key.cluster_cloudwatch_log_group[0].arn
@@ -105,15 +105,27 @@ locals {
       )
     } : {}
   )
-  kms_root_statement = {
-    sid                   = "EnableRootPermissions"
-    actions               = ["kms:*"]
-    principal_type        = "AWS"
-    principal_identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
-  }
+  kms_base_policy_statements = var.kms_policy != null ? var.kms_policy : [
+    {
+      sid    = "EnableRootPermissions"
+      effect = "Allow"
+      principals = {
+        type        = "AWS"
+        identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+      }
+      actions    = ["kms:*"]
+      resources  = ["*"]
+      conditions = []
+    }
+  ]
   kms_service_statements = {
     cloudwatch_logs = {
-      sid = "AllowCloudWatchLogsUseOfTheKey"
+      sid    = "AllowCloudWatchLogsUseOfTheKey"
+      effect = "Allow"
+      principals = {
+        type        = "Service"
+        identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
+      }
       actions = [
         "kms:Encrypt*",
         "kms:Decrypt*",
@@ -121,16 +133,20 @@ locals {
         "kms:GenerateDataKey*",
         "kms:Describe*"
       ]
-      principal_type        = "Service"
-      principal_identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
+      resources  = ["*"]
+      conditions = []
     }
     fargate_generate_data_key = {
-      sid = "AllowGenerateDataKeyWithoutPlaintextForFargateTasks"
+      sid    = "AllowGenerateDataKeyWithoutPlaintextForFargateTasks"
+      effect = "Allow"
+      principals = {
+        type        = "Service"
+        identifiers = ["fargate.amazonaws.com"]
+      }
       actions = [
         "kms:GenerateDataKeyWithoutPlaintext"
       ]
-      principal_type        = "Service"
-      principal_identifiers = ["fargate.amazonaws.com"]
+      resources = ["*"]
       conditions = [
         {
           test     = "StringEquals"
@@ -145,12 +161,16 @@ locals {
       ]
     }
     fargate_create_grant = {
-      sid = "AllowCreateGrantForFargateTasks"
+      sid    = "AllowCreateGrantForFargateTasks"
+      effect = "Allow"
+      principals = {
+        type        = "Service"
+        identifiers = ["fargate.amazonaws.com"]
+      }
       actions = [
         "kms:CreateGrant"
       ]
-      principal_type        = "Service"
-      principal_identifiers = ["fargate.amazonaws.com"]
+      resources = ["*"]
       conditions = [
         {
           test     = "StringEquals"
@@ -193,6 +213,7 @@ data "aws_region" "current" {}
 module "ecs" {
   source           = "./byo-ecs"
   ecs_cluster      = module.cluster.cluster_name
+  kms_policy       = var.kms_policy
   fleet_config     = local.fleet_config
   migration_config = var.migration_config
   vpc_id           = var.vpc_id
@@ -220,19 +241,21 @@ data "aws_iam_policy_document" "fargate_ephemeral_storage_kms" {
   count = local.fargate_ephemeral_storage_create_kms_key == true ? 1 : 0
 
   dynamic "statement" {
-    for_each = [
-      local.kms_root_statement,
-      local.kms_service_statements.fargate_generate_data_key,
-      local.kms_service_statements.fargate_create_grant,
-    ]
+    for_each = concat(
+      local.kms_base_policy_statements,
+      [
+        local.kms_service_statements.fargate_generate_data_key,
+        local.kms_service_statements.fargate_create_grant,
+      ]
+    )
     content {
       sid       = statement.value.sid
-      effect    = "Allow"
+      effect    = statement.value.effect
       actions   = statement.value.actions
-      resources = ["*"]
+      resources = statement.value.resources
       principals {
-        type        = statement.value.principal_type
-        identifiers = statement.value.principal_identifiers
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
       }
       dynamic "condition" {
         for_each = try(statement.value.conditions, [])
@@ -263,15 +286,18 @@ data "aws_iam_policy_document" "cluster_cloudwatch_log_group_kms" {
   count = local.cluster_cloudwatch_log_group_create_kms_key == true ? 1 : 0
 
   dynamic "statement" {
-    for_each = [local.kms_root_statement, local.kms_service_statements.cloudwatch_logs]
+    for_each = concat(
+      local.kms_base_policy_statements,
+      [local.kms_service_statements.cloudwatch_logs]
+    )
     content {
       sid       = statement.value.sid
-      effect    = "Allow"
+      effect    = statement.value.effect
       actions   = statement.value.actions
-      resources = ["*"]
+      resources = statement.value.resources
       principals {
-        type        = statement.value.principal_type
-        identifiers = statement.value.principal_identifiers
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
       }
     }
   }

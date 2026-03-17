@@ -169,7 +169,7 @@ No requirements.
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | n/a |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.36.0 |
 
 ## Modules
 
@@ -192,6 +192,7 @@ No requirements.
 | [aws_iam_policy_document.software_installers_bucket](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.software_installers_kms](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.software_installers_secret](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
+| [aws_partition.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/partition) | data source |
 | [aws_s3_bucket.logging](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/s3_bucket) | data source |
 | [aws_s3_bucket.software_installers](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/s3_bucket) | data source |
 
@@ -202,6 +203,7 @@ No requirements.
 | <a name="input_customer"></a> [customer](#input\_customer) | Customer name for the cloudfront instance | `string` | `"fleet"` | no |
 | <a name="input_enable_logging"></a> [enable\_logging](#input\_enable\_logging) | Enable optional logging to s3 | `bool` | `false` | no |
 | <a name="input_key_group_id"></a> [key\_group\_id](#input\_key\_group\_id) | Cloudfront key group id | `string` | `null` | no |
+| <a name="input_kms_policy"></a> [kms\_policy](#input\_kms\_policy) | Optional base KMS key-policy statements to apply to the software-installers CMK before addon-required CloudFront access statements are merged in. If null, the addon defaults to the historical root `kms:*` statement. | <pre>list(object({<br/>    sid    = string<br/>    effect = string<br/>    principals = object({<br/>      type        = string<br/>      identifiers = list(string)<br/>    })<br/>    actions   = list(string)<br/>    resources = list(string)<br/>    conditions = optional(list(object({<br/>      test     = string<br/>      variable = string<br/>      values   = list(string)<br/>    })), [])<br/>  }))</pre> | `null` | no |
 | <a name="input_logging_s3_bucket"></a> [logging\_s3\_bucket](#input\_logging\_s3\_bucket) | s3 bucket to log to | `string` | `null` | no |
 | <a name="input_logging_s3_prefix"></a> [logging\_s3\_prefix](#input\_logging\_s3\_prefix) | logging s3 bucket prefix | `string` | `"cloudfront"` | no |
 | <a name="input_private_key"></a> [private\_key](#input\_private\_key) | Private key used for signed URLs | `string` | n/a | yes |

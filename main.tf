@@ -3,11 +3,43 @@ terraform {
 }
 
 locals {
-  vpc_flow_log_cloudwatch_log_group_cmk_enabled = var.vpc.flow_log_cloudwatch_log_group_kms.cmk_enabled
+  vpc_flow_log_cloudwatch_log_group_cmk_enabled    = var.vpc.flow_log_cloudwatch_log_group_kms.cmk_enabled
   vpc_flow_log_cloudwatch_log_group_create_kms_key = var.vpc.enable_flow_log == true && var.vpc.create_flow_log_cloudwatch_log_group == true && local.vpc_flow_log_cloudwatch_log_group_cmk_enabled == true && var.vpc.flow_log_cloudwatch_log_group_kms.kms_key_arn == null
   vpc_flow_log_cloudwatch_log_group_kms_key_arn = var.vpc.enable_flow_log == true && var.vpc.create_flow_log_cloudwatch_log_group == true && local.vpc_flow_log_cloudwatch_log_group_cmk_enabled == true ? (
     var.vpc.flow_log_cloudwatch_log_group_kms.kms_key_arn != null ? var.vpc.flow_log_cloudwatch_log_group_kms.kms_key_arn : aws_kms_key.vpc_flow_log_cloudwatch_log_group[0].arn
   ) : null
+  kms_base_policy_statements = var.kms_policy != null ? var.kms_policy : [
+    {
+      sid    = "EnableRootPermissions"
+      effect = "Allow"
+      principals = {
+        type        = "AWS"
+        identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+      }
+      actions    = ["kms:*"]
+      resources  = ["*"]
+      conditions = []
+    }
+  ]
+  kms_service_statements = {
+    cloudwatch_logs = {
+      sid    = "AllowCloudWatchLogsUseOfTheKey"
+      effect = "Allow"
+      principals = {
+        type        = "Service"
+        identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
+      }
+      actions = [
+        "kms:Encrypt*",
+        "kms:Decrypt*",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:Describe*"
+      ]
+      resources  = ["*"]
+      conditions = []
+    }
+  }
 }
 
 data "aws_caller_identity" "current" {}
@@ -17,34 +49,29 @@ data "aws_region" "current" {}
 data "aws_iam_policy_document" "vpc_flow_log_cloudwatch_log_group_kms" {
   count = local.vpc_flow_log_cloudwatch_log_group_create_kms_key == true ? 1 : 0
 
-  statement {
-    sid    = "EnableRootPermissions"
-    effect = "Allow"
-    actions = [
-      "kms:*"
-    ]
-    principals {
-      type        = "AWS"
-      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+  dynamic "statement" {
+    for_each = concat(
+      local.kms_base_policy_statements,
+      [local.kms_service_statements.cloudwatch_logs]
+    )
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
     }
-    resources = ["*"]
-  }
-
-  statement {
-    sid    = "AllowCloudWatchLogsUseOfTheKey"
-    effect = "Allow"
-    actions = [
-      "kms:Encrypt*",
-      "kms:Decrypt*",
-      "kms:ReEncrypt*",
-      "kms:GenerateDataKey*",
-      "kms:Describe*"
-    ]
-    principals {
-      type        = "Service"
-      identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
-    }
-    resources = ["*"]
   }
 }
 
@@ -94,7 +121,8 @@ module "vpc" {
 }
 
 module "byo-vpc" {
-  source = "./byo-vpc"
+  source     = "./byo-vpc"
+  kms_policy = var.kms_policy
   vpc_config = {
     vpc_id = module.vpc.vpc_id
     networking = {

@@ -1,4 +1,42 @@
+locals {
+  kms_base_policy_statements = var.kms_policy != null ? var.kms_policy : [
+    {
+      sid    = "EnableRootPermissions"
+      effect = "Allow"
+      principals = {
+        type        = "AWS"
+        identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+      }
+      actions    = ["kms:*"]
+      resources  = ["*"]
+      conditions = []
+    }
+  ]
+  kms_service_statements = {
+    cloudfront = {
+      sid    = "AllowOriginAccessIdentity"
+      effect = "Allow"
+      principals = {
+        type        = "Service"
+        identifiers = ["cloudfront.amazonaws.com"]
+      }
+      actions = [
+        "kms:Decrypt"
+      ]
+      resources = ["*"]
+      conditions = [
+        {
+          test     = "StringEquals"
+          variable = "AWS:SourceArn"
+          values   = [module.cloudfront_software_installers.cloudfront_distribution_arn]
+        }
+      ]
+    }
+  }
+}
+
 data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
 
 data "aws_iam_policy_document" "software_installers_bucket" {
   statement {
@@ -27,27 +65,28 @@ resource "aws_s3_bucket_policy" "software_installers" {
 }
 
 data "aws_iam_policy_document" "software_installers_kms" {
-  statement {
-    actions = ["kms:*"]
-    principals {
-      type        = "AWS"
-      identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
-    }
-    resources = ["*"]
-  }
-  statement {
-    sid    = "AllowOriginAccessIdentity"
-    effect = "Allow"
-    principals {
-      type        = "Service"
-      identifiers = ["cloudfront.amazonaws.com"]
-    }
-    actions   = ["kms:Decrypt"]
-    resources = ["*"]
-    condition {
-      test     = "StringEquals"
-      variable = "AWS:SourceArn"
-      values   = [module.cloudfront_software_installers.cloudfront_distribution_arn]
+  dynamic "statement" {
+    for_each = concat(
+      local.kms_base_policy_statements,
+      [local.kms_service_statements.cloudfront]
+    )
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
     }
   }
 }

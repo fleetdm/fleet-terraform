@@ -2,6 +2,26 @@ variable "vpc_id" {
   type = string
 }
 
+variable "kms_policy" {
+  type = list(object({
+    sid    = string
+    effect = string
+    principals = object({
+      type        = string
+      identifiers = list(string)
+    })
+    actions   = list(string)
+    resources = list(string)
+    conditions = optional(list(object({
+      test     = string
+      variable = string
+      values   = list(string)
+    })), [])
+  }))
+  default     = null
+  description = "Optional base KMS key-policy statements to apply to module-created CMKs before module-required service access statements are merged in. If null, the module defaults to the historical root `kms:*` statement."
+}
+
 variable "ecs_cluster" {
   type = object({
     autoscaling_capacity_providers = optional(any, {})

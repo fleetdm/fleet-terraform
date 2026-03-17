@@ -47,6 +47,26 @@ variable "s3_kms_key_id" {
   default     = null
 }
 
+variable "kms_policy" {
+  type = list(object({
+    sid    = string
+    effect = string
+    principals = object({
+      type        = string
+      identifiers = list(string)
+    })
+    actions   = list(string)
+    resources = list(string)
+    conditions = optional(list(object({
+      test     = string
+      variable = string
+      values   = list(string)
+    })), [])
+  }))
+  default     = null
+  description = "Optional base KMS key-policy statements to apply to the software-installers CMK before addon-required CloudFront access statements are merged in. If null, the addon defaults to the historical root `kms:*` statement."
+}
+
 variable "enable_logging" {
   description = "Enable optional logging to s3"
   type        = bool
