@@ -403,17 +403,17 @@ resource "aws_lambda_function" "cron_monitoring" {
 
   environment {
     variables = {
-      MYSQL_HOST                  = var.cron_monitoring.mysql_host
-      MYSQL_DATABASE              = var.cron_monitoring.mysql_database
-      MYSQL_USER                  = var.cron_monitoring.mysql_user
-      MYSQL_SECRETSMANAGER_SECRET = data.aws_secretsmanager_secret.mysql_database_password[0].name
-      MYSQL_TLS_CONFIG            = var.cron_monitoring.mysql_tls_config
-      CRON_SYSTEM_MONITOR_SNS_TOPIC_ARNS              = join(",", lookup(var.sns_topic_arns_map, "cron_monitoring", var.default_sns_topic_arns))
-      CRON_JOB_FAILURE_MONITOR_SNS_TOPIC_ARNS              = join(",", lookup(var.sns_topic_arns_map, "cron_job_failure_monitoring", var.default_sns_topic_arns))
-      FLEET_ENV                   = var.customer_prefix
-      CRON_DELAY_TOLERANCE        = var.cron_monitoring.delay_tolerance
-      CRON_MONITOR_RUN_INTERVAL   = var.cron_monitoring.run_interval
-      CRON_IGNORE_LIST            = join(",", var.cron_monitoring.ignore_list)
+      MYSQL_HOST                              = var.cron_monitoring.mysql_host
+      MYSQL_DATABASE                          = var.cron_monitoring.mysql_database
+      MYSQL_USER                              = var.cron_monitoring.mysql_user
+      MYSQL_SECRETSMANAGER_SECRET             = data.aws_secretsmanager_secret.mysql_database_password[0].name
+      MYSQL_TLS_CONFIG                        = var.cron_monitoring.mysql_tls_config
+      CRON_SYSTEM_MONITOR_SNS_TOPIC_ARNS      = join(",", lookup(var.sns_topic_arns_map, "cron_monitoring", var.default_sns_topic_arns))
+      CRON_JOB_FAILURE_MONITOR_SNS_TOPIC_ARNS = join(",", lookup(var.sns_topic_arns_map, "cron_job_failure_monitoring", var.default_sns_topic_arns))
+      FLEET_ENV                               = var.customer_prefix
+      CRON_DELAY_TOLERANCE                    = var.cron_monitoring.delay_tolerance
+      CRON_MONITOR_RUN_INTERVAL               = var.cron_monitoring.run_interval
+      CRON_IGNORE_LIST                        = join(",", var.cron_monitoring.ignore_list)
     }
   }
 

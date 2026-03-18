@@ -38,24 +38,27 @@ variable "ecs_cluster" {
       create            = optional(bool, true)
       retention_in_days = optional(number, 90)
       kms = optional(object({
-        cmk_enabled = optional(bool, null)
-        enabled     = optional(bool, null)
-        kms_key_arn = optional(string, null)
-        kms_alias   = optional(string, "fleet-ecs-cluster-logs")
+        cmk_enabled        = optional(bool, null)
+        enabled            = optional(bool, null)
+        kms_key_arn        = optional(string, null)
+        kms_alias          = optional(string, "fleet-ecs-cluster-logs")
+        extra_kms_policies = optional(list(any), [])
         }), {
-        cmk_enabled = null
-        enabled     = null
-        kms_key_arn = null
-        kms_alias   = "fleet-ecs-cluster-logs"
+        cmk_enabled        = null
+        enabled            = null
+        kms_key_arn        = null
+        kms_alias          = "fleet-ecs-cluster-logs"
+        extra_kms_policies = []
       })
       }), {
       create            = true
       retention_in_days = 90
       kms = {
-        cmk_enabled = null
-        enabled     = null
-        kms_key_arn = null
-        kms_alias   = "fleet-ecs-cluster-logs"
+        cmk_enabled        = null
+        enabled            = null
+        kms_key_arn        = null
+        kms_alias          = "fleet-ecs-cluster-logs"
+        extra_kms_policies = []
       }
     })
     cluster_settings = optional(any, {
@@ -149,26 +152,30 @@ variable "fleet_config" {
     repository_credentials       = optional(string, "")
     private_key_secret_name      = optional(string, "fleet-server-private-key")
     private_key_secret_kms = optional(object({
-      cmk_enabled = optional(bool, null)
-      enabled     = optional(bool, null)
-      kms_key_arn = optional(string, null)
-      kms_alias   = optional(string, "fleet-server-private-key")
+      cmk_enabled        = optional(bool, null)
+      enabled            = optional(bool, null)
+      kms_key_arn        = optional(string, null)
+      kms_alias          = optional(string, "fleet-server-private-key")
+      extra_kms_policies = optional(list(any), [])
       }), {
-      cmk_enabled = null
-      enabled     = null
-      kms_key_arn = null
-      kms_alias   = "fleet-server-private-key"
+      cmk_enabled        = null
+      enabled            = null
+      kms_key_arn        = null
+      kms_alias          = "fleet-server-private-key"
+      extra_kms_policies = []
     })
     fargate_ephemeral_storage_kms = optional(object({
-      cmk_enabled = optional(bool, null)
-      enabled     = optional(bool, null)
-      kms_key_arn = optional(string, null)
-      kms_alias   = optional(string, "fleet-fargate-ephemeral-storage")
+      cmk_enabled        = optional(bool, null)
+      enabled            = optional(bool, null)
+      kms_key_arn        = optional(string, null)
+      kms_alias          = optional(string, "fleet-fargate-ephemeral-storage")
+      extra_kms_policies = optional(list(any), [])
       }), {
-      cmk_enabled = null
-      enabled     = null
-      kms_key_arn = null
-      kms_alias   = "fleet-fargate-ephemeral-storage"
+      cmk_enabled        = null
+      enabled            = null
+      kms_key_arn        = null
+      kms_alias          = "fleet-fargate-ephemeral-storage"
+      extra_kms_policies = []
     })
     server_tls_enabled = optional(bool, false)
     service = optional(object({
@@ -205,15 +212,17 @@ variable "fleet_config" {
       prefix    = optional(string, "fleet")
       retention = optional(number, 5)
       kms = optional(object({
-        cmk_enabled = optional(bool, null)
-        enabled     = optional(bool, null)
-        kms_key_arn = optional(string, null)
-        kms_alias   = optional(string, "fleet-application-logs")
+        cmk_enabled        = optional(bool, null)
+        enabled            = optional(bool, null)
+        kms_key_arn        = optional(string, null)
+        kms_alias          = optional(string, "fleet-application-logs")
+        extra_kms_policies = optional(list(any), [])
         }), {
-        cmk_enabled = null
-        enabled     = null
-        kms_key_arn = null
-        kms_alias   = "fleet-application-logs"
+        cmk_enabled        = null
+        enabled            = null
+        kms_key_arn        = null
+        kms_alias          = "fleet-application-logs"
+        extra_kms_policies = []
       })
       }), {
       name      = null
@@ -222,10 +231,11 @@ variable "fleet_config" {
       prefix    = "fleet"
       retention = 5
       kms = {
-        cmk_enabled = null
-        enabled     = null
-        kms_key_arn = null
-        kms_alias   = "fleet-application-logs"
+        cmk_enabled        = null
+        enabled            = null
+        kms_key_arn        = null
+        kms_alias          = "fleet-application-logs"
+        extra_kms_policies = []
       }
     })
     loadbalancer = optional(object({
@@ -294,24 +304,28 @@ variable "fleet_config" {
       bucket_name                        = optional(string, null)
       bucket_prefix                      = optional(string, "fleet-software-installers-")
       s3_object_prefix                   = optional(string, "")
+      cloudfront_distribution_arn        = optional(string, null)
       enable_bucket_versioning           = optional(bool, false)
       expire_noncurrent_versions         = optional(bool, true)
       noncurrent_version_expiration_days = optional(number, 30)
       create_kms_key                     = optional(bool, false)
       kms_key_arn                        = optional(string, null)
       kms_alias                          = optional(string, "fleet-software-installers")
+      extra_kms_policies                 = optional(list(any), [])
       tags                               = optional(map(string), {})
       }), {
       create_bucket                      = true
       bucket_name                        = null
       bucket_prefix                      = "fleet-software-installers-"
       s3_object_prefix                   = ""
+      cloudfront_distribution_arn        = null
       enable_bucket_versioning           = false
       expire_noncurrent_versions         = true
       noncurrent_version_expiration_days = 30
       create_kms_key                     = false
       kms_key_arn                        = null
       kms_alias                          = "fleet-software-installers"
+      extra_kms_policies                 = []
       tags                               = {}
     })
   })
@@ -338,16 +352,18 @@ variable "fleet_config" {
     repository_credentials       = ""
     private_key_secret_name      = "fleet-server-private-key"
     private_key_secret_kms = {
-      cmk_enabled = null
-      enabled     = null
-      kms_key_arn = null
-      kms_alias   = "fleet-server-private-key"
+      cmk_enabled        = null
+      enabled            = null
+      kms_key_arn        = null
+      kms_alias          = "fleet-server-private-key"
+      extra_kms_policies = []
     }
     fargate_ephemeral_storage_kms = {
-      cmk_enabled = null
-      enabled     = null
-      kms_key_arn = null
-      kms_alias   = "fleet-fargate-ephemeral-storage"
+      cmk_enabled        = null
+      enabled            = null
+      kms_key_arn        = null
+      kms_alias          = "fleet-fargate-ephemeral-storage"
+      extra_kms_policies = []
     }
     server_tls_enabled = false
     service = {
@@ -371,10 +387,11 @@ variable "fleet_config" {
       prefix    = "fleet"
       retention = 5
       kms = {
-        cmk_enabled = null
-        enabled     = null
-        kms_key_arn = null
-        kms_alias   = "fleet-application-logs"
+        cmk_enabled        = null
+        enabled            = null
+        kms_key_arn        = null
+        kms_alias          = "fleet-application-logs"
+        extra_kms_policies = []
       }
     }
     loadbalancer = {
@@ -413,12 +430,14 @@ variable "fleet_config" {
       bucket_name                        = null
       bucket_prefix                      = "fleet-software-installers-"
       s3_object_prefix                   = ""
+      cloudfront_distribution_arn        = null
       enable_bucket_versioning           = false
       expire_noncurrent_versions         = true
       noncurrent_version_expiration_days = 30
       create_kms_key                     = false
       kms_key_arn                        = null
       kms_alias                          = "fleet-software-installers"
+      extra_kms_policies                 = []
       tags                               = {}
     }
   }

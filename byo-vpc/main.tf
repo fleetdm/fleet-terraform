@@ -186,6 +186,7 @@ data "aws_iam_policy_document" "rds_storage_kms" {
   dynamic "statement" {
     for_each = concat(
       local.kms_base_policy_statements,
+      var.rds_config.storage_kms.extra_kms_policies,
       [local.kms_service_statements.rds]
     )
     content {
@@ -228,6 +229,7 @@ data "aws_iam_policy_document" "rds_password_secret_kms" {
   dynamic "statement" {
     for_each = concat(
       local.kms_base_policy_statements,
+      var.rds_config.password_secret_kms.extra_kms_policies,
       [local.kms_service_statements.secretsmanager]
     )
     content {
@@ -270,6 +272,7 @@ data "aws_iam_policy_document" "rds_observability_kms" {
   dynamic "statement" {
     for_each = concat(
       local.kms_base_policy_statements,
+      var.rds_config.observability.kms.extra_kms_policies,
       [local.kms_service_statements.rds]
     )
     content {
@@ -312,6 +315,7 @@ data "aws_iam_policy_document" "rds_cloudwatch_log_group_kms" {
   dynamic "statement" {
     for_each = concat(
       local.kms_base_policy_statements,
+      var.rds_config.cloudwatch_log_group.kms.extra_kms_policies,
       [local.kms_service_statements.cloudwatch_logs]
     )
     content {
@@ -354,6 +358,7 @@ data "aws_iam_policy_document" "redis_at_rest_kms" {
   dynamic "statement" {
     for_each = concat(
       local.kms_base_policy_statements,
+      var.redis_config.at_rest_kms.extra_kms_policies,
       [local.kms_service_statements.elasticache]
     )
     content {
@@ -396,6 +401,7 @@ data "aws_iam_policy_document" "redis_cloudwatch_log_group_kms" {
   dynamic "statement" {
     for_each = concat(
       local.kms_base_policy_statements,
+      var.redis_config.cloudwatch_log_group.kms.extra_kms_policies,
       [local.kms_service_statements.cloudwatch_logs]
     )
     content {

@@ -36,6 +36,7 @@ locals {
   software_installers_kms_key_id = var.fleet_config.software_installers.create_kms_key == true || var.fleet_config.software_installers.kms_key_arn != null ? (
     var.fleet_config.software_installers.kms_key_arn != null ? data.aws_kms_key.software_installers_provided[0].key_id : aws_kms_key.software_installers[0].id
   ) : null
+  task_role_kms_principal_arn = var.fleet_config.iam_role_arn != null ? var.fleet_config.iam_role_arn : aws_iam_role.main[0].arn
   kms_base_policy_statements = var.kms_base_policy != null ? var.kms_base_policy : [
     {
       sid    = "EnableRootPermissions"
@@ -86,6 +87,48 @@ locals {
       conditions = []
     }
   }
+  software_installers_kms_service_statements = var.fleet_config.software_installers.cloudfront_distribution_arn != null ? [
+    {
+      sid    = "AllowCloudFrontDistributionUseOfTheKey"
+      effect = "Allow"
+      principals = {
+        type        = "Service"
+        identifiers = ["cloudfront.amazonaws.com"]
+      }
+      actions = [
+        "kms:Decrypt",
+        "kms:Encrypt",
+        "kms:GenerateDataKey*"
+      ]
+      resources = ["*"]
+      conditions = [
+        {
+          test     = "StringEquals"
+          variable = "AWS:SourceArn"
+          values   = [var.fleet_config.software_installers.cloudfront_distribution_arn]
+        }
+      ]
+    }
+  ] : []
+  software_installers_kms_task_role_statements = [
+    {
+      sid    = "AllowFleetTaskRoleUseOfTheKey"
+      effect = "Allow"
+      principals = {
+        type        = "AWS"
+        identifiers = [local.task_role_kms_principal_arn]
+      }
+      actions = [
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:Encrypt*",
+        "kms:Describe*",
+        "kms:Decrypt*"
+      ]
+      resources  = ["*"]
+      conditions = []
+    }
+  ]
 }
 
 check "deprecated_fleet_config_private_key_secret_kms_enabled" {
@@ -325,6 +368,7 @@ data "aws_iam_policy_document" "application_logs_kms" {
   dynamic "statement" {
     for_each = concat(
       local.kms_base_policy_statements,
+      var.fleet_config.awslogs.kms.extra_kms_policies,
       [local.kms_service_statements.cloudwatch_logs]
     )
     content {
@@ -421,6 +465,7 @@ resource "aws_kms_key" "software_installers" {
   count               = local.software_installers_create_kms_key == true ? 1 : 0
   description         = "CMK for Fleet software installers S3 bucket object encryption."
   enable_key_rotation = true
+  policy              = data.aws_iam_policy_document.software_installers_kms[0].json
 }
 
 resource "aws_kms_alias" "software_installers" {
@@ -442,6 +487,7 @@ data "aws_iam_policy_document" "private_key_secret_kms" {
   dynamic "statement" {
     for_each = concat(
       local.kms_base_policy_statements,
+      var.fleet_config.private_key_secret_kms.extra_kms_policies,
       [local.kms_service_statements.secretsmanager]
     )
     content {
@@ -449,6 +495,37 @@ data "aws_iam_policy_document" "private_key_secret_kms" {
       effect    = statement.value.effect
       actions   = statement.value.actions
       resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+}
+
+data "aws_iam_policy_document" "software_installers_kms" {
+  count = local.software_installers_create_kms_key == true ? 1 : 0
+
+  dynamic "statement" {
+    for_each = concat(
+      local.kms_base_policy_statements,
+      var.fleet_config.software_installers.extra_kms_policies,
+      local.software_installers_kms_task_role_statements,
+      local.software_installers_kms_service_statements
+    )
+    content {
+      sid       = try(statement.value.sid, "")
+      effect    = try(statement.value.effect, null)
+      actions   = try(statement.value.actions, [])
+      resources = try(statement.value.resources, [])
       principals {
         type        = statement.value.principals.type
         identifiers = statement.value.principals.identifiers

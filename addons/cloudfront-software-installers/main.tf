@@ -1,43 +1,3 @@
-locals {
-  kms_base_policy_statements = var.kms_base_policy != null ? var.kms_base_policy : [
-    {
-      sid    = "EnableRootPermissions"
-      effect = "Allow"
-      principals = {
-        type        = "AWS"
-        identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
-      }
-      actions    = ["kms:*"]
-      resources  = ["*"]
-      conditions = []
-    }
-  ]
-  kms_service_statements = {
-    cloudfront = {
-      sid    = "AllowOriginAccessIdentity"
-      effect = "Allow"
-      principals = {
-        type        = "Service"
-        identifiers = ["cloudfront.amazonaws.com"]
-      }
-      actions = [
-        "kms:Decrypt"
-      ]
-      resources = ["*"]
-      conditions = [
-        {
-          test     = "StringEquals"
-          variable = "AWS:SourceArn"
-          values   = [module.cloudfront_software_installers.cloudfront_distribution_arn]
-        }
-      ]
-    }
-  }
-}
-
-data "aws_caller_identity" "current" {}
-data "aws_partition" "current" {}
-
 data "aws_iam_policy_document" "software_installers_bucket" {
   statement {
     actions   = ["s3:GetObject"]
@@ -62,43 +22,6 @@ data "aws_s3_bucket" "software_installers" {
 resource "aws_s3_bucket_policy" "software_installers" {
   bucket = data.aws_s3_bucket.software_installers.bucket
   policy = data.aws_iam_policy_document.software_installers_bucket.json
-}
-
-data "aws_iam_policy_document" "software_installers_kms" {
-  dynamic "statement" {
-    for_each = concat(
-      local.kms_base_policy_statements,
-      [local.kms_service_statements.cloudfront]
-    )
-    content {
-      sid       = statement.value.sid
-      effect    = statement.value.effect
-      actions   = statement.value.actions
-      resources = statement.value.resources
-      principals {
-        type        = statement.value.principals.type
-        identifiers = statement.value.principals.identifiers
-      }
-      dynamic "condition" {
-        for_each = try(statement.value.conditions, [])
-        content {
-          test     = condition.value.test
-          variable = condition.value.variable
-          values   = condition.value.values
-        }
-      }
-    }
-  }
-}
-
-resource "aws_kms_key_policy" "software_installers" {
-  # This addon intentionally owns the full software-installers KMS key policy.
-  # Moving policy ownership into byo-ecs would create a dependency cycle because
-  # the CloudFront distribution ARN is not known until create time, and the
-  # software-installers bucket name may also be generated from a prefix.
-  count  = var.s3_kms_key_id != null ? 1 : 0
-  key_id = var.s3_kms_key_id
-  policy = data.aws_iam_policy_document.software_installers_kms.json
 }
 
 data "aws_iam_policy_document" "software_installers_secret" {

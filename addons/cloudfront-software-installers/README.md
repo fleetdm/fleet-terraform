@@ -25,20 +25,23 @@ Previous versions do not allow for proper interaction with both the software ins
 
 ### tf-mod-root/tf-mod-byo-vpc/tf-mod-byo-db/tf-mod-byo-ecs
 
-For any of these modules, the software installers configuration will require a KMS key created in order to be able to set a key policy.
+For any of these modules, software installers requires a customer-managed KMS key whenever KMS encryption is used at all. CloudFront access requires a key policy statement on that key, and the AWS-managed default key cannot be modified to accept that policy.
+
+Breaking change: this addon no longer manages the software installers KMS key policy. That policy now lives in `tf-mod-byo-ecs`, which means CloudFront access to the CMK must be configured there by setting `software_installers.cloudfront_distribution_arn` to the static distribution ARN.
 
 This is the relevant configuration starting at the software installers configuration block:
 
 ```
     software_installers = {
-      bucket_prefix  = "fleet-software-installers-"
-      create_kms_key = true
-      kms_alias      = "fleet-software-installers"
+      bucket_prefix               = "fleet-software-installers-"
+      create_kms_key              = true
+      kms_alias                   = "fleet-software-installers"
+      cloudfront_distribution_arn = "arn:aws:cloudfront::<account-id>:distribution/<distribution-id>"
     }
 
 ```
 
-The new configuration items are `create_kms_key` and `kms_alias`.
+The required configuration items here are `create_kms_key`, `kms_alias`, and `cloudfront_distribution_arn` when CloudFront must read from an SSE-KMS bucket.
 
 ### tf-mod-addon-logging-alb
 
@@ -116,7 +119,6 @@ module "cloudfront-software-installers" {
   source            = "github.com/fleetdm/fleet-terraform/addons/cloudfront-software-installers?ref=tf-mod-addon-cloudfront-software-installers-v1.2.0"
   customer          = "fleet"
   s3_bucket         = module.main.byo-vpc.byo-db.byo-ecs.fleet_s3_software_installers_config.bucket_name
-  s3_kms_key_id     = module.main.byo-vpc.byo-db.byo-ecs.fleet_s3_software_installers_config.kms_key_id
   # OPTIONAL
   # If you'd like to use an existing key_group_id for your new Cloudfront distribution, uncomment key_group_id and supply the value for the key_group_id
   # If you're using an existing key_group_id, public_key_id is required. The public_key_id is the value of a public_key that is also part of the key group that you define.
@@ -143,6 +145,8 @@ data "aws_kms_secrets" "cloudfront" {
 ```
 
 Then we need to include outputs from this module once applied back into the main fleet-config under the `extra_secrets` and `extra_execution_roles`:
+
+This addon also outputs `cloudfront_distribution_arn`. Do not feed that output back into `tf-mod-byo-ecs`, because that creates a Terraform cycle. Instead, set the same static ARN directly in `software_installers.cloudfront_distribution_arn`.
 
 Under the `fleet_config` section.  If not using the mdm module, that could be omitted but was included to show how to include multiple extra items:
 
@@ -184,15 +188,11 @@ No requirements.
 | [aws_cloudfront_key_group.software_installers](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudfront_key_group) | resource |
 | [aws_cloudfront_public_key.software_installers](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudfront_public_key) | resource |
 | [aws_iam_policy.software_installers_secret](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
-| [aws_kms_key_policy.software_installers](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kms_key_policy) | resource |
 | [aws_s3_bucket_policy.software_installers](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_policy) | resource |
 | [aws_secretsmanager_secret.software_installers](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret) | resource |
 | [aws_secretsmanager_secret_version.software_installers](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret_version) | resource |
-| [aws_caller_identity.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/caller_identity) | data source |
 | [aws_iam_policy_document.software_installers_bucket](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
-| [aws_iam_policy_document.software_installers_kms](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.software_installers_secret](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
-| [aws_partition.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/partition) | data source |
 | [aws_s3_bucket.logging](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/s3_bucket) | data source |
 | [aws_s3_bucket.software_installers](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/s3_bucket) | data source |
 
@@ -203,19 +203,18 @@ No requirements.
 | <a name="input_customer"></a> [customer](#input\_customer) | Customer name for the cloudfront instance | `string` | `"fleet"` | no |
 | <a name="input_enable_logging"></a> [enable\_logging](#input\_enable\_logging) | Enable optional logging to s3 | `bool` | `false` | no |
 | <a name="input_key_group_id"></a> [key\_group\_id](#input\_key\_group\_id) | Cloudfront key group id | `string` | `null` | no |
-| <a name="input_kms_base_policy"></a> [kms\_base\_policy](#input\_kms\_base\_policy) | Optional base KMS key-policy statements to apply to the software-installers CMK before addon-required CloudFront access statements are merged in. If null, the addon defaults to the historical root `kms:*` statement. | <pre>list(object({<br/>    sid    = string<br/>    effect = string<br/>    principals = object({<br/>      type        = string<br/>      identifiers = list(string)<br/>    })<br/>    actions   = list(string)<br/>    resources = list(string)<br/>    conditions = optional(list(object({<br/>      test     = string<br/>      variable = string<br/>      values   = list(string)<br/>    })), [])<br/>  }))</pre> | `null` | no |
 | <a name="input_logging_s3_bucket"></a> [logging\_s3\_bucket](#input\_logging\_s3\_bucket) | s3 bucket to log to | `string` | `null` | no |
 | <a name="input_logging_s3_prefix"></a> [logging\_s3\_prefix](#input\_logging\_s3\_prefix) | logging s3 bucket prefix | `string` | `"cloudfront"` | no |
 | <a name="input_private_key"></a> [private\_key](#input\_private\_key) | Private key used for signed URLs | `string` | n/a | yes |
 | <a name="input_public_key"></a> [public\_key](#input\_public\_key) | Public key used for signed URLs | `string` | n/a | yes |
 | <a name="input_public_key_id"></a> [public\_key\_id](#input\_public\_key\_id) | Cloudfront public key id. Required when passing in a key\_group\_id | `string` | `null` | no |
 | <a name="input_s3_bucket"></a> [s3\_bucket](#input\_s3\_bucket) | Name of the S3 bucket that Cloudfront will point to | `string` | n/a | yes |
-| <a name="input_s3_kms_key_id"></a> [s3\_kms\_key\_id](#input\_s3\_kms\_key\_id) | KMS key id used to encrypt the s3 bucket | `string` | `null` | no |
 
 ## Outputs
 
 | Name | Description |
 |------|-------------|
 | <a name="output_cloudfront_arn"></a> [cloudfront\_arn](#output\_cloudfront\_arn) | n/a |
+| <a name="output_cloudfront_distribution_arn"></a> [cloudfront\_distribution\_arn](#output\_cloudfront\_distribution\_arn) | n/a |
 | <a name="output_extra_execution_iam_policies"></a> [extra\_execution\_iam\_policies](#output\_extra\_execution\_iam\_policies) | n/a |
 | <a name="output_extra_secrets"></a> [extra\_secrets](#output\_extra\_secrets) | n/a |

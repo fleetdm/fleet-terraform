@@ -243,6 +243,7 @@ data "aws_iam_policy_document" "fargate_ephemeral_storage_kms" {
   dynamic "statement" {
     for_each = concat(
       local.kms_base_policy_statements,
+      var.fleet_config.fargate_ephemeral_storage_kms.extra_kms_policies,
       [
         local.kms_service_statements.fargate_generate_data_key,
         local.kms_service_statements.fargate_create_grant,
@@ -288,6 +289,7 @@ data "aws_iam_policy_document" "cluster_cloudwatch_log_group_kms" {
   dynamic "statement" {
     for_each = concat(
       local.kms_base_policy_statements,
+      var.ecs_cluster.cloudwatch_log_group.kms.extra_kms_policies,
       [local.kms_service_statements.cloudwatch_logs]
     )
     content {
@@ -298,6 +300,14 @@ data "aws_iam_policy_document" "cluster_cloudwatch_log_group_kms" {
       principals {
         type        = statement.value.principals.type
         identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
       }
     }
   }
