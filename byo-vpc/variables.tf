@@ -7,7 +7,7 @@ variable "vpc_config" {
   })
 }
 
-variable "kms_policy" {
+variable "kms_base_policy" {
   type = list(object({
     sid    = string
     effect = string

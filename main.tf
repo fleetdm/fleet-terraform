@@ -8,7 +8,7 @@ locals {
   vpc_flow_log_cloudwatch_log_group_kms_key_arn = var.vpc.enable_flow_log == true && var.vpc.create_flow_log_cloudwatch_log_group == true && local.vpc_flow_log_cloudwatch_log_group_cmk_enabled == true ? (
     var.vpc.flow_log_cloudwatch_log_group_kms.kms_key_arn != null ? var.vpc.flow_log_cloudwatch_log_group_kms.kms_key_arn : aws_kms_key.vpc_flow_log_cloudwatch_log_group[0].arn
   ) : null
-  kms_base_policy_statements = var.kms_policy != null ? var.kms_policy : [
+  kms_base_policy_statements = var.kms_base_policy != null ? var.kms_base_policy : [
     {
       sid    = "EnableRootPermissions"
       effect = "Allow"
@@ -121,8 +121,8 @@ module "vpc" {
 }
 
 module "byo-vpc" {
-  source     = "./byo-vpc"
-  kms_policy = var.kms_policy
+  source          = "./byo-vpc"
+  kms_base_policy = var.kms_base_policy
   vpc_config = {
     vpc_id = module.vpc.vpc_id
     networking = {

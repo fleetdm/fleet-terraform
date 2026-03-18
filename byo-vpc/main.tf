@@ -88,7 +88,7 @@ locals {
     var.redis_config.cloudwatch_log_group.skip_destroy == true ||
     local.redis_cloudwatch_log_group_cmk_enabled == true
   )
-  kms_base_policy_statements = var.kms_policy != null ? var.kms_policy : [
+  kms_base_policy_statements = var.kms_base_policy != null ? var.kms_base_policy : [
     {
       sid    = "EnableRootPermissions"
       effect = "Allow"
@@ -433,9 +433,9 @@ resource "aws_kms_alias" "redis_cloudwatch_log_group" {
 }
 
 module "byo-db" {
-  source     = "./byo-db"
-  vpc_id     = var.vpc_config.vpc_id
-  kms_policy = var.kms_policy
+  source          = "./byo-db"
+  vpc_id          = var.vpc_config.vpc_id
+  kms_base_policy = var.kms_base_policy
   fleet_config = merge(var.fleet_config, {
     database = {
       address                     = module.rds.cluster_endpoint

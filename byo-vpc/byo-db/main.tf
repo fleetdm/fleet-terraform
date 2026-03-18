@@ -105,7 +105,7 @@ locals {
       )
     } : {}
   )
-  kms_base_policy_statements = var.kms_policy != null ? var.kms_policy : [
+  kms_base_policy_statements = var.kms_base_policy != null ? var.kms_base_policy : [
     {
       sid    = "EnableRootPermissions"
       effect = "Allow"
@@ -213,7 +213,7 @@ data "aws_region" "current" {}
 module "ecs" {
   source           = "./byo-ecs"
   ecs_cluster      = module.cluster.cluster_name
-  kms_policy       = var.kms_policy
+  kms_base_policy  = var.kms_base_policy
   fleet_config     = local.fleet_config
   migration_config = var.migration_config
   vpc_id           = var.vpc_id

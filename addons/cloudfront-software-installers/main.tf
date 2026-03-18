@@ -1,5 +1,5 @@
 locals {
-  kms_base_policy_statements = var.kms_policy != null ? var.kms_policy : [
+  kms_base_policy_statements = var.kms_base_policy != null ? var.kms_base_policy : [
     {
       sid    = "EnableRootPermissions"
       effect = "Allow"

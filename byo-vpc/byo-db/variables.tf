@@ -2,7 +2,7 @@ variable "vpc_id" {
   type = string
 }
 
-variable "kms_policy" {
+variable "kms_base_policy" {
   type = list(object({
     sid    = string
     effect = string
