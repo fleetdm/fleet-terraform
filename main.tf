@@ -52,6 +52,7 @@ data "aws_iam_policy_document" "vpc_flow_log_cloudwatch_log_group_kms" {
   dynamic "statement" {
     for_each = concat(
       local.kms_base_policy_statements,
+      var.vpc.flow_log_cloudwatch_log_group_kms.extra_kms_policies,
       [local.kms_service_statements.cloudwatch_logs]
     )
     content {
