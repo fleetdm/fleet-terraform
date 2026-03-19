@@ -173,6 +173,20 @@ locals {
       resources  = ["*"]
       conditions = []
     }
+    execution_role = {
+      sid    = "AllowExecutionRoleDecrypt"
+      effect = "Allow"
+      principals = {
+        type        = "AWS"
+        identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.fleet_config.iam.execution.name}"]
+      }
+      actions = [
+        "kms:Decrypt",
+        "kms:DescribeKey"
+      ]
+      resources  = ["*"]
+      conditions = []
+    }
   }
 }
 
@@ -230,7 +244,8 @@ data "aws_iam_policy_document" "rds_password_secret_kms" {
     for_each = concat(
       local.kms_base_policy_statements,
       var.rds_config.password_secret_kms.extra_kms_policies,
-      [local.kms_service_statements.secretsmanager]
+      [local.kms_service_statements.secretsmanager],
+      [local.kms_service_statements.execution_role]
     )
     content {
       sid       = statement.value.sid

@@ -57,7 +57,7 @@ locals {
     }
   ]
 
-  kms_policies = concat(local.kms_base_policy_statements, local.kms_service_statements)
+  kms_policies = concat(local.kms_base_policy_statements, local.kms_service_statements, var.extra_kms_policies)
 
   s3_path_prefix = coalesce(var.alt_path_prefix, var.prefix)
 }

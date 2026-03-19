@@ -31,6 +31,8 @@ https://github.com/fleetdm/fleet-terraform/blob/main/example/main.tf for details
 
 If the Fleet database password secret is encrypted with a CMK, also pass `mysql_password_secret_kms_key_arn` so the cron-monitoring Lambda can decrypt it. When using the `byo-vpc` module, wire this from `module.<fleet_module>.byo-vpc.rds_password_secret_kms_key_arn`.
 
+**Important:** If you supply a custom `kms_base_policy` that does not grant `kms:*` to the account root (for example, a least-privilege policy that only allows specific principals), you must also add the cron-monitoring Lambda role to `rds_config.password_secret_kms.extra_kms_policies` in the `byo-vpc` module. AWS KMS requires both the key policy and the IAM policy to allow access. The Lambda role name is predictable (`<customer_prefix>-cron-monitoring-lambda`), so you can construct the ARN before the role exists. See the `byo-vpc` module README for a full example.
+
 ```
 module "monitoring" {
   source                 = "github.com/fleetdm/fleet-terraform//addons/monitoring?ref=tf-mod-addon-monitoring-v1.9.0"
@@ -221,4 +223,7 @@ No modules.
 
 ## Outputs
 
-No outputs.
+| Name | Description |
+|------|-------------|
+| <a name="output_cron_monitoring_lambda_arn"></a> [cron\_monitoring\_lambda\_arn](#output\_cron\_monitoring\_lambda\_arn) | n/a |
+| <a name="output_cron_monitoring_lambda_role_arn"></a> [cron\_monitoring\_lambda\_role\_arn](#output\_cron\_monitoring\_lambda\_role\_arn) | n/a |

@@ -56,11 +56,47 @@ If you enable `rds_config.password_secret_kms`, the `byo-vpc` module also expose
 
 That output is intended to be passed through to the monitoring addon so the cron-monitoring Lambda can decrypt the Fleet database password secret when it is encrypted with a CMK.
 
+When the module creates the password secret CMK, the key policy automatically grants
+`kms:Decrypt` and `kms:DescribeKey` to the Fleet ECS execution role. However, the
+cron-monitoring Lambda role is created by the **monitoring addon**, which is applied
+after the `byo-vpc` module. If you supply a custom `kms_base_policy` that does not
+grant `kms:*` to the account root (for example, a least-privilege policy that only
+allows specific principals), you must also add the Lambda role to
+`rds_config.password_secret_kms.extra_kms_policies` so the key policy permits the
+Lambda to decrypt. Because the Lambda role name is predictable, you can construct the
+ARN before the role exists.
+
 Example:
 
 ```hcl
+locals {
+  cron_monitoring_lambda_role_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.customer}-cron-monitoring-lambda"
+}
+
 module "fleet_byo_vpc" {
   source = "github.com/fleetdm/fleet-terraform//byo-vpc?depth=1&ref=tf-mod-byo-vpc-v1.24.0"
+
+  kms_base_policy = local.kms_base_policy_statements # your restrictive policy
+
+  rds_config = {
+    # ...
+    password_secret_kms = {
+      cmk_enabled = true
+      extra_kms_policies = [
+        {
+          sid    = "AllowCronMonitoringLambdaDecrypt"
+          effect = "Allow"
+          principals = {
+            type        = "AWS"
+            identifiers = [local.cron_monitoring_lambda_role_arn]
+          }
+          actions    = ["kms:Decrypt", "kms:DescribeKey"]
+          resources  = ["*"]
+          conditions = []
+        }
+      ]
+    }
+  }
 
   # ...
 }
@@ -76,6 +112,9 @@ module "monitoring" {
   }
 }
 ```
+
+If your `kms_base_policy` grants `kms:*` to the account root (the default), the
+Lambda's IAM policy alone is sufficient and `extra_kms_policies` is not needed.
 
 # Example
 

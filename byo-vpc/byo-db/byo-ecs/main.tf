@@ -24,6 +24,7 @@ locals {
   private_key_secret_kms_key_arn = local.private_key_secret_cmk_enabled == true ? (
     var.fleet_config.private_key_secret_kms.kms_key_arn != null ? var.fleet_config.private_key_secret_kms.kms_key_arn : aws_kms_key.private_key_secret[0].arn
   ) : null
+
   application_logs_cmk_enabled    = coalesce(var.fleet_config.awslogs.kms.cmk_enabled, var.fleet_config.awslogs.kms.enabled, false)
   application_logs_create_kms_key = var.fleet_config.awslogs.create == true && local.application_logs_cmk_enabled == true && var.fleet_config.awslogs.kms.kms_key_arn == null
   application_logs_kms_key_arn = var.fleet_config.awslogs.create == true && local.application_logs_cmk_enabled == true ? (
@@ -81,6 +82,20 @@ locals {
         "kms:ReEncrypt*",
         "kms:GenerateDataKey*",
         "kms:CreateGrant",
+        "kms:DescribeKey"
+      ]
+      resources  = ["*"]
+      conditions = []
+    }
+    execution_role = {
+      sid    = "AllowExecutionRoleDecrypt"
+      effect = "Allow"
+      principals = {
+        type        = "AWS"
+        identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.fleet_config.iam.execution.name}"]
+      }
+      actions = [
+        "kms:Decrypt",
         "kms:DescribeKey"
       ]
       resources  = ["*"]
@@ -488,7 +503,8 @@ data "aws_iam_policy_document" "private_key_secret_kms" {
     for_each = concat(
       local.kms_base_policy_statements,
       var.fleet_config.private_key_secret_kms.extra_kms_policies,
-      [local.kms_service_statements.secretsmanager]
+      [local.kms_service_statements.secretsmanager],
+      [local.kms_service_statements.execution_role]
     )
     content {
       sid       = statement.value.sid
