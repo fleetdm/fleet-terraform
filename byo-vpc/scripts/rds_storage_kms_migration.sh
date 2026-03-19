@@ -33,7 +33,7 @@ Options:
   --old-final-snapshot-id <id>  Final snapshot identifier when deleting the old cluster.
   --skip-old-final-snapshot     Delete the old cluster without a final snapshot.
   --include-performance-insights
-                                Also enable Performance Insights CMK configuration during restore.
+                                Also enable Performance Insights CMK configuration after restore.
   --performance-insights-kms-alias <alias>
                                 Set rds_config.observability.kms.kms_alias during restore.
   --keep-old-resources          Leave the old Aurora resources in AWS after cutover.
@@ -46,10 +46,15 @@ Notes:
 * This assumes the caller passes rds_config as a direct inline object literal in the config file.
 * The helper intentionally leaves rds_config.snapshot_identifier pinned to the copied snapshot.
   Clearing it later would force Terraform to replace the restored cluster.
-* --include-performance-insights updates rds_config.observability during restore so the
-  recreated cluster can adopt Performance Insights CMK settings at creation time.
+* PI and Enhanced Monitoring are temporarily disabled during the snapshot restore because
+  AWS RestoreDBClusterFromSnapshot rejects these parameters for non-Limitless Aurora clusters.
+  The original settings (plus any --include-performance-insights changes) are re-applied
+  in a post-restore config edit before the reconcile apply, which enables them via
+  ModifyDBCluster (in-place, no downtime).
+* --include-performance-insights updates rds_config.observability in the post-restore
+  config edit so the reconcile apply adopts Performance Insights CMK settings.
 * --performance-insights-kms-alias controls the alias written to
-  rds_config.observability.kms.kms_alias during restore.
+  rds_config.observability.kms.kms_alias in the post-restore config edit.
 * Run this during a maintenance window. The snapshot/copy/restore path is not an in-place re-key.
 EOF
 }
@@ -536,6 +541,31 @@ sub upsert_observability_block {
   return $object_text;
 }
 
+sub disable_observability_for_restore {
+  my ($object_text) = @_;
+  my $indent = object_indent($object_text);
+  my $nested_indent = $indent . "  ";
+
+  my $replacement = "${indent}observability = {\n";
+  $replacement .= "${nested_indent}performance_insights_enabled = false\n";
+  $replacement .= "${nested_indent}database_insights_mode       = null\n";
+  $replacement .= "${nested_indent}kms = {\n";
+  $replacement .= "${nested_indent}  cmk_enabled = false\n";
+  $replacement .= "${nested_indent}}\n";
+  $replacement .= "${indent}}";
+
+  if ($object_text =~ /^([ \t]*)observability[ \t]*=[ \t]*\{/m) {
+    my $observability_start = $-[0];
+    my $observability_brace = index($object_text, "{", $observability_start);
+    my $observability_end = find_matching_brace($object_text, $observability_brace);
+    substr($object_text, $observability_start, $observability_end - $observability_start + 1, $replacement);
+    return $object_text;
+  }
+
+  $object_text =~ s/\n([ \t]*)\}$/\n$replacement\n$1}/s;
+  return $object_text;
+}
+
 sub replace_optional_mysql_password_secret_name {
   my ($text, $restored_name) = @_;
   my $replacement = quote_hcl($restored_name . "-database-password");
@@ -555,6 +585,19 @@ if ($mode eq "kms-bootstrap") {
   $object_text = upsert_simple_attribute($object_text, "snapshot_identifier", quote_hcl($snapshot_id));
   $object_text = upsert_simple_attribute($object_text, "restore_to_point_in_time", "{}");
   $object_text = upsert_storage_kms_block($object_text, $kms_key_arn, $kms_alias);
+  # Force-disable cluster-level PI and Enhanced Monitoring for the initial
+  # restore-from-snapshot apply.  AWS RestoreDBClusterFromSnapshot rejects
+  # these parameters for non-Limitless Aurora clusters.  They are re-enabled
+  # by the post-restore config edit before the reconcile apply.
+  $object_text = upsert_simple_attribute($object_text, "monitoring_interval", "0");
+  $object_text = disable_observability_for_restore($object_text);
+} elsif ($mode eq "post-restore") {
+  die "post-restore mode requires CONFIG_EDIT_RESTORED_NAME\n" if !length($restored_name);
+  die "post-restore mode requires CONFIG_EDIT_SOURCE_SNAPSHOT_ID\n" if !length($snapshot_id);
+  $object_text = upsert_simple_attribute($object_text, "name", quote_hcl($restored_name));
+  $object_text = upsert_simple_attribute($object_text, "snapshot_identifier", quote_hcl($snapshot_id));
+  $object_text = upsert_simple_attribute($object_text, "restore_to_point_in_time", "{}");
+  $object_text = upsert_storage_kms_block($object_text, $kms_key_arn, $kms_alias);
   if ($include_performance_insights eq "true") {
     $object_text = upsert_observability_block($object_text, $performance_insights_kms_alias);
   }
@@ -563,7 +606,7 @@ if ($mode eq "kms-bootstrap") {
 }
 
 substr($_, $start_index, $end_index - $start_index + 1, $object_text);
-if ($mode eq "restore") {
+if ($mode eq "restore" || $mode eq "post-restore") {
   $_ = replace_optional_mysql_password_secret_name($_, $restored_name);
 }
   ' "$file"
@@ -1033,13 +1076,7 @@ if [[ "$CLEANUP_ONLY" != "true" ]]; then
   fi
 
   if [[ "$DRY_RUN" == "true" ]]; then
-    log "dry run: would update ${CONFIG_FILE} in restore mode"
-    if [[ "$INCLUDE_PERFORMANCE_INSIGHTS" == "true" ]]; then
-      log "dry run: would also enable Performance Insights CMK configuration during restore"
-      if [[ -n "$PERFORMANCE_INSIGHTS_KMS_ALIAS" ]]; then
-        log "dry run: would set observability.kms.kms_alias to ${PERFORMANCE_INSIGHTS_KMS_ALIAS}"
-      fi
-    fi
+    log "dry run: would update ${CONFIG_FILE} in restore mode (PI and Enhanced Monitoring temporarily disabled for snapshot restore)"
   else
     update_rds_config_file "$CONFIG_FILE" "restore"
     copy_file "$CONFIG_FILE" "$ARTIFACT_DIR/$(basename "$CONFIG_FILE").after-restore"
@@ -1057,6 +1094,22 @@ if [[ "$CLEANUP_ONLY" != "true" ]]; then
     log "dry run: would run a targeted terraform apply for ${MODULE_ADDRESS} to restore the new Aurora cluster from ${COPIED_SNAPSHOT_ID}"
   else
     terraform_apply_byo_vpc_only
+  fi
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "dry run: would restore original config and re-apply in post-restore mode (re-enables PI and Enhanced Monitoring)"
+    if [[ "$INCLUDE_PERFORMANCE_INSIGHTS" == "true" ]]; then
+      log "dry run: would also enable Performance Insights CMK configuration"
+      if [[ -n "$PERFORMANCE_INSIGHTS_KMS_ALIAS" ]]; then
+        log "dry run: would set observability.kms.kms_alias to ${PERFORMANCE_INSIGHTS_KMS_ALIAS}"
+      fi
+    fi
+  else
+    log "restoring original config for post-restore edit (re-enables PI and Enhanced Monitoring)"
+    copy_file "$ARTIFACT_DIR/$(basename "$CONFIG_FILE").original" "$CONFIG_FILE"
+    update_rds_config_file "$CONFIG_FILE" "post-restore"
+    copy_file "$CONFIG_FILE" "$ARTIFACT_DIR/$(basename "$CONFIG_FILE").after-post-restore"
+    terraform fmt "$CONFIG_FILE" >/dev/null
   fi
 
   if [[ "$DRY_RUN" == "true" ]]; then
