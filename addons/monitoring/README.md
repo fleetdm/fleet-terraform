@@ -29,6 +29,10 @@ https://github.com/fleetdm/fleet-terraform/blob/main/example/main.tf for details
 
 > Note: If you haven't specified defined `local.customer` or customized service names, the default is "fleet" for anywhere that `local.customer` is specified below.
 
+If the Fleet database password secret is encrypted with a CMK, also pass `mysql_password_secret_kms_key_arn` so the cron-monitoring Lambda can decrypt it. When using the `byo-vpc` module, wire this from `module.<fleet_module>.byo-vpc.rds_password_secret_kms_key_arn`.
+
+**Important:** If you supply a custom `kms_base_policy` that does not grant `kms:*` to the account root (for example, a least-privilege policy that only allows specific principals), you must also add the cron-monitoring Lambda role to `rds_config.password_secret_kms.extra_kms_policies` in the `byo-vpc` module. AWS KMS requires both the key policy and the IAM policy to allow access. The Lambda role name is predictable (`<customer_prefix>-cron-monitoring-lambda`), so you can construct the ARN before the role exists. See the `byo-vpc` module README for a full example.
+
 ```
 module "monitoring" {
   source                 = "github.com/fleetdm/fleet-terraform//addons/monitoring?ref=tf-mod-addon-monitoring-v1.9.0"
@@ -69,6 +73,7 @@ module "monitoring" {
     mysql_database             = module.fleet.byo-vpc.rds.cluster_database_name
     mysql_user                 = module.fleet.byo-vpc.rds.cluster_master_username
     mysql_password_secret_name = "${local.customer}-database-password"
+    mysql_password_secret_kms_key_arn = module.fleet.byo-vpc.rds_password_secret_kms_key_arn
     mysql_tls_config           = "true"
     rds_security_group_id      = module.fleet.byo-vpc.rds.security_group_id
     subnet_ids                 = module.fleet.vpc.private_subnets
@@ -158,7 +163,7 @@ No requirements.
 | Name | Version |
 |------|---------|
 | <a name="provider_archive"></a> [archive](#provider\_archive) | 2.7.1 |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.33.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.20.0 |
 | <a name="provider_null"></a> [null](#provider\_null) | 3.2.4 |
 
 ## Modules
@@ -207,7 +212,7 @@ No modules.
 |------|-------------|------|---------|:--------:|
 | <a name="input_acm_certificate_arn"></a> [acm\_certificate\_arn](#input\_acm\_certificate\_arn) | n/a | `string` | `null` | no |
 | <a name="input_albs"></a> [albs](#input\_albs) | n/a | <pre>list(object({<br/>    name                    = string<br/>    arn_suffix              = string<br/>    target_group_name       = string<br/>    target_group_arn_suffix = string<br/>    min_containers          = optional(string, 1)<br/>    ecs_service_name        = string<br/>    alert_thresholds = optional(<br/>      object({<br/>        HTTPCode_ELB_5XX_Count = object({<br/>          period    = number<br/>          threshold = number<br/>        })<br/>        HTTPCode_Target_5XX_Count = object({<br/>          period    = number<br/>          threshold = number<br/>        })<br/>      }),<br/>      {<br/>        HTTPCode_ELB_5XX_Count = {<br/>          period    = 120<br/>          threshold = 0<br/>        },<br/>        HTTPCode_Target_5XX_Count = {<br/>          period    = 120<br/>          threshold = 0<br/>        }<br/>      }<br/>    )<br/>  }))</pre> | `[]` | no |
-| <a name="input_cron_monitoring"></a> [cron\_monitoring](#input\_cron\_monitoring) | n/a | <pre>object({<br/>    mysql_host                 = string<br/>    mysql_database             = string<br/>    mysql_user                 = string<br/>    mysql_password_secret_name = string<br/>    mysql_tls_config           = optional(string, "true")<br/>    vpc_id                     = string<br/>    subnet_ids                 = list(string)<br/>    rds_security_group_id      = string<br/>    delay_tolerance            = string<br/>    run_interval               = string<br/>    log_retention_in_days      = optional(number, 7)<br/>    ignore_list                = optional(list(string), [])<br/>  })</pre> | `null` | no |
+| <a name="input_cron_monitoring"></a> [cron\_monitoring](#input\_cron\_monitoring) | n/a | <pre>object({<br/>    mysql_host                 = string<br/>    mysql_database             = string<br/>    mysql_user                 = string<br/>    mysql_password_secret_name = string<br/>    mysql_password_secret_kms_key_arn = optional(string, null)<br/>    mysql_tls_config           = optional(string, "true")<br/>    vpc_id                     = string<br/>    subnet_ids                 = list(string)<br/>    rds_security_group_id      = string<br/>    delay_tolerance            = string<br/>    run_interval               = string<br/>    log_retention_in_days      = optional(number, 7)<br/>    ignore_list                = optional(list(string), [])<br/>  })</pre> | `null` | no |
 | <a name="input_customer_prefix"></a> [customer\_prefix](#input\_customer\_prefix) | n/a | `string` | `"fleet"` | no |
 | <a name="input_default_sns_topic_arns"></a> [default\_sns\_topic\_arns](#input\_default\_sns\_topic\_arns) | n/a | `list(string)` | `[]` | no |
 | <a name="input_fleet_ecs_service_name"></a> [fleet\_ecs\_service\_name](#input\_fleet\_ecs\_service\_name) | n/a | `string` | `null` | no |
@@ -218,4 +223,7 @@ No modules.
 
 ## Outputs
 
-No outputs.
+| Name | Description |
+|------|-------------|
+| <a name="output_cron_monitoring_lambda_arn"></a> [cron\_monitoring\_lambda\_arn](#output\_cron\_monitoring\_lambda\_arn) | n/a |
+| <a name="output_cron_monitoring_lambda_role_arn"></a> [cron\_monitoring\_lambda\_role\_arn](#output\_cron\_monitoring\_lambda\_role\_arn) | n/a |

@@ -13,3 +13,7 @@ output "extra_execution_iam_policies" {
 output "cloudfront_arn" {
   value = module.cloudfront_software_installers.cloudfront_distribution_arn
 }
+
+output "cloudfront_distribution_arn" {
+  value = module.cloudfront_software_installers.cloudfront_distribution_arn
+}

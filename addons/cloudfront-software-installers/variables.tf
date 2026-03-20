@@ -41,12 +41,6 @@ variable "s3_bucket" {
   type        = string
 }
 
-variable "s3_kms_key_id" {
-  description = "KMS key id used to encrypt the s3 bucket"
-  type        = string
-  default     = null
-}
-
 variable "enable_logging" {
   description = "Enable optional logging to s3"
   type        = bool

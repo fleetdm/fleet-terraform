@@ -9,6 +9,26 @@ variable "vpc_id" {
   default = null
 }
 
+variable "kms_base_policy" {
+  type = list(object({
+    sid    = string
+    effect = string
+    principals = object({
+      type        = string
+      identifiers = list(string)
+    })
+    actions   = list(string)
+    resources = list(string)
+    conditions = optional(list(object({
+      test     = string
+      variable = string
+      values   = list(string)
+    })), [])
+  }))
+  default     = null
+  description = "Optional base KMS key-policy statements to apply to module-created CMKs before module-required service access statements are merged in. If null, the module defaults to the historical root `kms:*` statement."
+}
+
 variable "fleet_config" {
   type = object({
     task_mem = optional(number, null)
@@ -34,13 +54,17 @@ variable "fleet_config" {
     repository_credentials       = optional(string, "")
     private_key_secret_name      = optional(string, "fleet-server-private-key")
     private_key_secret_kms = optional(object({
-      enabled     = optional(bool, false)
-      kms_key_arn = optional(string, null)
-      kms_alias   = optional(string, "fleet-server-private-key")
+      cmk_enabled        = optional(bool, null)
+      enabled            = optional(bool, null)
+      kms_key_arn        = optional(string, null)
+      kms_alias          = optional(string, "fleet-server-private-key")
+      extra_kms_policies = optional(list(any), [])
       }), {
-      enabled     = false
-      kms_key_arn = null
-      kms_alias   = "fleet-server-private-key"
+      cmk_enabled        = null
+      enabled            = null
+      kms_key_arn        = null
+      kms_alias          = "fleet-server-private-key"
+      extra_kms_policies = []
     })
     server_tls_enabled = optional(bool, false)
     service = optional(object({
@@ -49,11 +73,12 @@ variable "fleet_config" {
       name = "fleet"
     })
     database = object({
-      password_secret_arn = string
-      user                = string
-      database            = string
-      address             = string
-      rr_address          = optional(string, null)
+      password_secret_arn         = string
+      password_secret_kms_key_arn = optional(string, null)
+      user                        = string
+      database                    = string
+      address                     = string
+      rr_address                  = optional(string, null)
     })
     redis = object({
       address = string
@@ -66,13 +91,17 @@ variable "fleet_config" {
       prefix    = optional(string, "fleet")
       retention = optional(number, 5)
       kms = optional(object({
-        enabled     = optional(bool, false)
-        kms_key_arn = optional(string, null)
-        kms_alias   = optional(string, "fleet-application-logs")
+        cmk_enabled        = optional(bool, null)
+        enabled            = optional(bool, null)
+        kms_key_arn        = optional(string, null)
+        kms_alias          = optional(string, "fleet-application-logs")
+        extra_kms_policies = optional(list(any), [])
         }), {
-        enabled     = false
-        kms_key_arn = null
-        kms_alias   = "fleet-application-logs"
+        cmk_enabled        = null
+        enabled            = null
+        kms_key_arn        = null
+        kms_alias          = "fleet-application-logs"
+        extra_kms_policies = []
       })
       }), {
       name      = null
@@ -81,9 +110,11 @@ variable "fleet_config" {
       prefix    = "fleet"
       retention = 5
       kms = {
-        enabled     = false
-        kms_key_arn = null
-        kms_alias   = "fleet-application-logs"
+        cmk_enabled        = null
+        enabled            = null
+        kms_key_arn        = null
+        kms_alias          = "fleet-application-logs"
+        extra_kms_policies = []
       }
     })
     loadbalancer = object({
@@ -135,24 +166,28 @@ variable "fleet_config" {
       bucket_name                        = optional(string, null)
       bucket_prefix                      = optional(string, "fleet-software-installers-")
       s3_object_prefix                   = optional(string, "")
+      cloudfront_distribution_arn        = optional(string, null)
       enable_bucket_versioning           = optional(bool, false)
       expire_noncurrent_versions         = optional(bool, true)
       noncurrent_version_expiration_days = optional(number, 30)
       create_kms_key                     = optional(bool, false)
       kms_key_arn                        = optional(string, null)
       kms_alias                          = optional(string, "fleet-software-installers")
+      extra_kms_policies                 = optional(list(any), [])
       tags                               = optional(map(string), {})
       }), {
       create_bucket                      = true
       bucket_name                        = null
       bucket_prefix                      = "fleet-software-installers-"
       s3_object_prefix                   = ""
+      cloudfront_distribution_arn        = null
       enable_bucket_versioning           = false
       expire_noncurrent_versions         = true
       noncurrent_version_expiration_days = 30
       create_kms_key                     = false
       kms_key_arn                        = null
       kms_alias                          = "fleet-software-installers"
+      extra_kms_policies                 = []
       tags                               = {}
     })
   })
@@ -178,9 +213,11 @@ variable "fleet_config" {
     repository_credentials       = ""
     private_key_secret_name      = "fleet-server-private-key"
     private_key_secret_kms = {
-      enabled     = false
-      kms_key_arn = null
-      kms_alias   = "fleet-server-private-key"
+      cmk_enabled        = null
+      enabled            = null
+      kms_key_arn        = null
+      kms_alias          = "fleet-server-private-key"
+      extra_kms_policies = []
     }
     server_tls_enabled = false
     service = {
@@ -204,9 +241,11 @@ variable "fleet_config" {
       prefix    = "fleet"
       retention = 5
       kms = {
-        enabled     = false
-        kms_key_arn = null
-        kms_alias   = "fleet-application-logs"
+        cmk_enabled        = null
+        enabled            = null
+        kms_key_arn        = null
+        kms_alias          = "fleet-application-logs"
+        extra_kms_policies = []
       }
     }
     loadbalancer = {
@@ -245,19 +284,21 @@ variable "fleet_config" {
       bucket_name                        = null
       bucket_prefix                      = "fleet-software-installers-"
       s3_object_prefix                   = ""
+      cloudfront_distribution_arn        = null
       enable_bucket_versioning           = false
       expire_noncurrent_versions         = true
       noncurrent_version_expiration_days = 30
       create_kms_key                     = false
       kms_key_arn                        = null
       kms_alias                          = "fleet-software-installers"
+      extra_kms_policies                 = []
       tags                               = {}
     }
   }
-  description = "The configuration object for Fleet itself. Fields that default to null will have their respective resources created if not specified."
+  description = "The configuration object for Fleet itself. Fields that default to null will have their respective resources created if not specified. For published KMS blocks, legacy `enabled` is deprecated and still accepted; prefer `cmk_enabled`."
   nullable    = false
   validation {
-    condition     = var.fleet_config.ephemeral_storage == null || (var.fleet_config.ephemeral_storage.size_in_gib >= 21 && var.fleet_config.ephemeral_storage.size_in_gib <= 200)
+    condition     = var.fleet_config.ephemeral_storage == null ? true : (var.fleet_config.ephemeral_storage.size_in_gib >= 21 && var.fleet_config.ephemeral_storage.size_in_gib <= 200)
     error_message = "fleet_config.ephemeral_storage.size_in_gib must be between 21 and 200 GiB when set."
   }
 }

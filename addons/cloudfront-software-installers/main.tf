@@ -1,5 +1,3 @@
-data "aws_caller_identity" "current" {}
-
 data "aws_iam_policy_document" "software_installers_bucket" {
   statement {
     actions   = ["s3:GetObject"]
@@ -24,38 +22,6 @@ data "aws_s3_bucket" "software_installers" {
 resource "aws_s3_bucket_policy" "software_installers" {
   bucket = data.aws_s3_bucket.software_installers.bucket
   policy = data.aws_iam_policy_document.software_installers_bucket.json
-}
-
-data "aws_iam_policy_document" "software_installers_kms" {
-  statement {
-    actions = ["kms:*"]
-    principals {
-      type        = "AWS"
-      identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
-    }
-    resources = ["*"]
-  }
-  statement {
-    sid    = "AllowOriginAccessIdentity"
-    effect = "Allow"
-    principals {
-      type        = "Service"
-      identifiers = ["cloudfront.amazonaws.com"]
-    }
-    actions   = ["kms:Decrypt"]
-    resources = ["*"]
-    condition {
-      test     = "StringEquals"
-      variable = "AWS:SourceArn"
-      values   = [module.cloudfront_software_installers.cloudfront_distribution_arn]
-    }
-  }
-}
-
-resource "aws_kms_key_policy" "software_installers" {
-  count  = var.s3_kms_key_id != null ? 1 : 0
-  key_id = var.s3_kms_key_id
-  policy = data.aws_iam_policy_document.software_installers_kms.json
 }
 
 data "aws_iam_policy_document" "software_installers_secret" {

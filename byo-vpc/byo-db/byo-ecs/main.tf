@@ -19,12 +19,15 @@ locals {
       credentialsParameter = var.fleet_config.repository_credentials
     }
   } : null
-  private_key_secret_create_kms_key = var.fleet_config.private_key_secret_kms.enabled == true && var.fleet_config.private_key_secret_kms.kms_key_arn == null
-  private_key_secret_kms_key_arn = var.fleet_config.private_key_secret_kms.enabled == true ? (
+  private_key_secret_cmk_enabled    = coalesce(var.fleet_config.private_key_secret_kms.cmk_enabled, var.fleet_config.private_key_secret_kms.enabled, false)
+  private_key_secret_create_kms_key = local.private_key_secret_cmk_enabled == true && var.fleet_config.private_key_secret_kms.kms_key_arn == null
+  private_key_secret_kms_key_arn = local.private_key_secret_cmk_enabled == true ? (
     var.fleet_config.private_key_secret_kms.kms_key_arn != null ? var.fleet_config.private_key_secret_kms.kms_key_arn : aws_kms_key.private_key_secret[0].arn
   ) : null
-  application_logs_create_kms_key = var.fleet_config.awslogs.create == true && var.fleet_config.awslogs.kms.enabled == true && var.fleet_config.awslogs.kms.kms_key_arn == null
-  application_logs_kms_key_arn = var.fleet_config.awslogs.create == true && var.fleet_config.awslogs.kms.enabled == true ? (
+
+  application_logs_cmk_enabled    = coalesce(var.fleet_config.awslogs.kms.cmk_enabled, var.fleet_config.awslogs.kms.enabled, false)
+  application_logs_create_kms_key = var.fleet_config.awslogs.create == true && local.application_logs_cmk_enabled == true && var.fleet_config.awslogs.kms.kms_key_arn == null
+  application_logs_kms_key_arn = var.fleet_config.awslogs.create == true && local.application_logs_cmk_enabled == true ? (
     var.fleet_config.awslogs.kms.kms_key_arn != null ? var.fleet_config.awslogs.kms.kms_key_arn : aws_kms_key.application_logs[0].arn
   ) : null
   software_installers_create_kms_key = var.fleet_config.software_installers.create_kms_key == true && var.fleet_config.software_installers.kms_key_arn == null
@@ -34,6 +37,127 @@ locals {
   software_installers_kms_key_id = var.fleet_config.software_installers.create_kms_key == true || var.fleet_config.software_installers.kms_key_arn != null ? (
     var.fleet_config.software_installers.kms_key_arn != null ? data.aws_kms_key.software_installers_provided[0].key_id : aws_kms_key.software_installers[0].id
   ) : null
+  task_role_kms_principal_arn = var.fleet_config.iam_role_arn != null ? var.fleet_config.iam_role_arn : aws_iam_role.main[0].arn
+  kms_base_policy_statements = var.kms_base_policy != null ? var.kms_base_policy : [
+    {
+      sid    = "EnableRootPermissions"
+      effect = "Allow"
+      principals = {
+        type        = "AWS"
+        identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+      }
+      actions    = ["kms:*"]
+      resources  = ["*"]
+      conditions = []
+    }
+  ]
+  kms_service_statements = {
+    cloudwatch_logs = {
+      sid    = "AllowCloudWatchLogsUseOfTheKey"
+      effect = "Allow"
+      principals = {
+        type        = "Service"
+        identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
+      }
+      actions = [
+        "kms:Encrypt*",
+        "kms:Decrypt*",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:Describe*"
+      ]
+      resources  = ["*"]
+      conditions = []
+    }
+    secretsmanager = {
+      sid    = "AllowSecretsManagerUseOfTheKey"
+      effect = "Allow"
+      principals = {
+        type        = "Service"
+        identifiers = ["secretsmanager.amazonaws.com"]
+      }
+      actions = [
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:CreateGrant",
+        "kms:DescribeKey"
+      ]
+      resources  = ["*"]
+      conditions = []
+    }
+    execution_role = {
+      sid    = "AllowExecutionRoleDecrypt"
+      effect = "Allow"
+      principals = {
+        type        = "AWS"
+        identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.fleet_config.iam.execution.name}"]
+      }
+      actions = [
+        "kms:Decrypt",
+        "kms:DescribeKey"
+      ]
+      resources  = ["*"]
+      conditions = []
+    }
+  }
+  software_installers_kms_service_statements = var.fleet_config.software_installers.cloudfront_distribution_arn != null ? [
+    {
+      sid    = "AllowCloudFrontDistributionUseOfTheKey"
+      effect = "Allow"
+      principals = {
+        type        = "Service"
+        identifiers = ["cloudfront.amazonaws.com"]
+      }
+      actions = [
+        "kms:Decrypt",
+        "kms:Encrypt",
+        "kms:GenerateDataKey*"
+      ]
+      resources = ["*"]
+      conditions = [
+        {
+          test     = "StringEquals"
+          variable = "AWS:SourceArn"
+          values   = [var.fleet_config.software_installers.cloudfront_distribution_arn]
+        }
+      ]
+    }
+  ] : []
+  software_installers_kms_task_role_statements = [
+    {
+      sid    = "AllowFleetTaskRoleUseOfTheKey"
+      effect = "Allow"
+      principals = {
+        type        = "AWS"
+        identifiers = [local.task_role_kms_principal_arn]
+      }
+      actions = [
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:Encrypt*",
+        "kms:Describe*",
+        "kms:Decrypt*"
+      ]
+      resources  = ["*"]
+      conditions = []
+    }
+  ]
+}
+
+check "deprecated_fleet_config_private_key_secret_kms_enabled" {
+  assert {
+    condition     = var.fleet_config.private_key_secret_kms.enabled == null
+    error_message = "fleet_config.private_key_secret_kms.enabled is deprecated; use fleet_config.private_key_secret_kms.cmk_enabled instead."
+  }
+}
+
+check "deprecated_fleet_config_awslogs_kms_enabled" {
+  assert {
+    condition     = var.fleet_config.awslogs.kms.enabled == null
+    error_message = "fleet_config.awslogs.kms.enabled is deprecated; use fleet_config.awslogs.kms.cmk_enabled instead."
+  }
 }
 
 data "aws_region" "current" {}
@@ -256,34 +380,30 @@ resource "aws_appautoscaling_policy" "ecs_policy_cpu" {
 data "aws_iam_policy_document" "application_logs_kms" {
   count = local.application_logs_create_kms_key == true ? 1 : 0
 
-  statement {
-    sid    = "EnableRootPermissions"
-    effect = "Allow"
-    actions = [
-      "kms:*"
-    ]
-    principals {
-      type        = "AWS"
-      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+  dynamic "statement" {
+    for_each = concat(
+      local.kms_base_policy_statements,
+      var.fleet_config.awslogs.kms.extra_kms_policies,
+      [local.kms_service_statements.cloudwatch_logs]
+    )
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
     }
-    resources = ["*"]
-  }
-
-  statement {
-    sid    = "AllowCloudWatchLogsUseOfTheKey"
-    effect = "Allow"
-    actions = [
-      "kms:Encrypt*",
-      "kms:Decrypt*",
-      "kms:ReEncrypt*",
-      "kms:GenerateDataKey*",
-      "kms:Describe*"
-    ]
-    principals {
-      type        = "Service"
-      identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
-    }
-    resources = ["*"]
   }
 }
 
@@ -360,6 +480,7 @@ resource "aws_kms_key" "software_installers" {
   count               = local.software_installers_create_kms_key == true ? 1 : 0
   description         = "CMK for Fleet software installers S3 bucket object encryption."
   enable_key_rotation = true
+  policy              = data.aws_iam_policy_document.software_installers_kms[0].json
 }
 
 resource "aws_kms_alias" "software_installers" {
@@ -372,6 +493,69 @@ resource "aws_kms_key" "private_key_secret" {
   count               = local.private_key_secret_create_kms_key == true ? 1 : 0
   description         = "CMK for Fleet server private key secret encryption in Secrets Manager."
   enable_key_rotation = true
+  policy              = data.aws_iam_policy_document.private_key_secret_kms[0].json
+}
+
+data "aws_iam_policy_document" "private_key_secret_kms" {
+  count = local.private_key_secret_create_kms_key == true ? 1 : 0
+
+  dynamic "statement" {
+    for_each = concat(
+      local.kms_base_policy_statements,
+      var.fleet_config.private_key_secret_kms.extra_kms_policies,
+      [local.kms_service_statements.secretsmanager],
+      [local.kms_service_statements.execution_role]
+    )
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+}
+
+data "aws_iam_policy_document" "software_installers_kms" {
+  count = local.software_installers_create_kms_key == true ? 1 : 0
+
+  dynamic "statement" {
+    for_each = concat(
+      local.kms_base_policy_statements,
+      var.fleet_config.software_installers.extra_kms_policies,
+      local.software_installers_kms_task_role_statements,
+      local.software_installers_kms_service_statements
+    )
+    content {
+      sid       = try(statement.value.sid, "")
+      effect    = try(statement.value.effect, null)
+      actions   = try(statement.value.actions, [])
+      resources = try(statement.value.resources, [])
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
 }
 
 resource "aws_kms_alias" "private_key_secret" {

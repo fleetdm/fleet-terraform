@@ -1,59 +1,63 @@
 data "aws_caller_identity" "current" {}
 
+data "aws_partition" "current" {}
+
 data "aws_region" "current" {}
 
 locals {
   landing_bucket_name = "${var.prefix}-alb-logs"
 
-  kms_policies = concat([
+  kms_base_policy_statements = var.kms_base_policy != null ? var.kms_base_policy : [
     {
-      actions = ["kms:*"]
-      principals = [{
+      sid       = "EnableRootPermissions"
+      effect    = "Allow"
+      actions   = ["kms:*"]
+      resources = ["*"]
+      principals = {
         type        = "AWS"
-        identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
-      }]
-      resources = ["*"]
-    },
+        identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+      }
+      conditions = []
+    }
+  ]
+
+  kms_service_statements = [
     {
-      actions = [
-        "kms:Encrypt",
-        "kms:Decrypt",
-        "kms:GenerateDataKey*",
-        "kms:DescribeKey",
-      ]
+      sid       = "AllowLambdaReencryptUseOfTheKey"
+      effect    = "Allow"
+      actions   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey*", "kms:DescribeKey"]
       resources = ["*"]
-      principals = [{
+      principals = {
         type        = "AWS"
         identifiers = [aws_iam_role.lambda_reencrypt.arn]
-      }]
+      }
+      conditions = []
     },
     {
-      actions = [
-        "kms:Encrypt",
-        "kms:Decrypt",
-        "kms:GenerateDataKey*",
-        "kms:DescribeKey",
-      ]
+      sid       = "AllowLambdaSweepUseOfTheKey"
+      effect    = "Allow"
+      actions   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey*", "kms:DescribeKey"]
       resources = ["*"]
-      principals = [{
+      principals = {
         type        = "AWS"
         identifiers = [aws_iam_role.lambda_sweep.arn]
-      }]
+      }
+      conditions = []
     },
     {
-      actions = [
-        "kms:Encrypt",
-        "kms:GenerateDataKey",
-        "kms:GenerateDataKeyWithoutPlaintext",
-        "kms:DescribeKey",
-      ]
+      sid       = "AllowBatchReencryptUseOfTheKey"
+      effect    = "Allow"
+      actions   = ["kms:Encrypt", "kms:GenerateDataKey", "kms:GenerateDataKeyWithoutPlaintext", "kms:DescribeKey"]
       resources = ["*"]
-      principals = [{
+      principals = {
         type        = "AWS"
         identifiers = [aws_iam_role.batch_reencrypt.arn]
-      }]
-    },
-  ], var.extra_kms_policies)
+      }
+      conditions = []
+    }
+  ]
+
+  kms_policies = concat(local.kms_base_policy_statements, local.kms_service_statements, var.extra_kms_policies)
 
   s3_path_prefix = coalesce(var.alt_path_prefix, var.prefix)
 }
@@ -68,7 +72,7 @@ data "aws_iam_policy_document" "kms" {
       resources = try(statement.value.resources, [])
       effect    = try(statement.value.effect, null)
       dynamic "principals" {
-        for_each = try(statement.value.principals, [])
+        for_each = try([statement.value.principals], [])
         content {
           type        = principals.value.type
           identifiers = principals.value.identifiers
