@@ -237,18 +237,60 @@ module "cluster" {
   tags                                   = var.ecs_cluster.tags
 }
 
+# Each source uses its own dynamic "statement" block to avoid Terraform type
+# conflicts when concatenating typed variable values with inline literal tuples.
 data "aws_iam_policy_document" "fargate_ephemeral_storage_kms" {
   count = local.fargate_ephemeral_storage_create_kms_key == true ? 1 : 0
 
   dynamic "statement" {
-    for_each = concat(
-      local.kms_base_policy_statements,
-      var.fleet_config.fargate_ephemeral_storage_kms.extra_kms_policies,
-      [
-        local.kms_service_statements.fargate_generate_data_key,
-        local.kms_service_statements.fargate_create_grant,
-      ]
-    )
+    for_each = local.kms_base_policy_statements
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.fleet_config.fargate_ephemeral_storage_kms.extra_kms_policies
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = [
+      local.kms_service_statements.fargate_generate_data_key,
+      local.kms_service_statements.fargate_create_grant,
+    ]
     content {
       sid       = statement.value.sid
       effect    = statement.value.effect
@@ -283,15 +325,57 @@ resource "aws_kms_alias" "fargate_ephemeral_storage" {
   name          = "alias/${var.fleet_config.fargate_ephemeral_storage_kms.kms_alias}"
 }
 
+# Each source uses its own dynamic "statement" block to avoid Terraform type
+# conflicts when concatenating typed variable values with inline literal tuples.
 data "aws_iam_policy_document" "cluster_cloudwatch_log_group_kms" {
   count = local.cluster_cloudwatch_log_group_create_kms_key == true ? 1 : 0
 
   dynamic "statement" {
-    for_each = concat(
-      local.kms_base_policy_statements,
-      var.ecs_cluster.cloudwatch_log_group.kms.extra_kms_policies,
-      [local.kms_service_statements.cloudwatch_logs]
-    )
+    for_each = local.kms_base_policy_statements
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.ecs_cluster.cloudwatch_log_group.kms.extra_kms_policies
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = [local.kms_service_statements.cloudwatch_logs]
     content {
       sid       = statement.value.sid
       effect    = statement.value.effect

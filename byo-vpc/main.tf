@@ -194,15 +194,57 @@ data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 data "aws_region" "current" {}
 
+# Each source uses its own dynamic "statement" block to avoid Terraform type
+# conflicts when concatenating typed variable values with inline literal tuples.
 data "aws_iam_policy_document" "rds_storage_kms" {
   count = local.rds_storage_create_kms_key == true ? 1 : 0
 
   dynamic "statement" {
-    for_each = concat(
-      local.kms_base_policy_statements,
-      var.rds_config.storage_kms.extra_kms_policies,
-      [local.kms_service_statements.rds]
-    )
+    for_each = local.kms_base_policy_statements
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.rds_config.storage_kms.extra_kms_policies
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = [local.kms_service_statements.rds]
     content {
       sid       = statement.value.sid
       effect    = statement.value.effect
@@ -237,16 +279,79 @@ resource "aws_kms_alias" "rds_storage" {
   name          = "alias/${var.rds_config.storage_kms.kms_alias}"
 }
 
+# Each source uses its own dynamic "statement" block to avoid Terraform type
+# conflicts when concatenating typed variable values with inline literal tuples.
 data "aws_iam_policy_document" "rds_password_secret_kms" {
   count = local.rds_password_secret_create_kms_key == true ? 1 : 0
 
   dynamic "statement" {
-    for_each = concat(
-      local.kms_base_policy_statements,
-      var.rds_config.password_secret_kms.extra_kms_policies,
-      [local.kms_service_statements.secretsmanager],
-      [local.kms_service_statements.execution_role]
-    )
+    for_each = local.kms_base_policy_statements
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.rds_config.password_secret_kms.extra_kms_policies
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = [local.kms_service_statements.secretsmanager]
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = [local.kms_service_statements.execution_role]
     content {
       sid       = statement.value.sid
       effect    = statement.value.effect
@@ -281,15 +386,57 @@ resource "aws_kms_alias" "rds_password_secret" {
   name          = "alias/${var.rds_config.password_secret_kms.kms_alias}"
 }
 
+# Each source uses its own dynamic "statement" block to avoid Terraform type
+# conflicts when concatenating typed variable values with inline literal tuples.
 data "aws_iam_policy_document" "rds_observability_kms" {
   count = local.rds_observability_create_kms_key == true ? 1 : 0
 
   dynamic "statement" {
-    for_each = concat(
-      local.kms_base_policy_statements,
-      var.rds_config.observability.kms.extra_kms_policies,
-      [local.kms_service_statements.rds]
-    )
+    for_each = local.kms_base_policy_statements
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.rds_config.observability.kms.extra_kms_policies
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = [local.kms_service_statements.rds]
     content {
       sid       = statement.value.sid
       effect    = statement.value.effect
@@ -324,15 +471,57 @@ resource "aws_kms_alias" "rds_observability" {
   name          = "alias/${var.rds_config.observability.kms.kms_alias}"
 }
 
+# Each source uses its own dynamic "statement" block to avoid Terraform type
+# conflicts when concatenating typed variable values with inline literal tuples.
 data "aws_iam_policy_document" "rds_cloudwatch_log_group_kms" {
   count = local.rds_cloudwatch_log_group_create_kms_key == true ? 1 : 0
 
   dynamic "statement" {
-    for_each = concat(
-      local.kms_base_policy_statements,
-      var.rds_config.cloudwatch_log_group.kms.extra_kms_policies,
-      [local.kms_service_statements.cloudwatch_logs]
-    )
+    for_each = local.kms_base_policy_statements
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.rds_config.cloudwatch_log_group.kms.extra_kms_policies
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = [local.kms_service_statements.cloudwatch_logs]
     content {
       sid       = statement.value.sid
       effect    = statement.value.effect
@@ -367,15 +556,57 @@ resource "aws_kms_alias" "rds_cloudwatch_log_group" {
   name          = "alias/${var.rds_config.cloudwatch_log_group.kms.kms_alias}"
 }
 
+# Each source uses its own dynamic "statement" block to avoid Terraform type
+# conflicts when concatenating typed variable values with inline literal tuples.
 data "aws_iam_policy_document" "redis_at_rest_kms" {
   count = local.redis_at_rest_create_kms_key == true ? 1 : 0
 
   dynamic "statement" {
-    for_each = concat(
-      local.kms_base_policy_statements,
-      var.redis_config.at_rest_kms.extra_kms_policies,
-      [local.kms_service_statements.elasticache]
-    )
+    for_each = local.kms_base_policy_statements
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.redis_config.at_rest_kms.extra_kms_policies
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = [local.kms_service_statements.elasticache]
     content {
       sid       = statement.value.sid
       effect    = statement.value.effect
@@ -410,15 +641,57 @@ resource "aws_kms_alias" "redis_at_rest" {
   name          = "alias/${var.redis_config.at_rest_kms.kms_alias}"
 }
 
+# Each source uses its own dynamic "statement" block to avoid Terraform type
+# conflicts when concatenating typed variable values with inline literal tuples.
 data "aws_iam_policy_document" "redis_cloudwatch_log_group_kms" {
   count = local.redis_cloudwatch_log_group_create_kms_key == true ? 1 : 0
 
   dynamic "statement" {
-    for_each = concat(
-      local.kms_base_policy_statements,
-      var.redis_config.cloudwatch_log_group.kms.extra_kms_policies,
-      [local.kms_service_statements.cloudwatch_logs]
-    )
+    for_each = local.kms_base_policy_statements
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.redis_config.cloudwatch_log_group.kms.extra_kms_policies
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = [local.kms_service_statements.cloudwatch_logs]
     content {
       sid       = statement.value.sid
       effect    = statement.value.effect

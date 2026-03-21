@@ -109,15 +109,57 @@ resource "aws_kms_alias" "osquery_carve" {
   name          = "alias/${var.osquery_carve_s3_bucket.kms.kms_alias}"
 }
 
+# Each source uses its own dynamic "statement" block to avoid Terraform type
+# conflicts when concatenating typed variable values with inline literal tuples.
 data "aws_iam_policy_document" "osquery_carve_kms" {
   count = local.osquery_carve_create_kms_key ? 1 : 0
 
   dynamic "statement" {
-    for_each = concat(
-      local.kms_base_policy_statements,
-      var.osquery_carve_s3_bucket.kms.extra_kms_policies,
-      local.osquery_carve_kms_task_role_statements
-    )
+    for_each = local.kms_base_policy_statements
+    content {
+      sid       = try(statement.value.sid, "")
+      effect    = try(statement.value.effect, null)
+      actions   = try(statement.value.actions, [])
+      resources = try(statement.value.resources, [])
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.osquery_carve_s3_bucket.kms.extra_kms_policies
+    content {
+      sid       = try(statement.value.sid, "")
+      effect    = try(statement.value.effect, null)
+      actions   = try(statement.value.actions, [])
+      resources = try(statement.value.resources, [])
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = local.osquery_carve_kms_task_role_statements
     content {
       sid       = try(statement.value.sid, "")
       effect    = try(statement.value.effect, null)
