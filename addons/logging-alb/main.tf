@@ -290,19 +290,6 @@ data "aws_iam_policy_document" "lambda_reencrypt" {
   }
 
   statement {
-    sid = "UseKmsKey"
-    actions = [
-      "kms:Encrypt",
-      "kms:Decrypt",
-      "kms:GenerateDataKey*",
-      "kms:DescribeKey",
-    ]
-    resources = [
-      aws_kms_key.logs.arn,
-    ]
-  }
-
-  statement {
     sid = "WriteLogs"
     actions = [
       "logs:CreateLogStream",
@@ -409,19 +396,6 @@ data "aws_iam_policy_document" "lambda_sweep" {
     ]
     resources = [
       "${module.s3_bucket_for_logs.s3_bucket_arn}/*",
-    ]
-  }
-
-  statement {
-    sid = "UseKmsKey"
-    actions = [
-      "kms:Encrypt",
-      "kms:Decrypt",
-      "kms:GenerateDataKey*",
-      "kms:DescribeKey",
-    ]
-    resources = [
-      aws_kms_key.logs.arn,
     ]
   }
 
@@ -546,19 +520,6 @@ data "aws_iam_policy_document" "batch_reencrypt" {
     ]
     resources = [
       "${module.s3_bucket_for_logs.s3_bucket_arn}/*",
-    ]
-  }
-
-  statement {
-    sid = "UseKmsKey"
-    actions = [
-      "kms:Encrypt",
-      "kms:GenerateDataKey",
-      "kms:GenerateDataKeyWithoutPlaintext",
-      "kms:DescribeKey",
-    ]
-    resources = [
-      aws_kms_key.logs.arn,
     ]
   }
 }

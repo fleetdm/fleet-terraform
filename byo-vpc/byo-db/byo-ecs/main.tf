@@ -160,6 +160,17 @@ check "deprecated_fleet_config_awslogs_kms_enabled" {
   }
 }
 
+check "kms_base_policy_requires_module_managed_cmk" {
+  assert {
+    condition = var.kms_base_policy == null || (
+      local.application_logs_create_kms_key == true ||
+      local.private_key_secret_create_kms_key == true ||
+      local.software_installers_create_kms_key == true
+    )
+    error_message = "kms_base_policy is not used by byo-ecs unless this module is creating at least one CMK. When kms_key_arn is provided, external key policies remain caller-managed."
+  }
+}
+
 data "aws_region" "current" {}
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}

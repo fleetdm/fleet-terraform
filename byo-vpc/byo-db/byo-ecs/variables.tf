@@ -301,6 +301,64 @@ variable "fleet_config" {
     condition     = var.fleet_config.ephemeral_storage == null ? true : (var.fleet_config.ephemeral_storage.size_in_gib >= 21 && var.fleet_config.ephemeral_storage.size_in_gib <= 200)
     error_message = "fleet_config.ephemeral_storage.size_in_gib must be between 21 and 200 GiB when set."
   }
+
+  validation {
+    condition = (
+      var.fleet_config.private_key_secret_kms.kms_key_arn == null ||
+      coalesce(var.fleet_config.private_key_secret_kms.cmk_enabled, var.fleet_config.private_key_secret_kms.enabled, false)
+    )
+    error_message = "fleet_config.private_key_secret_kms.kms_key_arn requires fleet_config.private_key_secret_kms.cmk_enabled = true (or legacy enabled = true)."
+  }
+
+  validation {
+    condition = (
+      length(var.fleet_config.private_key_secret_kms.extra_kms_policies) == 0 ||
+      (
+        coalesce(var.fleet_config.private_key_secret_kms.cmk_enabled, var.fleet_config.private_key_secret_kms.enabled, false) &&
+        var.fleet_config.private_key_secret_kms.kms_key_arn == null
+      )
+    )
+    error_message = "fleet_config.private_key_secret_kms.extra_kms_policies can be set only when byo-ecs is creating the private key secret CMK."
+  }
+
+  validation {
+    condition = (
+      var.fleet_config.awslogs.kms.kms_key_arn == null ||
+      (
+        var.fleet_config.awslogs.create == true &&
+        coalesce(var.fleet_config.awslogs.kms.cmk_enabled, var.fleet_config.awslogs.kms.enabled, false)
+      )
+    )
+    error_message = "fleet_config.awslogs.kms.kms_key_arn requires fleet_config.awslogs.create = true and fleet_config.awslogs.kms.cmk_enabled = true (or legacy enabled = true)."
+  }
+
+  validation {
+    condition = (
+      length(var.fleet_config.awslogs.kms.extra_kms_policies) == 0 ||
+      (
+        var.fleet_config.awslogs.create == true &&
+        coalesce(var.fleet_config.awslogs.kms.cmk_enabled, var.fleet_config.awslogs.kms.enabled, false) &&
+        var.fleet_config.awslogs.kms.kms_key_arn == null
+      )
+    )
+    error_message = "fleet_config.awslogs.kms.extra_kms_policies can be set only when byo-ecs is creating the application logs CMK."
+  }
+
+  validation {
+    condition     = !(var.fleet_config.software_installers.kms_key_arn != null && var.fleet_config.software_installers.create_kms_key == true)
+    error_message = "fleet_config.software_installers.kms_key_arn and fleet_config.software_installers.create_kms_key are mutually exclusive; set one or the other, not both."
+  }
+
+  validation {
+    condition = (
+      length(var.fleet_config.software_installers.extra_kms_policies) == 0 ||
+      (
+        var.fleet_config.software_installers.create_kms_key == true &&
+        var.fleet_config.software_installers.kms_key_arn == null
+      )
+    )
+    error_message = "fleet_config.software_installers.extra_kms_policies can be set only when byo-ecs is creating the software installers CMK."
+  }
 }
 
 variable "migration_config" {

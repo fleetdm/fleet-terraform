@@ -194,6 +194,20 @@ data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 data "aws_region" "current" {}
 
+check "kms_base_policy_requires_module_managed_cmk" {
+  assert {
+    condition = var.kms_base_policy == null || (
+      local.rds_storage_create_kms_key == true ||
+      local.rds_password_secret_create_kms_key == true ||
+      local.rds_observability_create_kms_key == true ||
+      local.rds_cloudwatch_log_group_create_kms_key == true ||
+      local.redis_at_rest_create_kms_key == true ||
+      local.redis_cloudwatch_log_group_create_kms_key == true
+    )
+    error_message = "kms_base_policy is not used by byo-vpc unless this module is creating at least one CMK. When kms_key_arn is provided, external key policies remain caller-managed."
+  }
+}
+
 # Each source uses its own dynamic "statement" block to avoid Terraform type
 # conflicts when concatenating typed variable values with inline literal tuples.
 data "aws_iam_policy_document" "rds_storage_kms" {

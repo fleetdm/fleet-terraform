@@ -22,14 +22,14 @@ variable "osquery_carve_s3_bucket" {
         })), [])
       })), null)
       extra_kms_policies = optional(list(any), [])
-      fleet_role_arn     = optional(string, null)
+      fleet_role_name    = optional(string, null)
       }), {
       kms_key_arn        = null
       create_kms_key     = false
       kms_alias          = "osquery-carve"
       kms_base_policy    = null
       extra_kms_policies = []
-      fleet_role_arn     = null
+      fleet_role_name    = null
     })
   })
   description = "Configuration for the osquery carve S3 bucket, including optional customer-managed KMS settings."
@@ -42,7 +42,7 @@ variable "osquery_carve_s3_bucket" {
       kms_alias          = "osquery-carve"
       kms_base_policy    = null
       extra_kms_policies = []
-      fleet_role_arn     = null
+      fleet_role_name    = null
     }
   }
 
@@ -52,7 +52,25 @@ variable "osquery_carve_s3_bucket" {
   }
 
   validation {
-    condition     = var.osquery_carve_s3_bucket.kms.create_kms_key == false || var.osquery_carve_s3_bucket.kms.fleet_role_arn != null || var.osquery_carve_s3_bucket.kms.kms_base_policy != null
-    error_message = "osquery_carve_s3_bucket.kms.fleet_role_arn must be set when osquery_carve_s3_bucket.kms.create_kms_key is true and no kms_base_policy is provided."
+    condition = (
+      length(var.osquery_carve_s3_bucket.kms.extra_kms_policies) == 0 ||
+      (
+        var.osquery_carve_s3_bucket.kms.create_kms_key == true &&
+        var.osquery_carve_s3_bucket.kms.kms_key_arn == null
+      )
+    )
+    error_message = "osquery_carve_s3_bucket.kms.extra_kms_policies can be set only when osquery-carve is creating the osquery carve CMK."
+  }
+
+  validation {
+    condition = (
+      var.osquery_carve_s3_bucket.kms.fleet_role_name == null ||
+      trimspace(var.osquery_carve_s3_bucket.kms.fleet_role_name) == "" ||
+      (
+        var.osquery_carve_s3_bucket.kms.create_kms_key == true &&
+        var.osquery_carve_s3_bucket.kms.kms_key_arn == null
+      )
+    )
+    error_message = "osquery_carve_s3_bucket.kms.fleet_role_name can be set only when osquery-carve is creating the osquery carve CMK."
   }
 }

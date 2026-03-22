@@ -206,6 +206,16 @@ check "deprecated_fleet_config_fargate_ephemeral_storage_kms_enabled" {
   }
 }
 
+check "kms_base_policy_requires_module_managed_cmk" {
+  assert {
+    condition = var.kms_base_policy == null || (
+      local.fargate_ephemeral_storage_create_kms_key == true ||
+      local.cluster_cloudwatch_log_group_create_kms_key == true
+    )
+    error_message = "kms_base_policy is not used by byo-db unless this module is creating at least one CMK. When kms_key_arn is provided, external key policies remain caller-managed."
+  }
+}
+
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 data "aws_region" "current" {}

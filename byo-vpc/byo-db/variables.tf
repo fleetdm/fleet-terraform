@@ -124,6 +124,29 @@ variable "ecs_cluster" {
   }
   description = "The config for the terraform-aws-modules/ecs/aws module. For published KMS blocks, legacy `enabled` is deprecated and still accepted; prefer `cmk_enabled`."
   nullable    = false
+
+  validation {
+    condition = (
+      var.ecs_cluster.cloudwatch_log_group.kms.kms_key_arn == null ||
+      (
+        var.ecs_cluster.cloudwatch_log_group.create == true &&
+        coalesce(var.ecs_cluster.cloudwatch_log_group.kms.cmk_enabled, var.ecs_cluster.cloudwatch_log_group.kms.enabled, false)
+      )
+    )
+    error_message = "ecs_cluster.cloudwatch_log_group.kms.kms_key_arn requires ecs_cluster.cloudwatch_log_group.create = true and ecs_cluster.cloudwatch_log_group.kms.cmk_enabled = true (or legacy enabled = true)."
+  }
+
+  validation {
+    condition = (
+      length(var.ecs_cluster.cloudwatch_log_group.kms.extra_kms_policies) == 0 ||
+      (
+        var.ecs_cluster.cloudwatch_log_group.create == true &&
+        coalesce(var.ecs_cluster.cloudwatch_log_group.kms.cmk_enabled, var.ecs_cluster.cloudwatch_log_group.kms.enabled, false) &&
+        var.ecs_cluster.cloudwatch_log_group.kms.kms_key_arn == null
+      )
+    )
+    error_message = "ecs_cluster.cloudwatch_log_group.kms.extra_kms_policies can be set only when byo-db is creating the ECS cluster CloudWatch log group CMK."
+  }
 }
 
 
@@ -443,6 +466,25 @@ variable "fleet_config" {
   }
   description = "The configuration object for Fleet itself. Fields that default to null will have their respective resources created if not specified. For published KMS blocks, legacy `enabled` is deprecated and still accepted; prefer `cmk_enabled`."
   nullable    = false
+
+  validation {
+    condition = (
+      var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn == null ||
+      coalesce(var.fleet_config.fargate_ephemeral_storage_kms.cmk_enabled, var.fleet_config.fargate_ephemeral_storage_kms.enabled, false)
+    )
+    error_message = "fleet_config.fargate_ephemeral_storage_kms.kms_key_arn requires fleet_config.fargate_ephemeral_storage_kms.cmk_enabled = true (or legacy enabled = true)."
+  }
+
+  validation {
+    condition = (
+      length(var.fleet_config.fargate_ephemeral_storage_kms.extra_kms_policies) == 0 ||
+      (
+        coalesce(var.fleet_config.fargate_ephemeral_storage_kms.cmk_enabled, var.fleet_config.fargate_ephemeral_storage_kms.enabled, false) &&
+        var.fleet_config.fargate_ephemeral_storage_kms.kms_key_arn == null
+      )
+    )
+    error_message = "fleet_config.fargate_ephemeral_storage_kms.extra_kms_policies can be set only when byo-db is creating the Fargate ephemeral storage CMK."
+  }
 }
 
 variable "migration_config" {
