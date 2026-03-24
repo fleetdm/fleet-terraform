@@ -6,6 +6,7 @@ output "fleet_extra_environment_variables" {
 }
 
 output "fleet_extra_iam_policies" {
+  description = "IAM policies required for Fleet to access the osquery carve S3 bucket."
   value = [
     aws_iam_policy.main.arn
   ]

@@ -70,6 +70,29 @@ variable "vpc" {
     }
     vpc_flow_log_tags = {}
   }
+  validation {
+    condition = (
+      var.vpc.flow_log_cloudwatch_log_group_kms.kms_key_arn == null ||
+      (
+        var.vpc.enable_flow_log == true &&
+        var.vpc.create_flow_log_cloudwatch_log_group == true &&
+        var.vpc.flow_log_cloudwatch_log_group_kms.cmk_enabled == true
+      )
+    )
+    error_message = "vpc.flow_log_cloudwatch_log_group_kms.kms_key_arn requires vpc.enable_flow_log = true, vpc.create_flow_log_cloudwatch_log_group = true, and vpc.flow_log_cloudwatch_log_group_kms.cmk_enabled = true."
+  }
+  validation {
+    condition = (
+      length(var.vpc.flow_log_cloudwatch_log_group_kms.extra_kms_policies) == 0 ||
+      (
+        var.vpc.enable_flow_log == true &&
+        var.vpc.create_flow_log_cloudwatch_log_group == true &&
+        var.vpc.flow_log_cloudwatch_log_group_kms.cmk_enabled == true &&
+        var.vpc.flow_log_cloudwatch_log_group_kms.kms_key_arn == null
+      )
+    )
+    error_message = "vpc.flow_log_cloudwatch_log_group_kms.extra_kms_policies can be set only when the root module is creating the VPC flow log CloudWatch log group CMK."
+  }
 }
 
 variable "certificate_arn" {

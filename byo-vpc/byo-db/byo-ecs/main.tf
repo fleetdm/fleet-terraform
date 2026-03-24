@@ -160,6 +160,17 @@ check "deprecated_fleet_config_awslogs_kms_enabled" {
   }
 }
 
+check "kms_base_policy_requires_module_managed_cmk" {
+  assert {
+    condition = var.kms_base_policy == null || (
+      local.application_logs_create_kms_key == true ||
+      local.private_key_secret_create_kms_key == true ||
+      local.software_installers_create_kms_key == true
+    )
+    error_message = "kms_base_policy is not used by byo-ecs unless this module is creating at least one CMK. When kms_key_arn is provided, external key policies remain caller-managed."
+  }
+}
+
 data "aws_region" "current" {}
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
@@ -377,15 +388,57 @@ resource "aws_appautoscaling_policy" "ecs_policy_cpu" {
   }
 }
 
+# Each source uses its own dynamic "statement" block to avoid Terraform type
+# conflicts when concatenating typed variable values with inline literal tuples.
 data "aws_iam_policy_document" "application_logs_kms" {
   count = local.application_logs_create_kms_key == true ? 1 : 0
 
   dynamic "statement" {
-    for_each = concat(
-      local.kms_base_policy_statements,
-      var.fleet_config.awslogs.kms.extra_kms_policies,
-      [local.kms_service_statements.cloudwatch_logs]
-    )
+    for_each = local.kms_base_policy_statements
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.fleet_config.awslogs.kms.extra_kms_policies
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = [local.kms_service_statements.cloudwatch_logs]
     content {
       sid       = statement.value.sid
       effect    = statement.value.effect
@@ -496,16 +549,79 @@ resource "aws_kms_key" "private_key_secret" {
   policy              = data.aws_iam_policy_document.private_key_secret_kms[0].json
 }
 
+# Each source uses its own dynamic "statement" block to avoid Terraform type
+# conflicts when concatenating typed variable values with inline literal tuples.
 data "aws_iam_policy_document" "private_key_secret_kms" {
   count = local.private_key_secret_create_kms_key == true ? 1 : 0
 
   dynamic "statement" {
-    for_each = concat(
-      local.kms_base_policy_statements,
-      var.fleet_config.private_key_secret_kms.extra_kms_policies,
-      [local.kms_service_statements.secretsmanager],
-      [local.kms_service_statements.execution_role]
-    )
+    for_each = local.kms_base_policy_statements
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.fleet_config.private_key_secret_kms.extra_kms_policies
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = [local.kms_service_statements.secretsmanager]
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = [local.kms_service_statements.execution_role]
     content {
       sid       = statement.value.sid
       effect    = statement.value.effect
@@ -527,16 +643,79 @@ data "aws_iam_policy_document" "private_key_secret_kms" {
   }
 }
 
+# Each source uses its own dynamic "statement" block to avoid Terraform type
+# conflicts when concatenating typed variable values with inline literal tuples.
 data "aws_iam_policy_document" "software_installers_kms" {
   count = local.software_installers_create_kms_key == true ? 1 : 0
 
   dynamic "statement" {
-    for_each = concat(
-      local.kms_base_policy_statements,
-      var.fleet_config.software_installers.extra_kms_policies,
-      local.software_installers_kms_task_role_statements,
-      local.software_installers_kms_service_statements
-    )
+    for_each = local.kms_base_policy_statements
+    content {
+      sid       = try(statement.value.sid, "")
+      effect    = try(statement.value.effect, null)
+      actions   = try(statement.value.actions, [])
+      resources = try(statement.value.resources, [])
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.fleet_config.software_installers.extra_kms_policies
+    content {
+      sid       = try(statement.value.sid, "")
+      effect    = try(statement.value.effect, null)
+      actions   = try(statement.value.actions, [])
+      resources = try(statement.value.resources, [])
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = local.software_installers_kms_task_role_statements
+    content {
+      sid       = try(statement.value.sid, "")
+      effect    = try(statement.value.effect, null)
+      actions   = try(statement.value.actions, [])
+      resources = try(statement.value.resources, [])
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = local.software_installers_kms_service_statements
     content {
       sid       = try(statement.value.sid, "")
       effect    = try(statement.value.effect, null)

@@ -129,6 +129,7 @@ No requirements.
 | [aws_iam_policy_document.lambda_sweep_assume_role](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.s3_athena_bucket](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.s3_log_bucket](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
+| [aws_partition.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/partition) | data source |
 | [aws_region.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/region) | data source |
 
 ## Inputs
@@ -140,6 +141,8 @@ No requirements.
 | <a name="input_extra_kms_policies"></a> [extra\_kms\_policies](#input\_extra\_kms\_policies) | n/a | `list(any)` | `[]` | no |
 | <a name="input_extra_s3_athena_policies"></a> [extra\_s3\_athena\_policies](#input\_extra\_s3\_athena\_policies) | n/a | `list(any)` | `[]` | no |
 | <a name="input_extra_s3_log_policies"></a> [extra\_s3\_log\_policies](#input\_extra\_s3\_log\_policies) | n/a | `list(any)` | `[]` | no |
+| <a name="input_kms_base_policy"></a> [kms\_base\_policy](#input\_kms\_base\_policy) | Optional base KMS key-policy statements to apply to module-created CMKs before module-required service access statements are merged in. If null, the module defaults to the historical root `kms:*` statement. | <pre>list(object({<br/>    sid    = string<br/>    effect = string<br/>    principals = object({<br/>      type        = string<br/>      identifiers = list(string)<br/>    })<br/>    actions   = list(string)<br/>    resources = list(string)<br/>    conditions = optional(list(object({<br/>      test     = string<br/>      variable = string<br/>      values   = list(string)<br/>    })), [])<br/>  }))</pre> | `null` | no |
+| <a name="input_lambda_log_retention_in_days"></a> [lambda\_log\_retention\_in\_days](#input\_lambda\_log\_retention\_in\_days) | CloudWatch log retention in days for the re-encrypt and sweep Lambda functions | `number` | `365` | no |
 | <a name="input_prefix"></a> [prefix](#input\_prefix) | n/a | `string` | `"fleet"` | no |
 | <a name="input_s3_expiration_days"></a> [s3\_expiration\_days](#input\_s3\_expiration\_days) | n/a | `number` | `90` | no |
 | <a name="input_s3_newer_noncurrent_versions"></a> [s3\_newer\_noncurrent\_versions](#input\_s3\_newer\_noncurrent\_versions) | n/a | `number` | `5` | no |

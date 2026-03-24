@@ -6,19 +6,19 @@ locals {
   task_role_name = var.fleet_config.iam_role_arn == null ? var.fleet_config.iam.role.name : (
     can(split(":", var.fleet_config.iam_role_arn)[4]) && split(":", var.fleet_config.iam_role_arn)[4] == data.aws_caller_identity.current.account_id && can(split("role/", var.fleet_config.iam_role_arn)[1]) ? split("role/", var.fleet_config.iam_role_arn)[1] : null
   )
-  software_installers_kms_policy = local.software_installers_kms_key_arn != null ? [{
+  software_installers_kms_policy = local.software_installers_kms_key_arn != null && local.software_installers_create_kms_key == false ? [{
     sid = "AllowSoftwareInstallersKMSAccess"
     actions = [
       "kms:ReEncrypt*",
       "kms:GenerateDataKey*",
-      "kms:Encrypt*",
-      "kms:Describe*",
-      "kms:Decrypt*"
+      "kms:Encrypt",
+      "kms:DescribeKey",
+      "kms:Decrypt"
     ]
     resources = [local.software_installers_kms_key_arn]
     effect    = "Allow"
   }] : []
-  private_key_secret_kms_policy = local.private_key_secret_kms_key_arn != null ? [{
+  private_key_secret_kms_policy = local.private_key_secret_kms_key_arn != null && local.private_key_secret_create_kms_key == false ? [{
     sid = "AllowFleetPrivateKeySecretKMSAccess"
     actions = [
       "kms:Decrypt",
@@ -55,6 +55,7 @@ data "aws_iam_policy_document" "software_installers" {
     ]
     resources = [aws_s3_bucket.software_installers[0].arn, "${aws_s3_bucket.software_installers[0].arn}/*"]
   }
+
   dynamic "statement" {
     for_each = local.software_installers_kms_policy
     content {
@@ -62,21 +63,6 @@ data "aws_iam_policy_document" "software_installers" {
       actions   = try(statement.value.actions, [])
       resources = try(statement.value.resources, [])
       effect    = try(statement.value.effect, null)
-      dynamic "principals" {
-        for_each = try(statement.value.principals, [])
-        content {
-          type        = principals.value.type
-          identifiers = principals.value.identifiers
-        }
-      }
-      dynamic "condition" {
-        for_each = try(statement.value.conditions, [])
-        content {
-          test     = condition.value.test
-          variable = condition.value.variable
-          values   = condition.value.values
-        }
-      }
     }
   }
 }
@@ -122,6 +108,7 @@ data "aws_iam_policy_document" "fleet-execution" {
       aws_secretsmanager_secret.fleet_server_private_key.arn
     ]
   }
+
   dynamic "statement" {
     for_each = local.execution_kms_policy
     content {

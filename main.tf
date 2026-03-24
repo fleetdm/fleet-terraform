@@ -46,15 +46,66 @@ data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 data "aws_region" "current" {}
 
+check "kms_base_policy_requires_module_managed_cmk" {
+  assert {
+    condition = var.kms_base_policy == null || (
+      local.vpc_flow_log_cloudwatch_log_group_create_kms_key == true
+    )
+    error_message = "kms_base_policy is not used by the root module unless this module is creating the VPC flow log CloudWatch log group CMK. When kms_key_arn is provided, external key policies remain caller-managed."
+  }
+}
+
+# Each source uses its own dynamic "statement" block to avoid Terraform type
+# conflicts when concatenating typed variable values with inline literal tuples.
 data "aws_iam_policy_document" "vpc_flow_log_cloudwatch_log_group_kms" {
   count = local.vpc_flow_log_cloudwatch_log_group_create_kms_key == true ? 1 : 0
 
   dynamic "statement" {
-    for_each = concat(
-      local.kms_base_policy_statements,
-      var.vpc.flow_log_cloudwatch_log_group_kms.extra_kms_policies,
-      [local.kms_service_statements.cloudwatch_logs]
-    )
+    for_each = local.kms_base_policy_statements
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.vpc.flow_log_cloudwatch_log_group_kms.extra_kms_policies
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = [local.kms_service_statements.cloudwatch_logs]
     content {
       sid       = statement.value.sid
       effect    = statement.value.effect

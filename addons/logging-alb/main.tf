@@ -57,15 +57,65 @@ locals {
     }
   ]
 
-  kms_policies = concat(local.kms_base_policy_statements, local.kms_service_statements, var.extra_kms_policies)
-
   s3_path_prefix = coalesce(var.alt_path_prefix, var.prefix)
 }
 
 
+# Each source uses its own dynamic "statement" block to avoid Terraform type
+# conflicts when concatenating typed variable values with inline literal tuples.
 data "aws_iam_policy_document" "kms" {
   dynamic "statement" {
-    for_each = local.kms_policies
+    for_each = local.kms_base_policy_statements
+    content {
+      sid       = try(statement.value.sid, "")
+      actions   = try(statement.value.actions, [])
+      resources = try(statement.value.resources, [])
+      effect    = try(statement.value.effect, null)
+      dynamic "principals" {
+        for_each = try([statement.value.principals], [])
+        content {
+          type        = principals.value.type
+          identifiers = principals.value.identifiers
+        }
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = local.kms_service_statements
+    content {
+      sid       = try(statement.value.sid, "")
+      actions   = try(statement.value.actions, [])
+      resources = try(statement.value.resources, [])
+      effect    = try(statement.value.effect, null)
+      dynamic "principals" {
+        for_each = try([statement.value.principals], [])
+        content {
+          type        = principals.value.type
+          identifiers = principals.value.identifiers
+        }
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.extra_kms_policies
     content {
       sid       = try(statement.value.sid, "")
       actions   = try(statement.value.actions, [])
@@ -240,19 +290,6 @@ data "aws_iam_policy_document" "lambda_reencrypt" {
   }
 
   statement {
-    sid = "UseKmsKey"
-    actions = [
-      "kms:Encrypt",
-      "kms:Decrypt",
-      "kms:GenerateDataKey*",
-      "kms:DescribeKey",
-    ]
-    resources = [
-      aws_kms_key.logs.arn,
-    ]
-  }
-
-  statement {
     sid = "WriteLogs"
     actions = [
       "logs:CreateLogStream",
@@ -359,19 +396,6 @@ data "aws_iam_policy_document" "lambda_sweep" {
     ]
     resources = [
       "${module.s3_bucket_for_logs.s3_bucket_arn}/*",
-    ]
-  }
-
-  statement {
-    sid = "UseKmsKey"
-    actions = [
-      "kms:Encrypt",
-      "kms:Decrypt",
-      "kms:GenerateDataKey*",
-      "kms:DescribeKey",
-    ]
-    resources = [
-      aws_kms_key.logs.arn,
     ]
   }
 
@@ -496,19 +520,6 @@ data "aws_iam_policy_document" "batch_reencrypt" {
     ]
     resources = [
       "${module.s3_bucket_for_logs.s3_bucket_arn}/*",
-    ]
-  }
-
-  statement {
-    sid = "UseKmsKey"
-    actions = [
-      "kms:Encrypt",
-      "kms:GenerateDataKey",
-      "kms:GenerateDataKeyWithoutPlaintext",
-      "kms:DescribeKey",
-    ]
-    resources = [
-      aws_kms_key.logs.arn,
     ]
   }
 }
