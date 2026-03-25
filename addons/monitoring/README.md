@@ -31,7 +31,36 @@ https://github.com/fleetdm/fleet-terraform/blob/main/example/main.tf for details
 
 If the Fleet database password secret is encrypted with a CMK, also pass `mysql_password_secret_kms_key_arn` so the cron-monitoring Lambda can decrypt it. When using the `byo-vpc` module, wire this from `module.<fleet_module>.byo-vpc.rds_password_secret_kms_key_arn`.
 
-**Important:** If you supply a custom `kms_base_policy` that does not grant `kms:*` to the account root (for example, a least-privilege policy that only allows specific principals), you must also add the cron-monitoring Lambda role to `rds_config.password_secret_kms.extra_kms_policies` in the `byo-vpc` module. AWS KMS requires both the key policy and the IAM policy to allow access. The Lambda role name is predictable (`<customer_prefix>-cron-monitoring-lambda`), so you can construct the ARN before the role exists. See the `byo-vpc` module README for a full example.
+To encrypt the cron-monitoring Lambda and its CloudWatch log group with a CMK, use `cron_monitoring.lambda_kms`. Supply `kms_key_arn` to use an existing key, or set `cmk_enabled = true` and leave `kms_key_arn = null` to have this module create a key using `kms_alias`. If you need to customize the base key policy for that module-created CMK, set `cron_monitoring.lambda_kms.kms_base_policy`.
+
+**Important:** If the Fleet database password secret key is using a custom `kms_base_policy` that does not grant `kms:*` to the account root (for example, a least-privilege policy that only allows specific principals), you must also add the cron-monitoring Lambda role to `rds_config.password_secret_kms.extra_kms_policies` in the `byo-vpc` module. AWS KMS requires both the key policy and the IAM policy to allow access. The Lambda role name is predictable (`<customer_prefix>-cron-monitoring-lambda`), so you can construct the ARN before the role exists. See the `byo-vpc` module README for a full example.
+
+## Upgrading existing cron-monitoring log groups
+
+If you are upgrading from a version where the cron-monitoring Lambda log group was not managed with the Lambda's real function name, AWS may already have auto-created `/aws/lambda/<customer_prefix>_cron_monitoring` outside Terraform. When this module starts managing that real log group so KMS encryption can be applied, Terraform cannot create it if it already exists.
+
+There are two ways to handle that:
+
+1. **Delete the existing auto-created log group and let Terraform recreate it with the new KMS settings.** This avoids carrying forward older log events that were not encrypted with the new CMK.
+
+```bash
+aws logs delete-log-group --log-group-name "/aws/lambda/<customer_prefix>_cron_monitoring"
+terraform apply
+```
+
+2. **Import the existing auto-created log group into Terraform state.** Use this only if you need to preserve the existing log events as-is.
+
+```bash
+terraform state rm 'module.monitoring.aws_cloudwatch_log_group.cron_monitoring_lambda[0]'
+terraform import 'module.monitoring.aws_cloudwatch_log_group.cron_monitoring_lambda[0]' '/aws/lambda/<customer_prefix>_cron_monitoring'
+terraform apply
+```
+
+If the older unused hyphenated log group still exists, you can remove it after the upgrade:
+
+```bash
+aws logs delete-log-group --log-group-name "/aws/lambda/<customer_prefix>-cron-monitoring"
+```
 
 ```
 module "monitoring" {
@@ -85,6 +114,11 @@ module "monitoring" {
     log_retention_in_days = 365
     # Cron List of Names to Ignore (see below for valid values)
     ignore_list = []
+    lambda_kms = {
+      cmk_enabled     = true
+      kms_alias       = "fleet-cron-monitoring"
+      kms_base_policy = local.kms_base_policy_statements
+    }
   }
   log_monitoring = {
     invalid-secret = {
@@ -163,7 +197,7 @@ No requirements.
 | Name | Version |
 |------|---------|
 | <a name="provider_archive"></a> [archive](#provider\_archive) | 2.7.1 |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.20.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.37.0 |
 | <a name="provider_null"></a> [null](#provider\_null) | 3.2.4 |
 
 ## Modules
@@ -194,6 +228,8 @@ No modules.
 | [aws_iam_role.cron_monitoring_lambda](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role_policy_attachment.cron_monitoring_lambda](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
 | [aws_iam_role_policy_attachment.cron_monitoring_lambda_managed](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
+| [aws_kms_alias.cron_monitoring_lambda](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kms_alias) | resource |
+| [aws_kms_key.cron_monitoring_lambda](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kms_key) | resource |
 | [aws_lambda_function.cron_monitoring](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_function) | resource |
 | [aws_lambda_permission.cron_monitoring_cloudwatch](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
 | [aws_security_group.cron_monitoring](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/security_group) | resource |
@@ -203,6 +239,8 @@ No modules.
 | [aws_caller_identity.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/caller_identity) | data source |
 | [aws_iam_policy_document.cron_monitoring_lambda](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.cron_monitoring_lambda_assume_role](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
+| [aws_iam_policy_document.cron_monitoring_lambda_kms](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
+| [aws_partition.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/partition) | data source |
 | [aws_region.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/region) | data source |
 | [aws_secretsmanager_secret.mysql_database_password](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/secretsmanager_secret) | data source |
 
@@ -212,7 +250,7 @@ No modules.
 |------|-------------|------|---------|:--------:|
 | <a name="input_acm_certificate_arn"></a> [acm\_certificate\_arn](#input\_acm\_certificate\_arn) | n/a | `string` | `null` | no |
 | <a name="input_albs"></a> [albs](#input\_albs) | n/a | <pre>list(object({<br/>    name                    = string<br/>    arn_suffix              = string<br/>    target_group_name       = string<br/>    target_group_arn_suffix = string<br/>    min_containers          = optional(string, 1)<br/>    ecs_service_name        = string<br/>    alert_thresholds = optional(<br/>      object({<br/>        HTTPCode_ELB_5XX_Count = object({<br/>          period    = number<br/>          threshold = number<br/>        })<br/>        HTTPCode_Target_5XX_Count = object({<br/>          period    = number<br/>          threshold = number<br/>        })<br/>      }),<br/>      {<br/>        HTTPCode_ELB_5XX_Count = {<br/>          period    = 120<br/>          threshold = 0<br/>        },<br/>        HTTPCode_Target_5XX_Count = {<br/>          period    = 120<br/>          threshold = 0<br/>        }<br/>      }<br/>    )<br/>  }))</pre> | `[]` | no |
-| <a name="input_cron_monitoring"></a> [cron\_monitoring](#input\_cron\_monitoring) | n/a | <pre>object({<br/>    mysql_host                 = string<br/>    mysql_database             = string<br/>    mysql_user                 = string<br/>    mysql_password_secret_name = string<br/>    mysql_password_secret_kms_key_arn = optional(string, null)<br/>    mysql_tls_config           = optional(string, "true")<br/>    vpc_id                     = string<br/>    subnet_ids                 = list(string)<br/>    rds_security_group_id      = string<br/>    delay_tolerance            = string<br/>    run_interval               = string<br/>    log_retention_in_days      = optional(number, 7)<br/>    ignore_list                = optional(list(string), [])<br/>  })</pre> | `null` | no |
+| <a name="input_cron_monitoring"></a> [cron\_monitoring](#input\_cron\_monitoring) | n/a | <pre>object({<br/>    mysql_host                        = string<br/>    mysql_database                    = string<br/>    mysql_user                        = string<br/>    mysql_password_secret_name        = string<br/>    mysql_password_secret_kms_key_arn = optional(string, null)<br/>    mysql_tls_config                  = optional(string, "true")<br/>    vpc_id                            = string<br/>    subnet_ids                        = list(string)<br/>    rds_security_group_id             = string<br/>    delay_tolerance                   = string<br/>    run_interval                      = string<br/>    log_retention_in_days             = optional(number, 7)<br/>    ignore_list                       = optional(list(string), [])<br/>    lambda_kms = optional(object({<br/>      cmk_enabled = optional(bool, false)<br/>      kms_key_arn = optional(string, null)<br/>      kms_alias   = optional(string, "fleet-cron-monitoring")<br/>      kms_base_policy = optional(list(object({<br/>        sid    = string<br/>        effect = string<br/>        principals = object({<br/>          type        = string<br/>          identifiers = list(string)<br/>        })<br/>        actions   = list(string)<br/>        resources = list(string)<br/>        conditions = optional(list(object({<br/>          test     = string<br/>          variable = string<br/>          values   = list(string)<br/>        })), [])<br/>      })), null)<br/>      extra_kms_policies = optional(list(any), [])<br/>      }), {<br/>      cmk_enabled        = false<br/>      kms_key_arn        = null<br/>      kms_alias          = "fleet-cron-monitoring"<br/>      kms_base_policy    = null<br/>      extra_kms_policies = []<br/>    })<br/>  })</pre> | `null` | no |
 | <a name="input_customer_prefix"></a> [customer\_prefix](#input\_customer\_prefix) | n/a | `string` | `"fleet"` | no |
 | <a name="input_default_sns_topic_arns"></a> [default\_sns\_topic\_arns](#input\_default\_sns\_topic\_arns) | n/a | `list(string)` | `[]` | no |
 | <a name="input_fleet_ecs_service_name"></a> [fleet\_ecs\_service\_name](#input\_fleet\_ecs\_service\_name) | n/a | `string` | `null` | no |

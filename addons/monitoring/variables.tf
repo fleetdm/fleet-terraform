@@ -82,19 +82,79 @@ variable "log_monitoring" {
 
 variable "cron_monitoring" {
   type = object({
-    mysql_host                 = string
-    mysql_database             = string
-    mysql_user                 = string
-    mysql_password_secret_name = string
+    mysql_host                        = string
+    mysql_database                    = string
+    mysql_user                        = string
+    mysql_password_secret_name        = string
     mysql_password_secret_kms_key_arn = optional(string, null)
-    mysql_tls_config           = optional(string, "true")
-    vpc_id                     = string
-    subnet_ids                 = list(string)
-    rds_security_group_id      = string
-    delay_tolerance            = string
-    run_interval               = string
-    log_retention_in_days      = optional(number, 7)
-    ignore_list                = optional(list(string), [])
+    mysql_tls_config                  = optional(string, "true")
+    vpc_id                            = string
+    subnet_ids                        = list(string)
+    rds_security_group_id             = string
+    delay_tolerance                   = string
+    run_interval                      = string
+    log_retention_in_days             = optional(number, 7)
+    ignore_list                       = optional(list(string), [])
+    lambda_kms = optional(object({
+      cmk_enabled = optional(bool, false)
+      kms_key_arn = optional(string, null)
+      kms_alias   = optional(string, "fleet-cron-monitoring")
+      kms_base_policy = optional(list(object({
+        sid    = string
+        effect = string
+        principals = object({
+          type        = string
+          identifiers = list(string)
+        })
+        actions   = list(string)
+        resources = list(string)
+        conditions = optional(list(object({
+          test     = string
+          variable = string
+          values   = list(string)
+        })), [])
+      })), null)
+      extra_kms_policies = optional(list(any), [])
+      }), {
+      cmk_enabled        = false
+      kms_key_arn        = null
+      kms_alias          = "fleet-cron-monitoring"
+      kms_base_policy    = null
+      extra_kms_policies = []
+    })
   })
   default = null
+
+  validation {
+    condition = (
+      var.cron_monitoring == null ||
+      var.cron_monitoring.lambda_kms.kms_key_arn == null ||
+      var.cron_monitoring.lambda_kms.cmk_enabled == true
+    )
+    error_message = "cron_monitoring.lambda_kms.kms_key_arn requires cron_monitoring.lambda_kms.cmk_enabled = true."
+  }
+
+  validation {
+    condition = (
+      var.cron_monitoring == null ||
+      length(var.cron_monitoring.lambda_kms.extra_kms_policies) == 0 ||
+      (
+        var.cron_monitoring.lambda_kms.cmk_enabled == true &&
+        var.cron_monitoring.lambda_kms.kms_key_arn == null
+      )
+    )
+    error_message = "cron_monitoring.lambda_kms.extra_kms_policies can be set only when the monitoring module is creating the cron monitoring Lambda CMK."
+  }
+
+  validation {
+    condition = (
+      var.cron_monitoring == null ||
+      var.cron_monitoring.lambda_kms.kms_base_policy == null ||
+      (
+        var.cron_monitoring.lambda_kms.cmk_enabled == true &&
+        var.cron_monitoring.lambda_kms.kms_key_arn == null
+      )
+    )
+    error_message = "cron_monitoring.lambda_kms.kms_base_policy can be set only when the monitoring module is creating the cron monitoring Lambda CMK."
+  }
 }

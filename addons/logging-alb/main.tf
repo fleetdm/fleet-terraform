@@ -6,6 +6,10 @@ data "aws_region" "current" {}
 
 locals {
   landing_bucket_name = "${var.prefix}-alb-logs"
+  lambda_function_arns = [
+    "arn:${data.aws_partition.current.partition}:lambda:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:function:${var.prefix}-alb-log-reencrypt",
+    "arn:${data.aws_partition.current.partition}:lambda:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:function:${var.prefix}-alb-log-sweep",
+  ]
 
   kms_base_policy_statements = var.kms_base_policy != null ? var.kms_base_policy : [
     {
@@ -54,6 +58,34 @@ locals {
         identifiers = [aws_iam_role.batch_reencrypt.arn]
       }
       conditions = []
+    },
+    {
+      sid       = "AllowCloudWatchLogsUseOfTheKey"
+      effect    = "Allow"
+      actions   = ["kms:Encrypt*", "kms:Decrypt*", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:Describe*"]
+      resources = ["*"]
+      principals = {
+        type        = "Service"
+        identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
+      }
+      conditions = []
+    },
+    {
+      sid       = "AllowLambdaServiceUseOfTheKey"
+      effect    = "Allow"
+      actions   = ["kms:GenerateDataKey", "kms:Decrypt"]
+      resources = ["*"]
+      principals = {
+        type        = "Service"
+        identifiers = ["lambda.amazonaws.com"]
+      }
+      conditions = [
+        {
+          test     = "StringLike"
+          variable = "kms:EncryptionContext:aws:lambda:FunctionArn"
+          values   = local.lambda_function_arns
+        }
+      ]
     }
   ]
 
@@ -320,6 +352,7 @@ data "archive_file" "lambda_reencrypt" {
 
 resource "aws_cloudwatch_log_group" "lambda_reencrypt" {
   name              = "/aws/lambda/${var.prefix}-alb-log-reencrypt"
+  kms_key_id        = aws_kms_key.logs.arn
   retention_in_days = var.lambda_log_retention_in_days
 }
 
@@ -327,6 +360,7 @@ resource "aws_lambda_function" "reencrypt" {
   function_name    = "${var.prefix}-alb-log-reencrypt"
   role             = aws_iam_role.lambda_reencrypt.arn
   handler          = "reencrypt.handler"
+  kms_key_arn      = aws_kms_key.logs.arn
   runtime          = "python3.12"
   timeout          = 60
   filename         = data.archive_file.lambda_reencrypt.output_path
@@ -448,6 +482,7 @@ data "archive_file" "lambda_sweep" {
 
 resource "aws_cloudwatch_log_group" "lambda_sweep" {
   name              = "/aws/lambda/${var.prefix}-alb-log-sweep"
+  kms_key_id        = aws_kms_key.logs.arn
   retention_in_days = var.lambda_log_retention_in_days
 }
 
@@ -455,6 +490,7 @@ resource "aws_lambda_function" "sweep_reencrypt" {
   function_name    = "${var.prefix}-alb-log-sweep"
   role             = aws_iam_role.lambda_sweep.arn
   handler          = "sweep_reencrypt.handler"
+  kms_key_arn      = aws_kms_key.logs.arn
   runtime          = "python3.12"
   timeout          = 900
   filename         = data.archive_file.lambda_sweep.output_path
