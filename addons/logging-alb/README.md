@@ -1,5 +1,5 @@
 # ALB Logging Addon
-This addon creates an S3 bucket for ALB access logs with in-place SSE-KMS re-encryption via Lambda. ALB access logging requires SSE-S3 (AES256), so objects are written with SSE-S3 and immediately re-encrypted to SSE-KMS using a customer-managed KMS key.
+This addon creates an S3 bucket for ALB access logs with in-place SSE-KMS re-encryption via Lambda. ALB access logging requires SSE-S3 (AES256), so objects are written with SSE-S3 and immediately re-encrypted to SSE-KMS using a customer-managed KMS key. The same module-managed CMK also encrypts the Lambda functions and their CloudWatch log groups.
 
 ## How it works
 
@@ -84,7 +84,7 @@ No requirements.
 | Name | Version |
 |------|---------|
 | <a name="provider_archive"></a> [archive](#provider\_archive) | 2.7.1 |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.34.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.37.0 |
 
 ## Modules
 

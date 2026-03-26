@@ -37,7 +37,84 @@ resource "aws_db_event_subscription" "default" {
 }
 
 locals {
-  alb_map = { for k, v in var.albs : k => v }
+  alb_map                                = { for k, v in var.albs : k => v }
+  cron_monitoring_lambda_function_name   = var.cron_monitoring != null ? "${var.customer_prefix}_cron_monitoring" : null
+  cron_monitoring_lambda_log_group_name  = var.cron_monitoring != null ? "/aws/lambda/${local.cron_monitoring_lambda_function_name}" : null
+  cron_monitoring_lambda_kms_cmk_enabled = var.cron_monitoring != null ? var.cron_monitoring.lambda_kms.cmk_enabled : false
+  cron_monitoring_lambda_create_kms_key  = var.cron_monitoring != null && local.cron_monitoring_lambda_kms_cmk_enabled == true && var.cron_monitoring.lambda_kms.kms_key_arn == null
+  cron_monitoring_lambda_kms_key_arn = var.cron_monitoring != null && local.cron_monitoring_lambda_kms_cmk_enabled == true ? (
+    var.cron_monitoring.lambda_kms.kms_key_arn != null ? var.cron_monitoring.lambda_kms.kms_key_arn : aws_kms_key.cron_monitoring_lambda[0].arn
+  ) : null
+  cron_monitoring_lambda_kms_base_policy_statements = var.cron_monitoring != null && var.cron_monitoring.lambda_kms.kms_base_policy != null ? var.cron_monitoring.lambda_kms.kms_base_policy : [
+    {
+      sid    = "EnableRootPermissions"
+      effect = "Allow"
+      principals = {
+        type        = "AWS"
+        identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+      }
+      actions    = ["kms:*"]
+      resources  = ["*"]
+      conditions = []
+    }
+  ]
+  cron_monitoring_lambda_kms_policy_statements = var.cron_monitoring != null ? [
+    {
+      sid    = "AllowCloudWatchLogsUseOfTheKey"
+      effect = "Allow"
+      principals = {
+        type        = "Service"
+        identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
+      }
+      actions = [
+        "kms:Encrypt*",
+        "kms:Decrypt*",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:Describe*"
+      ]
+      resources  = ["*"]
+      conditions = []
+    },
+    {
+      sid    = "AllowLambdaServiceUseOfTheKey"
+      effect = "Allow"
+      principals = {
+        type        = "Service"
+        identifiers = ["lambda.amazonaws.com"]
+      }
+      actions = [
+        "kms:GenerateDataKey",
+        "kms:Decrypt"
+      ]
+      resources = ["*"]
+      conditions = [
+        {
+          test     = "StringLike"
+          variable = "kms:EncryptionContext:aws:lambda:FunctionArn"
+          values = [
+            "arn:${data.aws_partition.current.partition}:lambda:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:function:${local.cron_monitoring_lambda_function_name}"
+          ]
+        }
+      ]
+    },
+    {
+      sid    = "AllowCronMonitoringLambdaRoleUseOfTheKey"
+      effect = "Allow"
+      principals = {
+        type        = "AWS"
+        identifiers = [aws_iam_role.cron_monitoring_lambda[0].arn]
+      }
+      actions = [
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:GenerateDataKey*",
+        "kms:DescribeKey"
+      ]
+      resources  = ["*"]
+      conditions = []
+    }
+  ] : []
 }
 
 // Log-based monitoring
@@ -380,7 +457,7 @@ resource "aws_lambda_function" "cron_monitoring" {
     data.archive_file.cron_monitoring_lambda[0]
   ]
 
-  function_name                  = "${var.customer_prefix}_cron_monitoring"
+  function_name                  = local.cron_monitoring_lambda_function_name
   runtime                        = "provided.al2"
   memory_size                    = 256
   timeout                        = 300
@@ -388,6 +465,7 @@ resource "aws_lambda_function" "cron_monitoring" {
   filename                       = data.archive_file.cron_monitoring_lambda[0].output_path
   source_code_hash               = data.archive_file.cron_monitoring_lambda[0].output_base64sha256
   handler                        = "bootstrap"
+  kms_key_arn                    = local.cron_monitoring_lambda_kms_key_arn
   reserved_concurrent_executions = 1
   description                    = "This function has the ability to log into a production database and validate that the Fleet crons are running properly"
   tracing_config {
@@ -430,6 +508,15 @@ data "aws_iam_policy_document" "cron_monitoring_lambda_assume_role" {
   }
 }
 
+check "kms_base_policy_requires_module_managed_cmk" {
+  assert {
+    condition = var.cron_monitoring == null || var.cron_monitoring.lambda_kms.kms_base_policy == null || (
+      local.cron_monitoring_lambda_create_kms_key == true
+    )
+    error_message = "cron_monitoring.lambda_kms.kms_base_policy is not used unless this module is creating the cron monitoring Lambda CMK. When kms_key_arn is provided, external key policies remain caller-managed."
+  }
+}
+
 resource "aws_iam_role_policy_attachment" "cron_monitoring_lambda" {
   count      = var.cron_monitoring == null ? 0 : 1
   role       = aws_iam_role.cron_monitoring_lambda[0].id
@@ -456,6 +543,90 @@ resource "aws_iam_role" "cron_monitoring_lambda" {
 
 data "aws_region" "current" {}
 data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
+
+data "aws_iam_policy_document" "cron_monitoring_lambda_kms" {
+  count = local.cron_monitoring_lambda_create_kms_key == true ? 1 : 0
+
+  dynamic "statement" {
+    for_each = local.cron_monitoring_lambda_kms_base_policy_statements
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.cron_monitoring != null ? var.cron_monitoring.lambda_kms.extra_kms_policies : []
+    content {
+      sid       = try(statement.value.sid, "")
+      effect    = try(statement.value.effect, null)
+      actions   = try(statement.value.actions, [])
+      resources = try(statement.value.resources, [])
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = local.cron_monitoring_lambda_kms_policy_statements
+    content {
+      sid       = statement.value.sid
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      principals {
+        type        = statement.value.principals.type
+        identifiers = statement.value.principals.identifiers
+      }
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          variable = condition.value.variable
+          values   = condition.value.values
+        }
+      }
+    }
+  }
+}
+
+resource "aws_kms_key" "cron_monitoring_lambda" {
+  count               = local.cron_monitoring_lambda_create_kms_key == true ? 1 : 0
+  description         = "CMK for cron monitoring Lambda storage and CloudWatch Logs encryption."
+  enable_key_rotation = true
+  policy              = data.aws_iam_policy_document.cron_monitoring_lambda_kms[0].json
+}
+
+resource "aws_kms_alias" "cron_monitoring_lambda" {
+  count         = local.cron_monitoring_lambda_create_kms_key == true ? 1 : 0
+  target_key_id = aws_kms_key.cron_monitoring_lambda[0].id
+  name          = "alias/${var.cron_monitoring != null ? var.cron_monitoring.lambda_kms.kms_alias : ""}"
+}
 
 data "aws_iam_policy_document" "cron_monitoring_lambda" {
   statement {
@@ -490,6 +661,24 @@ data "aws_iam_policy_document" "cron_monitoring_lambda" {
     }
   }
 
+  dynamic "statement" {
+    for_each = var.cron_monitoring != null && var.cron_monitoring.lambda_kms.kms_key_arn != null ? [local.cron_monitoring_lambda_kms_key_arn] : []
+    content {
+      sid = "UseCronMonitoringLambdaKMSKey"
+
+      actions = [
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:GenerateDataKey*",
+        "kms:DescribeKey"
+      ]
+
+      resources = [statement.value]
+
+      effect = "Allow"
+    }
+  }
+
   statement {
     sid = "SNSPublish"
 
@@ -509,7 +698,8 @@ data "aws_iam_policy_document" "cron_monitoring_lambda" {
 
 resource "aws_cloudwatch_log_group" "cron_monitoring_lambda" {
   count             = var.cron_monitoring == null ? 0 : 1
-  name              = "/aws/lambda/${var.customer_prefix}-cron-monitoring"
+  kms_key_id        = local.cron_monitoring_lambda_kms_key_arn
+  name              = local.cron_monitoring_lambda_log_group_name
   retention_in_days = var.cron_monitoring.log_retention_in_days
 
 }
