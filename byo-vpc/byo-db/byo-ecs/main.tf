@@ -19,10 +19,12 @@ locals {
       credentialsParameter = var.fleet_config.repository_credentials
     }
   } : null
-  private_key_secret_cmk_enabled    = coalesce(var.fleet_config.private_key_secret_kms.cmk_enabled, var.fleet_config.private_key_secret_kms.enabled, false)
-  private_key_secret_create_kms_key = local.private_key_secret_cmk_enabled == true && var.fleet_config.private_key_secret_kms.kms_key_arn == null
+  private_key_secret_is_module_managed = var.fleet_config.private_key_secret_arn == null
+  private_key_secret_arn               = local.private_key_secret_is_module_managed ? aws_secretsmanager_secret.fleet_server_private_key[0].arn : var.fleet_config.private_key_secret_arn
+  private_key_secret_cmk_enabled       = coalesce(var.fleet_config.private_key_secret_kms.cmk_enabled, var.fleet_config.private_key_secret_kms.enabled, false)
+  private_key_secret_create_kms_key    = local.private_key_secret_is_module_managed == true && local.private_key_secret_cmk_enabled == true && var.fleet_config.private_key_secret_kms.kms_key_arn == null
   private_key_secret_kms_key_arn = local.private_key_secret_cmk_enabled == true ? (
-    var.fleet_config.private_key_secret_kms.kms_key_arn != null ? var.fleet_config.private_key_secret_kms.kms_key_arn : aws_kms_key.private_key_secret[0].arn
+    var.fleet_config.private_key_secret_kms.kms_key_arn != null ? var.fleet_config.private_key_secret_kms.kms_key_arn : (local.private_key_secret_create_kms_key == true ? aws_kms_key.private_key_secret[0].arn : null)
   ) : null
 
   application_logs_cmk_enabled    = coalesce(var.fleet_config.awslogs.kms.cmk_enabled, var.fleet_config.awslogs.kms.enabled, false)
@@ -37,7 +39,8 @@ locals {
   software_installers_kms_key_id = var.fleet_config.software_installers.create_kms_key == true || var.fleet_config.software_installers.kms_key_arn != null ? (
     var.fleet_config.software_installers.kms_key_arn != null ? data.aws_kms_key.software_installers_provided[0].key_id : aws_kms_key.software_installers[0].id
   ) : null
-  task_role_kms_principal_arn = var.fleet_config.iam_role_arn != null ? var.fleet_config.iam_role_arn : aws_iam_role.main[0].arn
+  task_role_kms_principal_arn          = var.fleet_config.iam_role_arn != null ? var.fleet_config.iam_role_arn : aws_iam_role.main[0].arn
+  private_key_secret_kms_principal_arn = var.fleet_config.private_key_delivery_method == "iam" ? local.task_role_kms_principal_arn : "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.fleet_config.iam.execution.name}"
   kms_base_policy_statements = var.kms_base_policy != null ? var.kms_base_policy : [
     {
       sid    = "EnableRootPermissions"
@@ -92,7 +95,7 @@ locals {
       effect = "Allow"
       principals = {
         type        = "AWS"
-        identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.fleet_config.iam.execution.name}"]
+        identifiers = [local.private_key_secret_kms_principal_arn]
       }
       actions = [
         "kms:Decrypt",
@@ -226,100 +229,107 @@ resource "aws_ecs_task_definition" "backend" {
   }
   container_definitions = jsonencode(
     concat([
-      {
-        name        = "fleet"
-        image       = var.fleet_config.image
-        cpu         = var.fleet_config.cpu
-        memory      = var.fleet_config.mem
-        mountPoints = var.fleet_config.mount_points
-        dependsOn   = var.fleet_config.depends_on
-        volumesFrom = []
-        essential   = true
-        portMappings = [
-          {
-            # This port is the same that the contained application also uses
-            containerPort = 8080
-            protocol      = "tcp"
+      merge(
+        {
+          name        = "fleet"
+          image       = var.fleet_config.image
+          cpu         = var.fleet_config.cpu
+          memory      = var.fleet_config.mem
+          mountPoints = var.fleet_config.mount_points
+          dependsOn   = var.fleet_config.depends_on
+          volumesFrom = []
+          essential   = true
+          portMappings = [
+            {
+              # This port is the same that the contained application also uses
+              containerPort = 8080
+              protocol      = "tcp"
+            }
+          ]
+          repositoryCredentials = local.repository_credentials
+          networkMode           = "awsvpc"
+          logConfiguration = {
+            logDriver = "awslogs"
+            options = {
+              awslogs-group         = var.fleet_config.awslogs.create == true ? aws_cloudwatch_log_group.main[0].name : var.fleet_config.awslogs.name
+              awslogs-region        = var.fleet_config.awslogs.create == true ? data.aws_region.current.id : var.fleet_config.awslogs.region
+              awslogs-stream-prefix = var.fleet_config.awslogs.prefix
+            }
           }
-        ]
-        repositoryCredentials = local.repository_credentials
-        networkMode           = "awsvpc"
-        logConfiguration = {
-          logDriver = "awslogs"
-          options = {
-            awslogs-group         = var.fleet_config.awslogs.create == true ? aws_cloudwatch_log_group.main[0].name : var.fleet_config.awslogs.name
-            awslogs-region        = var.fleet_config.awslogs.create == true ? data.aws_region.current.id : var.fleet_config.awslogs.region
-            awslogs-stream-prefix = var.fleet_config.awslogs.prefix
-          }
+          ulimits = [
+            {
+              name      = "nofile"
+              softLimit = 999999
+              hardLimit = 999999
+            }
+          ]
+          secrets = concat([
+            {
+              name      = "FLEET_MYSQL_PASSWORD"
+              valueFrom = var.fleet_config.database.password_secret_arn
+            },
+            {
+              name      = "FLEET_MYSQL_READ_REPLICA_PASSWORD"
+              valueFrom = var.fleet_config.database.password_secret_arn
+            }
+            ], var.fleet_config.private_key_delivery_method == "ecs" ? [{
+              name      = "FLEET_SERVER_PRIVATE_KEY"
+              valueFrom = local.private_key_secret_arn
+          }] : [], local.secrets)
+          environment = concat([
+            {
+              name  = "FLEET_MYSQL_USERNAME"
+              value = var.fleet_config.database.user
+            },
+            {
+              name  = "FLEET_MYSQL_DATABASE"
+              value = var.fleet_config.database.database
+            },
+            {
+              name  = "FLEET_MYSQL_ADDRESS"
+              value = var.fleet_config.database.address
+            },
+            {
+              name  = "FLEET_MYSQL_READ_REPLICA_USERNAME"
+              value = var.fleet_config.database.user
+            },
+            {
+              name  = "FLEET_MYSQL_READ_REPLICA_DATABASE"
+              value = var.fleet_config.database.database
+            },
+            {
+              name  = "FLEET_MYSQL_READ_REPLICA_ADDRESS"
+              value = var.fleet_config.database.rr_address == null ? var.fleet_config.database.address : var.fleet_config.database.rr_address
+            },
+            {
+              name  = "FLEET_REDIS_ADDRESS"
+              value = var.fleet_config.redis.address
+            },
+            {
+              name  = "FLEET_REDIS_USE_TLS"
+              value = tostring(var.fleet_config.redis.use_tls)
+            },
+            {
+              name  = "FLEET_SERVER_TLS"
+              value = tostring(var.fleet_config.server_tls_enabled)
+            },
+            {
+              name  = "FLEET_S3_SOFTWARE_INSTALLERS_BUCKET"
+              value = var.fleet_config.software_installers.create_bucket == true ? aws_s3_bucket.software_installers[0].bucket : var.fleet_config.software_installers.bucket_name
+            },
+            {
+              name  = "FLEET_S3_SOFTWARE_INSTALLERS_PREFIX"
+              value = var.fleet_config.software_installers.s3_object_prefix
+            }
+            ], var.fleet_config.private_key_delivery_method == "iam" ? [{
+              name  = "FLEET_SERVER_PRIVATE_KEY_ARN"
+              value = local.private_key_secret_arn
+          }] : [], local.environment)
         },
-        ulimits = [
-          {
-            name      = "nofile"
-            softLimit = 999999
-            hardLimit = 999999
-          }
-        ],
-        secrets = concat([
-          {
-            name      = "FLEET_MYSQL_PASSWORD"
-            valueFrom = var.fleet_config.database.password_secret_arn
-          },
-          {
-            name      = "FLEET_MYSQL_READ_REPLICA_PASSWORD"
-            valueFrom = var.fleet_config.database.password_secret_arn
-          },
-          {
-            name      = "FLEET_SERVER_PRIVATE_KEY"
-            valueFrom = aws_secretsmanager_secret.fleet_server_private_key.arn
-          }
-        ], local.secrets)
-        environment = concat([
-          {
-            name  = "FLEET_MYSQL_USERNAME"
-            value = var.fleet_config.database.user
-          },
-          {
-            name  = "FLEET_MYSQL_DATABASE"
-            value = var.fleet_config.database.database
-          },
-          {
-            name  = "FLEET_MYSQL_ADDRESS"
-            value = var.fleet_config.database.address
-          },
-          {
-            name  = "FLEET_MYSQL_READ_REPLICA_USERNAME"
-            value = var.fleet_config.database.user
-          },
-          {
-            name  = "FLEET_MYSQL_READ_REPLICA_DATABASE"
-            value = var.fleet_config.database.database
-          },
-          {
-            name  = "FLEET_MYSQL_READ_REPLICA_ADDRESS"
-            value = var.fleet_config.database.rr_address == null ? var.fleet_config.database.address : var.fleet_config.database.rr_address
-          },
-          {
-            name  = "FLEET_REDIS_ADDRESS"
-            value = var.fleet_config.redis.address
-          },
-          {
-            name  = "FLEET_REDIS_USE_TLS"
-            value = tostring(var.fleet_config.redis.use_tls)
-          },
-          {
-            name  = "FLEET_SERVER_TLS"
-            value = tostring(var.fleet_config.server_tls_enabled)
-          },
-          {
-            name  = "FLEET_S3_SOFTWARE_INSTALLERS_BUCKET"
-            value = var.fleet_config.software_installers.create_bucket == true ? aws_s3_bucket.software_installers[0].bucket : var.fleet_config.software_installers.bucket_name
-          },
-          {
-            name  = "FLEET_S3_SOFTWARE_INSTALLERS_PREFIX"
-            value = var.fleet_config.software_installers.s3_object_prefix
-          },
-        ], local.environment)
-      }
+        var.fleet_config.command != null ? {
+          command = var.fleet_config.command
+        } : {}
+      )
   ], var.fleet_config.sidecars))
   dynamic "volume" {
     for_each = var.fleet_config.volumes
@@ -506,11 +516,13 @@ resource "aws_security_group" "main" {
 }
 
 resource "random_password" "fleet_server_private_key" {
+  count   = local.private_key_secret_is_module_managed ? 1 : 0
   length  = 32
   special = true
 }
 
 resource "aws_secretsmanager_secret" "fleet_server_private_key" {
+  count      = local.private_key_secret_is_module_managed ? 1 : 0
   name       = var.fleet_config.private_key_secret_name
   kms_key_id = local.private_key_secret_kms_key_arn
 
@@ -521,8 +533,9 @@ resource "aws_secretsmanager_secret" "fleet_server_private_key" {
 }
 
 resource "aws_secretsmanager_secret_version" "fleet_server_private_key" {
-  secret_id     = aws_secretsmanager_secret.fleet_server_private_key.id
-  secret_string = random_password.fleet_server_private_key.result
+  count         = local.private_key_secret_is_module_managed ? 1 : 0
+  secret_id     = aws_secretsmanager_secret.fleet_server_private_key[0].id
+  secret_string = random_password.fleet_server_private_key[0].result
 }
 
 // Bucket logging is not supported in our Fleet Terraforms at the moment. It can be enabled by the

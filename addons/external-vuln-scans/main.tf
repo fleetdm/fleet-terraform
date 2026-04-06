@@ -16,8 +16,9 @@ locals {
     for k, v in merge(var.fleet_config.extra_secrets, {
       FLEET_MYSQL_PASSWORD              = var.fleet_config.database.password_secret_arn
       FLEET_MYSQL_READ_REPLICA_PASSWORD = var.fleet_config.database.password_secret_arn
-      FLEET_SERVER_PRIVATE_KEY          = var.fleet_server_private_key_secret_arn
-      }) : {
+      }, var.fleet_config.private_key_delivery_method == "ecs" ? {
+      FLEET_SERVER_PRIVATE_KEY = var.fleet_server_private_key_secret_arn
+      } : {}) : {
       name      = k
       valueFrom = v
     }
@@ -59,79 +60,87 @@ resource "aws_ecs_task_definition" "vuln-processing" {
   requires_compatibilities = ["FARGATE"]
 
   container_definitions = jsonencode(concat([
-    {
-      name                  = "fleet-vuln-processing"
-      image                 = var.fleet_config.image
-      cpu                   = var.vuln_processing_cpu
-      memory                = var.vuln_processing_memory
-      essential             = true
-      networkMode           = "awsvpc"
-      secrets               = local.secrets
-      repositoryCredentials = local.repository_credentials
-      mountPoints           = var.fleet_config.mount_points
-      dependsOn             = var.fleet_config.depends_on
-      ulimits = [
-        {
-          name      = "nofile"
-          softLimit = 999999
-          hardLimit = 999999
+    merge(
+      {
+        name                  = "fleet-vuln-processing"
+        image                 = var.fleet_config.image
+        cpu                   = var.vuln_processing_cpu
+        memory                = var.vuln_processing_memory
+        essential             = true
+        networkMode           = "awsvpc"
+        secrets               = local.secrets
+        repositoryCredentials = local.repository_credentials
+        mountPoints           = var.fleet_config.mount_points
+        dependsOn             = var.fleet_config.depends_on
+        ulimits = [
+          {
+            name      = "nofile"
+            softLimit = 999999
+            hardLimit = 999999
+          }
+        ]
+        environment = concat([
+          {
+            name  = "FLEET_MYSQL_USERNAME"
+            value = var.fleet_config.database.user
+          },
+          {
+            name  = "FLEET_MYSQL_DATABASE"
+            value = var.fleet_config.database.database
+          },
+          {
+            name  = "FLEET_MYSQL_ADDRESS"
+            value = var.fleet_config.database.address
+          },
+          {
+            name  = "FLEET_MYSQL_READ_REPLICA_USERNAME"
+            value = var.fleet_config.database.user
+          },
+          {
+            name  = "FLEET_MYSQL_READ_REPLICA_DATABASE"
+            value = var.fleet_config.database.database
+          },
+          {
+            name  = "FLEET_MYSQL_READ_REPLICA_ADDRESS"
+            value = var.fleet_config.database.rr_address == null ? var.fleet_config.database.address : var.fleet_config.database.rr_address
+          },
+          {
+            name  = "FLEET_REDIS_ADDRESS"
+            value = var.fleet_config.redis.address
+          },
+          {
+            name  = "FLEET_REDIS_USE_TLS"
+            value = tostring(var.fleet_config.redis.use_tls)
+          },
+          {
+            name  = "FLEET_SERVER_TLS"
+            value = tostring(try(var.fleet_config.server_tls_enabled, false))
+          },
+          {
+            name  = "FLEET_S3_SOFTWARE_INSTALLERS_BUCKET"
+            value = var.fleet_s3_software_installers_config.bucket_name
+          },
+          {
+            name  = "FLEET_S3_SOFTWARE_INSTALLERS_PREFIX"
+            value = var.fleet_s3_software_installers_config.s3_object_prefix
+          }
+          ], var.fleet_config.private_key_delivery_method == "iam" ? [{
+            name  = "FLEET_SERVER_PRIVATE_KEY_ARN"
+            value = var.fleet_server_private_key_secret_arn
+        }] : [], local.environment)
+        logConfiguration = {
+          logDriver = "awslogs"
+          options = {
+            awslogs-group         = var.awslogs_config.group
+            awslogs-region        = var.awslogs_config.region == null ? data.aws_region.current.region : var.awslogs_config.region
+            awslogs-stream-prefix = "${var.awslogs_config.prefix}-vuln-processing"
+          }
         }
-      ],
-      environment = concat([
-        {
-          name  = "FLEET_MYSQL_USERNAME"
-          value = var.fleet_config.database.user
-        },
-        {
-          name  = "FLEET_MYSQL_DATABASE"
-          value = var.fleet_config.database.database
-        },
-        {
-          name  = "FLEET_MYSQL_ADDRESS"
-          value = var.fleet_config.database.address
-        },
-        {
-          name  = "FLEET_MYSQL_READ_REPLICA_USERNAME"
-          value = var.fleet_config.database.user
-        },
-        {
-          name  = "FLEET_MYSQL_READ_REPLICA_DATABASE"
-          value = var.fleet_config.database.database
-        },
-        {
-          name  = "FLEET_MYSQL_READ_REPLICA_ADDRESS"
-          value = var.fleet_config.database.rr_address == null ? var.fleet_config.database.address : var.fleet_config.database.rr_address
-        },
-        {
-          name  = "FLEET_REDIS_ADDRESS"
-          value = var.fleet_config.redis.address
-        },
-        {
-          name  = "FLEET_REDIS_USE_TLS"
-          value = tostring(var.fleet_config.redis.use_tls)
-        },
-        {
-          name  = "FLEET_SERVER_TLS"
-          value = tostring(try(var.fleet_config.server_tls_enabled, false))
-        },
-        {
-          name  = "FLEET_S3_SOFTWARE_INSTALLERS_BUCKET"
-          value = var.fleet_s3_software_installers_config.bucket_name
-        },
-        {
-          name  = "FLEET_S3_SOFTWARE_INSTALLERS_PREFIX"
-          value = var.fleet_s3_software_installers_config.s3_object_prefix
-        },
-      ], local.environment),
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          awslogs-group         = var.awslogs_config.group
-          awslogs-region        = var.awslogs_config.region == null ? data.aws_region.current.region : var.awslogs_config.region
-          awslogs-stream-prefix = "${var.awslogs_config.prefix}-vuln-processing"
-        }
-      }
-    }]
+      },
+      var.fleet_config.command != null ? {
+        command = var.fleet_config.command
+      } : {}
+    )]
   , var.fleet_config.sidecars))
 
   dynamic "volume" {
@@ -161,5 +170,4 @@ resource "aws_ecs_task_definition" "vuln-processing" {
     }
   }
 }
-
 

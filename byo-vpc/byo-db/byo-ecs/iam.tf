@@ -36,7 +36,24 @@ locals {
     resources = [var.fleet_config.database.password_secret_kms_key_arn]
     effect    = "Allow"
   }] : []
-  execution_kms_policy = concat(local.private_key_secret_kms_policy, local.database_password_secret_kms_policy)
+  private_key_secret_access_policy = [{
+    sid       = "AllowFleetPrivateKeySecretAccess"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [local.private_key_secret_arn]
+    effect    = "Allow"
+  }]
+  execution_secret_policy = concat([{
+    sid       = "AllowFleetDatabasePasswordSecretAccess"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [var.fleet_config.database.password_secret_arn]
+    effect    = "Allow"
+  }], var.fleet_config.private_key_delivery_method == "ecs" ? local.private_key_secret_access_policy : [])
+  fleet_secret_policy = var.fleet_config.private_key_delivery_method == "iam" ? local.private_key_secret_access_policy : []
+  execution_kms_policy = concat(
+    var.fleet_config.private_key_delivery_method == "ecs" ? local.private_key_secret_kms_policy : [],
+    local.database_password_secret_kms_policy
+  )
+  fleet_kms_policy = var.fleet_config.private_key_delivery_method == "iam" ? local.private_key_secret_kms_policy : []
 }
 
 data "aws_iam_policy_document" "software_installers" {
@@ -85,6 +102,26 @@ data "aws_iam_policy_document" "fleet" {
     resources = ["*"]
   }
 
+  dynamic "statement" {
+    for_each = local.fleet_secret_policy
+    content {
+      sid       = try(statement.value.sid, "")
+      actions   = try(statement.value.actions, [])
+      resources = try(statement.value.resources, [])
+      effect    = try(statement.value.effect, null)
+    }
+  }
+
+  dynamic "statement" {
+    for_each = local.fleet_kms_policy
+    content {
+      sid       = try(statement.value.sid, "")
+      actions   = try(statement.value.actions, [])
+      resources = try(statement.value.resources, [])
+      effect    = try(statement.value.effect, null)
+    }
+  }
+
 }
 
 data "aws_iam_policy_document" "assume_role" {
@@ -99,14 +136,14 @@ data "aws_iam_policy_document" "assume_role" {
 }
 
 data "aws_iam_policy_document" "fleet-execution" {
-  // allow fleet application to obtain the database password from secrets manager
-  statement {
-    effect  = "Allow"
-    actions = ["secretsmanager:GetSecretValue"]
-    resources = [
-      var.fleet_config.database.password_secret_arn,
-      aws_secretsmanager_secret.fleet_server_private_key.arn
-    ]
+  dynamic "statement" {
+    for_each = local.execution_secret_policy
+    content {
+      sid       = try(statement.value.sid, "")
+      actions   = try(statement.value.actions, [])
+      resources = try(statement.value.resources, [])
+      effect    = try(statement.value.effect, null)
+    }
   }
 
   dynamic "statement" {
