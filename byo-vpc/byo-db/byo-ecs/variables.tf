@@ -39,6 +39,8 @@ variable "fleet_config" {
     mem                          = optional(number, 4096)
     cpu                          = optional(number, 512)
     pid_mode                     = optional(string, null)
+    command                      = optional(list(string), null)
+    private_key_delivery_method  = optional(string, "ecs")
     image                        = optional(string, "fleetdm/fleet:v4.83.0")
     family                       = optional(string, "fleet")
     sidecars                     = optional(list(any), [])
@@ -52,6 +54,7 @@ variable "fleet_config" {
     security_group_name          = optional(string, "fleet")
     iam_role_arn                 = optional(string, null)
     repository_credentials       = optional(string, "")
+    private_key_secret_arn       = optional(string, null)
     private_key_secret_name      = optional(string, "fleet-server-private-key")
     private_key_secret_kms = optional(object({
       cmk_enabled        = optional(bool, null)
@@ -198,6 +201,8 @@ variable "fleet_config" {
     mem                          = 512
     cpu                          = 256
     pid_mode                     = null
+    command                      = null
+    private_key_delivery_method  = "ecs"
     image                        = "fleetdm/fleet:v4.83.0"
     family                       = "fleet"
     sidecars                     = []
@@ -211,6 +216,7 @@ variable "fleet_config" {
     security_group_name          = "fleet"
     iam_role_arn                 = null
     repository_credentials       = ""
+    private_key_secret_arn       = null
     private_key_secret_name      = "fleet-server-private-key"
     private_key_secret_kms = {
       cmk_enabled        = null
@@ -298,6 +304,11 @@ variable "fleet_config" {
   description = "The configuration object for Fleet itself. Fields that default to null will have their respective resources created if not specified. For published KMS blocks, legacy `enabled` is deprecated and still accepted; prefer `cmk_enabled`."
   nullable    = false
   validation {
+    condition     = contains(["ecs", "iam"], var.fleet_config.private_key_delivery_method)
+    error_message = "fleet_config.private_key_delivery_method must be either \"ecs\" or \"iam\"."
+  }
+
+  validation {
     condition     = var.fleet_config.ephemeral_storage == null ? true : (var.fleet_config.ephemeral_storage.size_in_gib >= 21 && var.fleet_config.ephemeral_storage.size_in_gib <= 200)
     error_message = "fleet_config.ephemeral_storage.size_in_gib must be between 21 and 200 GiB when set."
   }
@@ -314,6 +325,7 @@ variable "fleet_config" {
     condition = (
       length(var.fleet_config.private_key_secret_kms.extra_kms_policies) == 0 ||
       (
+        var.fleet_config.private_key_secret_arn == null &&
         coalesce(var.fleet_config.private_key_secret_kms.cmk_enabled, var.fleet_config.private_key_secret_kms.enabled, false) &&
         var.fleet_config.private_key_secret_kms.kms_key_arn == null
       )
