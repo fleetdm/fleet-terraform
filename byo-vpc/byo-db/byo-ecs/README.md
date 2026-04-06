@@ -123,9 +123,38 @@ fleet_config = {
 
 When `private_key_delivery_method = "iam"`, the KMS key policy for the private key secret grants decrypt permissions to the Fleet task role instead of the ECS execution role.
 
+## Caller-Provided Private Key Secret
+
+By default, this module creates and populates the Fleet server private key secret in Secrets Manager.
+
+To use a caller-managed existing secret instead, set `fleet_config.private_key_secret_arn`. When this is set:
+
+- This module does not create the Fleet server private key secret, secret version, or generated random value.
+- `fleet_config.private_key_secret_name` is ignored.
+- The provided ARN is used in both delivery modes:
+  - `ecs`: injected as `FLEET_SERVER_PRIVATE_KEY`
+  - `iam`: injected as `FLEET_SERVER_PRIVATE_KEY_ARN`
+- The output `fleet_server_private_key_secret_arn` returns the effective ARN, whether the secret is module-managed or caller-managed.
+- Secret value population and lifecycle are entirely caller-managed.
+
+If the caller-provided secret uses a CMK, the caller must also provide `fleet_config.private_key_secret_kms.kms_key_arn` so the correct ECS execution role or Fleet task role gets decrypt permissions for the selected delivery mode. This module does not inspect external secrets to discover their KMS configuration.
+
+```hcl
+fleet_config = {
+  private_key_secret_arn      = "arn:aws:secretsmanager:us-east-1:123456789012:secret:existing-fleet-private-key"
+  private_key_delivery_method = "iam"
+
+  private_key_secret_kms = {
+    cmk_enabled = true
+    kms_key_arn = "arn:aws:kms:us-east-1:123456789012:key/11111111-2222-3333-4444-555555555555"
+  }
+}
+```
+
 ## Migration Notes
 
 - Existing deployments are unchanged unless new KMS options are enabled.
+- Supplying `fleet_config.private_key_secret_arn` switches the module to use an existing caller-managed secret instead of creating one.
 - Enabling KMS for application logs sets `kms_key_id` on the module-managed CloudWatch log group.
 - Enabling KMS for software installers updates S3 default encryption configuration.
 - Breaking change: software installers CMK policy ownership now lives in `byo-ecs`. The CloudFront addon no longer manages that key policy.
