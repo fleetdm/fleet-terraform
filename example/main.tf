@@ -75,7 +75,7 @@ locals {
 }
 
 module "fleet" {
-  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.20.1"
+  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.26.0"
   certificate_arn = module.acm.acm_certificate_arn
 
   vpc = {
@@ -295,7 +295,7 @@ module "migrations" {
 
 # Enable if using s3 for carves
 # module "osquery-carve" {
-#   source = "github.com/fleetdm/fleet-terraform/addons/osquery-carve?depth=1&ref=tf-mod-addon-osquery-carve-v1.1.1"
+#   source = "github.com/fleetdm/fleet-terraform/addons/osquery-carve?depth=1&ref=tf-mod-addon-osquery-carve-v1.3.0"
 #   osquery_carve_s3_bucket = {
 #     name = local.osquery_carve_bucket_name
 #   }
@@ -320,7 +320,7 @@ module "migrations" {
 # disabled in the module.
 
 module "mdm" {
-  source             = "github.com/fleetdm/fleet-terraform/addons/mdm?depth=1&ref=tf-mod-addon-mdm-v2.0.0"
+  source             = "github.com/fleetdm/fleet-terraform/addons/mdm?depth=1&ref=tf-mod-addon-mdm-v2.2.0"
   apn_secret_name    = null
   scep_secret_name   = "fleet-scep"
   abm_secret_name    = null

@@ -74,7 +74,7 @@ locals {
 }
 
 module "fleet_byo_vpc" {
-  source = "github.com/fleetdm/fleet-terraform//byo-vpc?depth=1&ref=tf-mod-byo-vpc-v1.24.0"
+  source = "github.com/fleetdm/fleet-terraform//byo-vpc?depth=1&ref=tf-mod-byo-vpc-v1.27.0"
 
   kms_base_policy = local.kms_base_policy_statements # your restrictive policy
 
@@ -102,7 +102,7 @@ module "fleet_byo_vpc" {
 }
 
 module "monitoring" {
-  source = "github.com/fleetdm/fleet-terraform//addons/monitoring?ref=tf-mod-addon-monitoring-v1.9.0"
+  source = "github.com/fleetdm/fleet-terraform//addons/monitoring?ref=tf-mod-addon-monitoring-v1.12.0"
 
   # ...
   cron_monitoring = {
@@ -120,7 +120,7 @@ Lambda's IAM policy alone is sufficient and `extra_kms_policies` is not needed.
 
 ```hcl
 module "fleet_byo_vpc" {
-  source = "github.com/fleetdm/fleet-terraform//byo-vpc?depth=1&ref=tf-mod-byo-vpc-v1.24.0"
+  source = "github.com/fleetdm/fleet-terraform//byo-vpc?depth=1&ref=tf-mod-byo-vpc-v1.27.0"
 
   vpc_config = {
     vpc_id = "vpc-1234567890abcdef0"
@@ -155,7 +155,7 @@ module "fleet_byo_vpc" {
 # Migration Notes
 
 * Existing deployments are unchanged until you enable new KMS settings.
-* Upgrading from `tf-mod-byo-vpc-v1.24.0` to any newer version may plan an in-place Aurora cluster update setting cluster-level `performance_insights_enabled = true`. Older versions already enabled Performance Insights at the instance level; newer versions also manage it at the cluster level to align with Aurora Database Insights support.
+* Upgrading from `tf-mod-byo-vpc-v1.27.0` to any newer version may plan an in-place Aurora cluster update setting cluster-level `performance_insights_enabled = true`. Older versions already enabled Performance Insights at the instance level; newer versions also manage it at the cluster level to align with Aurora Database Insights support.
 * Aurora storage and some observability changes may still be sensitive changes; review your maintenance and restore strategy before applying them in production.
 * If your goal is routine key rotation, prefer AWS KMS automatic rotation on the existing CMK when possible. Switching a resource to a different CMK is a separate migration with service-specific behavior.
 
@@ -323,7 +323,7 @@ Edit `.header.md`, run `terraform init`, then run `terraform-docs markdown --hea
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.38.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.39.0 |
 | <a name="provider_random"></a> [random](#provider\_random) | 3.8.1 |
 
 ## Modules

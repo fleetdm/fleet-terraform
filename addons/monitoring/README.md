@@ -64,7 +64,7 @@ aws logs delete-log-group --log-group-name "/aws/lambda/<customer_prefix>-cron-m
 
 ```
 module "monitoring" {
-  source                 = "github.com/fleetdm/fleet-terraform//addons/monitoring?ref=tf-mod-addon-monitoring-v1.9.0"
+  source                 = "github.com/fleetdm/fleet-terraform//addons/monitoring?ref=tf-mod-addon-monitoring-v1.12.0"
   customer_prefix        = local.customer
   fleet_ecs_service_name = module.fleet.byo-vpc.byo-db.byo-ecs.service.name
   albs = [
@@ -190,14 +190,17 @@ If you want to publish to all, use `default_sns_topic_arns` instead and include 
 
 ## Requirements
 
-No requirements.
+| Name | Version |
+|------|---------|
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.12.0 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 6.37.0 |
 
 ## Providers
 
 | Name | Version |
 |------|---------|
 | <a name="provider_archive"></a> [archive](#provider\_archive) | 2.7.1 |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.37.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.39.0 |
 | <a name="provider_null"></a> [null](#provider\_null) | 3.2.4 |
 
 ## Modules

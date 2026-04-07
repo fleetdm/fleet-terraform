@@ -3,7 +3,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "6.11.0"
+      version = ">= 6.11.0"
     }
   }
 }
@@ -92,7 +92,7 @@ module "vpc" {
 }
 
 module "byo-vpc" {
-  source = "github.com/fleetdm/fleet-terraform//byo-vpc?depth=1&ref=tf-mod-byo-vpc-v1.22.1"
+  source = "github.com/fleetdm/fleet-terraform//byo-vpc?depth=1&ref=tf-mod-byo-vpc-v1.27.0"
   vpc_config = {
     vpc_id = module.vpc.vpc_id
     networking = {

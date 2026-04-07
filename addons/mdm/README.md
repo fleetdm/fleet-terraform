@@ -26,7 +26,7 @@ Example KMS configuration:
 
 ```
 module "mdm" {
-  source = "github.com/fleetdm/fleet-terraform/addons/mdm?depth=1&ref=tf-mod-addon-mdm-v2.0.0"
+  source = "github.com/fleetdm/fleet-terraform/addons/mdm?depth=1&ref=tf-mod-addon-mdm-v2.2.0"
 
   apn_secret_name    = null
   scep_secret_name   = "fleet-scep"
@@ -77,13 +77,16 @@ Please note that for Windows, the same SCEP cert is used and the cert+key above 
 
 ## Requirements
 
-No requirements.
+| Name | Version |
+|------|---------|
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.12.0 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 6.37.0 |
 
 ## Providers
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | n/a |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.39.0 |
 
 ## Modules
 

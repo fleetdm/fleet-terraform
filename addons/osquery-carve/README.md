@@ -16,13 +16,16 @@ When bringing your own KMS key, it is your responsibility to ensure that key pol
 
 ## Requirements
 
-No requirements.
+| Name | Version |
+|------|---------|
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.12.0 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 6.37.0 |
 
 ## Providers
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.37.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.39.0 |
 
 ## Modules
 
