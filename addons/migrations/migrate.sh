@@ -4,6 +4,7 @@ set -e
 function scale_services(){
 	UP_DOWN="${1:?}"
 	SERVICE_NAME="${2:?}" # Take service name as an argument
+	SERVICE_TASK_ARNS=""
 	ADJUST_AUTOSCALING="${3:-}"
 	COUNT="${4:-1}"
 
@@ -23,6 +24,12 @@ function scale_services(){
 		aws application-autoscaling register-scalable-target --region "${REGION:?}" --service-namespace ecs --resource-id "service/${ECS_CLUSTER:?}/${SERVICE_NAME:?}" --scalable-dimension "ecs:service:DesiredCount" --min-capacity "${CAPACITY:?}" --max-capacity "${CAPACITY_MAX:?}"
 	fi
 	
+	# Capture the service's current tasks before scaling down so we can wait for
+	# those exact tasks to reach STOPPED, not just for the service to report stable.
+	if [ "${UP_DOWN:?}" != "up" ]; then
+		SERVICE_TASK_ARNS="$(aws ecs list-tasks --region "${REGION:?}" --cluster "${ECS_CLUSTER:?}" --service-name "${SERVICE_NAME:?}" --desired-status RUNNING --query 'taskArns' --output text)"
+	fi
+
 	# We are scaling down, make it 0
 	if [ "${UP_DOWN:?}" != "up" ]; then
 		aws ecs update-service --region "${REGION:?}" --cluster "${ECS_CLUSTER:?}" --service "${SERVICE_NAME:?}" --desired-count 0
@@ -31,6 +38,14 @@ function scale_services(){
 	if [ "${TASK_DEFINITION_REVISION}" != "1" ]; then
 		# Wait for scale-down to succeed
 		aws ecs wait services-stable --region "${REGION:?}" --cluster "${ECS_CLUSTER:?}" --services "${SERVICE_NAME:?}"
+	fi
+
+	# services-stable only guarantees there are no RUNNING tasks for the service.
+	# Wait for the tasks we observed before scale-down to be fully STOPPED as well.
+	if [ "${UP_DOWN:?}" != "up" ] && [ -n "${SERVICE_TASK_ARNS}" ] && [ "${SERVICE_TASK_ARNS}" != "None" ]; then
+		# Intentionally unquoted so the tab/space-delimited ARN list is passed as
+		# separate --tasks arguments to the AWS CLI.
+		aws ecs wait tasks-stopped --region "${REGION:?}" --cluster "${ECS_CLUSTER:?}" --tasks ${SERVICE_TASK_ARNS}
 	fi
 }
 
