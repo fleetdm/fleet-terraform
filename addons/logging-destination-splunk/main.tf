@@ -22,6 +22,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "splunk-failure" {
 resource "aws_s3_bucket_server_side_encryption_configuration" "splunk-failure" {
   bucket = aws_s3_bucket.splunk-failure.bucket
   rule {
+    blocked_encryption_types = ["NONE"]
     apply_server_side_encryption_by_default {
       sse_algorithm = "aws:kms"
     }
