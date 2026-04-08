@@ -21,6 +21,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "datadog-failure" {
 resource "aws_s3_bucket_server_side_encryption_configuration" "datadog-failure" {
   bucket = aws_s3_bucket.datadog-failure.bucket
   rule {
+    blocked_encryption_types = ["NONE"]
     apply_server_side_encryption_by_default {
       sse_algorithm = "aws:kms"
     }
