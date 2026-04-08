@@ -267,7 +267,8 @@ module "s3_bucket_for_logs" {
 
   server_side_encryption_configuration = {
     rule = {
-      bucket_key_enabled = true
+      blocked_encryption_types = ["NONE"]
+      bucket_key_enabled       = true
       apply_server_side_encryption_by_default = {
         sse_algorithm = "AES256"
       }
@@ -601,6 +602,7 @@ module "athena-s3-bucket" {
   restrict_public_buckets               = true
   server_side_encryption_configuration = {
     rule = {
+      blocked_encryption_types = ["NONE"]
       apply_server_side_encryption_by_default = {
         kms_master_key_id = aws_kms_key.logs.arn
         sse_algorithm     = "aws:kms"
