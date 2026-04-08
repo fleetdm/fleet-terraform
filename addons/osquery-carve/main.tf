@@ -24,6 +24,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "main" {
 resource "aws_s3_bucket_server_side_encryption_configuration" "main" {
   bucket = aws_s3_bucket.main.bucket
   rule {
+    blocked_encryption_types = ["NONE"]
     apply_server_side_encryption_by_default {
       sse_algorithm = "aws:kms"
     }
