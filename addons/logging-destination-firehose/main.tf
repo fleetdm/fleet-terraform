@@ -27,6 +27,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "osquery-results" {
 resource "aws_s3_bucket_server_side_encryption_configuration" "osquery-results" {
   bucket = aws_s3_bucket.osquery-results.bucket
   rule {
+    blocked_encryption_types = ["NONE"]
     apply_server_side_encryption_by_default {
       sse_algorithm = "aws:kms"
     }
@@ -67,6 +68,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "osquery-status" {
 resource "aws_s3_bucket_server_side_encryption_configuration" "osquery-status" {
   bucket = aws_s3_bucket.osquery-status.bucket
   rule {
+    blocked_encryption_types = ["NONE"]
     apply_server_side_encryption_by_default {
       sse_algorithm = "aws:kms"
     }
@@ -107,6 +109,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "audit" {
 resource "aws_s3_bucket_server_side_encryption_configuration" "audit" {
   bucket = aws_s3_bucket.audit.bucket
   rule {
+    blocked_encryption_types = ["NONE"]
     apply_server_side_encryption_by_default {
       sse_algorithm = "aws:kms"
     }
