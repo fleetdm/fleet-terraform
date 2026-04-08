@@ -37,6 +37,7 @@ resource "aws_s3_bucket_public_access_block" "carve_results" {
 resource "aws_s3_bucket_server_side_encryption_configuration" "sse" {
   bucket = aws_s3_bucket.carve_results_bucket.id
   rule {
+    blocked_encryption_types = ["NONE"]
     apply_server_side_encryption_by_default {
       sse_algorithm     = "aws:kms"
       kms_master_key_id = aws_kms_key.s3_encryption_key.key_id
