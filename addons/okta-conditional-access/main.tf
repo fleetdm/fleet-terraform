@@ -76,7 +76,8 @@ module "lb_trust_store_bucket" {
 
   server_side_encryption_configuration = {
     rule = {
-      bucket_key_enabled = true
+      blocked_encryption_types = ["NONE"]
+      bucket_key_enabled       = true
       apply_server_side_encryption_by_default = {
         sse_algorithm = "aws:kms"
       }
