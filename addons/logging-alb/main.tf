@@ -37,75 +37,69 @@ locals {
     }
   ]
 
-  kms_service_statements = concat(
-    var.enable_reencrypt_sweep ? [
-      {
-        sid       = "AllowLambdaReencryptUseOfTheKey"
-        effect    = "Allow"
-        actions   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey*", "kms:DescribeKey"]
-        resources = ["*"]
-        principals = {
-          type        = "AWS"
-          identifiers = [aws_iam_role.lambda_reencrypt[0].arn]
-        }
-        conditions = []
-      },
-      {
-        sid       = "AllowLambdaSweepUseOfTheKey"
-        effect    = "Allow"
-        actions   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey*", "kms:DescribeKey"]
-        resources = ["*"]
-        principals = {
-          type        = "AWS"
-          identifiers = [aws_iam_role.lambda_sweep[0].arn]
-        }
-        conditions = []
-      },
-      {
-        sid       = "AllowBatchReencryptUseOfTheKey"
-        effect    = "Allow"
-        actions   = ["kms:Encrypt", "kms:GenerateDataKey", "kms:GenerateDataKeyWithoutPlaintext", "kms:DescribeKey"]
-        resources = ["*"]
-        principals = {
-          type        = "AWS"
-          identifiers = [aws_iam_role.batch_reencrypt[0].arn]
-        }
-        conditions = []
-      },
-    ] : [],
-    [
-      {
-        sid       = "AllowCloudWatchLogsUseOfTheKey"
-        effect    = "Allow"
-        actions   = ["kms:Encrypt*", "kms:Decrypt*", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:Describe*"]
-        resources = ["*"]
-        principals = {
-          type        = "Service"
-          identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
-        }
-        conditions = []
-      },
-    ],
-    var.enable_reencrypt_sweep ? [
-      {
-        sid       = "AllowLambdaServiceUseOfTheKey"
-        effect    = "Allow"
-        actions   = ["kms:GenerateDataKey", "kms:Decrypt"]
-        resources = ["*"]
-        principals = {
-          type        = "Service"
-          identifiers = ["lambda.amazonaws.com"]
-        }
-        conditions = [
-          {
-            test     = "StringLike"
-            variable = "kms:EncryptionContext:aws:lambda:FunctionArn"
-            values   = local.lambda_function_arns
-          }
-        ]
+  kms_service_statements = var.enable_reencrypt_sweep ? [
+    {
+      sid       = "AllowLambdaReencryptUseOfTheKey"
+      effect    = "Allow"
+      actions   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey*", "kms:DescribeKey"]
+      resources = ["*"]
+      principals = {
+        type        = "AWS"
+        identifiers = [aws_iam_role.lambda_reencrypt[0].arn]
       }
-    ] : [],
-  )
+      conditions = []
+    },
+    {
+      sid       = "AllowLambdaSweepUseOfTheKey"
+      effect    = "Allow"
+      actions   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey*", "kms:DescribeKey"]
+      resources = ["*"]
+      principals = {
+        type        = "AWS"
+        identifiers = [aws_iam_role.lambda_sweep[0].arn]
+      }
+      conditions = []
+    },
+    {
+      sid       = "AllowBatchReencryptUseOfTheKey"
+      effect    = "Allow"
+      actions   = ["kms:Encrypt", "kms:GenerateDataKey", "kms:GenerateDataKeyWithoutPlaintext", "kms:DescribeKey"]
+      resources = ["*"]
+      principals = {
+        type        = "AWS"
+        identifiers = [aws_iam_role.batch_reencrypt[0].arn]
+      }
+      conditions = []
+    },
+    {
+      sid       = "AllowCloudWatchLogsUseOfTheKey"
+      effect    = "Allow"
+      actions   = ["kms:Encrypt*", "kms:Decrypt*", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:Describe*"]
+      resources = ["*"]
+      principals = {
+        type        = "Service"
+        identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
+      }
+      conditions = []
+    },
+    {
+      sid       = "AllowLambdaServiceUseOfTheKey"
+      effect    = "Allow"
+      actions   = ["kms:GenerateDataKey", "kms:Decrypt"]
+      resources = ["*"]
+      principals = {
+        type        = "Service"
+        identifiers = ["lambda.amazonaws.com"]
+      }
+      conditions = [
+        {
+          test     = "StringLike"
+          variable = "kms:EncryptionContext:aws:lambda:FunctionArn"
+          values   = local.lambda_function_arns
+        }
+      ]
+    }
+  ] : []
 
   s3_path_prefix = coalesce(var.alt_path_prefix, var.prefix)
 }

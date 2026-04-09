@@ -1,11 +1,11 @@
 # ALB Logging Addon
-This addon creates an S3 bucket for ALB access logs with in-place SSE-KMS re-encryption via Lambda. ALB access logging requires SSE-S3 (AES256), so objects are written with SSE-S3 and immediately re-encrypted to SSE-KMS using a customer-managed KMS key. The same module-managed CMK also encrypts the Lambda functions and their CloudWatch log groups.
+This addon creates an S3 bucket for ALB access logs with optional in-place SSE-KMS re-encryption via Lambda. ALB access logging requires SSE-S3 (AES256), so objects are written with SSE-S3. When `enable_reencrypt_sweep` is enabled, objects are immediately re-encrypted to SSE-KMS using a customer-managed KMS key. The module-managed CMK also encrypts the Lambda functions and their CloudWatch log groups when the feature is active.
 
 ## How it works
 
 1. **ALB writes** log objects to the S3 bucket using SSE-S3 (the only encryption ALB supports).
-2. **Event-driven Lambda** triggers on `s3:ObjectCreated:Put` and re-encrypts each object in-place to SSE-KMS via `CopyObject`. The Lambda's `CopyObject` emits `s3:ObjectCreated:Copy` which does not re-trigger the notification (loop prevention).
-3. **Daily sweep Lambda** runs via EventBridge and scans the last 2 days of ALB log prefixes. If any SSE-S3 objects are found (missed by the event-driven Lambda), it generates a CSV manifest and submits an S3 Batch Operations `S3PutObjectCopy` job to re-encrypt them.
+2. **Event-driven Lambda** (optional, requires `enable_reencrypt_sweep = true`) triggers on `s3:ObjectCreated:Put` and re-encrypts each object in-place to SSE-KMS via `CopyObject`. The Lambda's `CopyObject` emits `s3:ObjectCreated:Copy` which does not re-trigger the notification (loop prevention).
+3. **Daily sweep Lambda** (optional, requires `enable_reencrypt_sweep = true`) runs via EventBridge and scans the last 2 days of ALB log prefixes. If any SSE-S3 objects are found (missed by the event-driven Lambda), it generates a CSV manifest and submits an S3 Batch Operations `S3PutObjectCopy` job to re-encrypt them.
 
 Optionally creates Athena resources for querying the logs.
 
@@ -36,9 +36,16 @@ module "main" {
 }
 
 module "logging_alb" {
-  source        = "github.com/fleetdm/fleet-terraform//addons/logging-alb?ref=main"
-  prefix        = "fleet"
-  enable_athena = true
+  source                 = "github.com/fleetdm/fleet-terraform//addons/logging-alb?ref=main"
+  prefix                 = "fleet"
+  enable_athena          = true
+
+  # Optional: Enable the re-encrypt and sweep Lambda functions and associated resources. Default: false
+  enable_reencrypt_sweep = true
+
+  # Optional: Override the prefix used in IAM role names when enable_reencrypt_sweep = true.
+  # Must be 16 characters or fewer.
+  # iam_role_name_prefix = "fleet"
 }
 ```
 
@@ -56,7 +63,7 @@ s3://your-alb-logs-bucket/<PREFIX>/AWSLogs/<ACCOUNT-ID>/elasticloadbalancing/<RE
 
 If upgrading from a previous version that used a separate archive bucket, use the provided script to re-encrypt existing SSE-S3 objects in-place. The script uses S3 Batch Operations with `S3PutObjectCopy` to re-encrypt objects at scale.
 
-1. Apply Terraform so the new Lambda functions and Batch Operations IAM role are in place.
+1. Apply Terraform with `enable_reencrypt_sweep = true` so the Lambda functions and Batch Operations IAM role are in place.
 2. Run the migration script to re-encrypt existing objects:
 
 ```
@@ -84,14 +91,15 @@ No requirements.
 | Name | Version |
 |------|---------|
 | <a name="provider_archive"></a> [archive](#provider\_archive) | 2.7.1 |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.37.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.40.0 |
+| <a name="provider_terraform"></a> [terraform](#provider\_terraform) | n/a |
 
 ## Modules
 
 | Name | Source | Version |
 |------|--------|---------|
-| <a name="module_athena-s3-bucket"></a> [athena-s3-bucket](#module\_athena-s3-bucket) | terraform-aws-modules/s3-bucket/aws | 5.0.0 |
-| <a name="module_s3_bucket_for_logs"></a> [s3\_bucket\_for\_logs](#module\_s3\_bucket\_for\_logs) | terraform-aws-modules/s3-bucket/aws | 5.0.0 |
+| <a name="module_athena-s3-bucket"></a> [athena-s3-bucket](#module\_athena-s3-bucket) | terraform-aws-modules/s3-bucket/aws | 5.12.0 |
+| <a name="module_s3_bucket_for_logs"></a> [s3\_bucket\_for\_logs](#module\_s3\_bucket\_for\_logs) | terraform-aws-modules/s3-bucket/aws | 5.12.0 |
 
 ## Resources
 
@@ -117,6 +125,7 @@ No requirements.
 | [aws_lambda_permission.eventbridge_invoke_sweep](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
 | [aws_lambda_permission.s3_invoke_reencrypt](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
 | [aws_s3_bucket_notification.reencrypt](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_notification) | resource |
+| [terraform_data.validate_iam_prefix_length](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
 | [archive_file.lambda_reencrypt](https://registry.terraform.io/providers/hashicorp/archive/latest/docs/data-sources/file) | data source |
 | [archive_file.lambda_sweep](https://registry.terraform.io/providers/hashicorp/archive/latest/docs/data-sources/file) | data source |
 | [aws_caller_identity.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/caller_identity) | data source |
@@ -138,9 +147,11 @@ No requirements.
 |------|-------------|------|---------|:--------:|
 | <a name="input_alt_path_prefix"></a> [alt\_path\_prefix](#input\_alt\_path\_prefix) | Used if the prefix inside of the s3 bucket doesn't match the name of the bucket prefix | `string` | `null` | no |
 | <a name="input_enable_athena"></a> [enable\_athena](#input\_enable\_athena) | n/a | `bool` | `true` | no |
+| <a name="input_enable_reencrypt_sweep"></a> [enable\_reencrypt\_sweep](#input\_enable\_reencrypt\_sweep) | Enable the sweep and re-encrypt Lambda functions, EventBridge schedule, S3 bucket notification, and associated IAM roles. | `bool` | `false` | no |
 | <a name="input_extra_kms_policies"></a> [extra\_kms\_policies](#input\_extra\_kms\_policies) | n/a | `list(any)` | `[]` | no |
 | <a name="input_extra_s3_athena_policies"></a> [extra\_s3\_athena\_policies](#input\_extra\_s3\_athena\_policies) | n/a | `list(any)` | `[]` | no |
 | <a name="input_extra_s3_log_policies"></a> [extra\_s3\_log\_policies](#input\_extra\_s3\_log\_policies) | n/a | `list(any)` | `[]` | no |
+| <a name="input_iam_role_name_prefix"></a> [iam\_role\_name\_prefix](#input\_iam\_role\_name\_prefix) | Optional shorter prefix for IAM role name\_prefix fields, only used when enable\_reencrypt\_sweep = true (max 16 characters to fit within the 38-char AWS limit). Defaults to var.prefix. | `string` | `null` | no |
 | <a name="input_kms_base_policy"></a> [kms\_base\_policy](#input\_kms\_base\_policy) | Optional base KMS key-policy statements to apply to module-created CMKs before module-required service access statements are merged in. If null, the module defaults to the historical root `kms:*` statement. | <pre>list(object({<br/>    sid    = string<br/>    effect = string<br/>    principals = object({<br/>      type        = string<br/>      identifiers = list(string)<br/>    })<br/>    actions   = list(string)<br/>    resources = list(string)<br/>    conditions = optional(list(object({<br/>      test     = string<br/>      variable = string<br/>      values   = list(string)<br/>    })), [])<br/>  }))</pre> | `null` | no |
 | <a name="input_lambda_log_retention_in_days"></a> [lambda\_log\_retention\_in\_days](#input\_lambda\_log\_retention\_in\_days) | CloudWatch log retention in days for the re-encrypt and sweep Lambda functions | `number` | `365` | no |
 | <a name="input_prefix"></a> [prefix](#input\_prefix) | n/a | `string` | `"fleet"` | no |
