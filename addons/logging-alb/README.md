@@ -41,7 +41,7 @@ module "logging_alb" {
   enable_athena          = true
 
   # Optional: Enable the re-encrypt and sweep Lambda functions and associated resources. Default: false
-  enable_reencrypt_sweep = true
+  # enable_reencrypt_sweep = true
 
   # Optional: Override the prefix used in IAM role names when enable_reencrypt_sweep = true.
   # Must be 16 characters or fewer.
