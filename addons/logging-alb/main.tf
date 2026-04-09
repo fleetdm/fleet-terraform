@@ -1,3 +1,12 @@
+resource "terraform_data" "validate_iam_prefix_length" {
+  lifecycle {
+    precondition {
+      condition     = length(local.iam_role_prefix) <= 16
+      error_message = "The resolved IAM role name prefix '${local.iam_role_prefix}' is ${length(local.iam_role_prefix)} characters, but must be 16 or fewer. The longest suffix is '-alb-batch-reencrypt-' (22 chars) and AWS limits name_prefix to 38 characters. Set iam_role_name_prefix to a shorter value."
+    }
+  }
+}
+
 data "aws_caller_identity" "current" {}
 
 data "aws_partition" "current" {}
@@ -5,6 +14,7 @@ data "aws_partition" "current" {}
 data "aws_region" "current" {}
 
 locals {
+  iam_role_prefix     = coalesce(var.iam_role_name_prefix, var.prefix)
   landing_bucket_name = "${var.prefix}-alb-logs"
   lambda_function_arns = [
     "arn:${data.aws_partition.current.partition}:lambda:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:function:${var.prefix}-alb-log-reencrypt",
@@ -335,12 +345,12 @@ data "aws_iam_policy_document" "lambda_reencrypt" {
 }
 
 resource "aws_iam_role" "lambda_reencrypt" {
-  name_prefix        = "${var.prefix}-alb-log-reencrypt-"
+  name_prefix        = "${local.iam_role_prefix}-alb-log-reencrypt-"
   assume_role_policy = data.aws_iam_policy_document.lambda_reencrypt_assume_role.json
 }
 
 resource "aws_iam_role_policy" "lambda_reencrypt" {
-  name_prefix = "${var.prefix}-alb-log-reencrypt-"
+  name_prefix = "${local.iam_role_prefix}-alb-log-reencrypt-"
   role        = aws_iam_role.lambda_reencrypt.id
   policy      = data.aws_iam_policy_document.lambda_reencrypt.json
 }
@@ -465,12 +475,12 @@ data "aws_iam_policy_document" "lambda_sweep" {
 }
 
 resource "aws_iam_role" "lambda_sweep" {
-  name_prefix        = "${var.prefix}-alb-log-sweep-"
+  name_prefix        = "${local.iam_role_prefix}-alb-log-sweep-"
   assume_role_policy = data.aws_iam_policy_document.lambda_sweep_assume_role.json
 }
 
 resource "aws_iam_role_policy" "lambda_sweep" {
-  name_prefix = "${var.prefix}-alb-log-sweep-"
+  name_prefix = "${local.iam_role_prefix}-alb-log-sweep-"
   role        = aws_iam_role.lambda_sweep.id
   policy      = data.aws_iam_policy_document.lambda_sweep.json
 }
@@ -517,7 +527,7 @@ resource "aws_lambda_function" "sweep_reencrypt" {
 # ── EventBridge daily schedule → sweep Lambda ────────────────────────────────
 
 resource "aws_cloudwatch_event_rule" "sweep_reencrypt" {
-  name_prefix         = "${var.prefix}-alb-log-sweep-"
+  name_prefix         = "${local.iam_role_prefix}-alb-log-sweep-"
   schedule_expression = "rate(1 day)"
 }
 
@@ -562,12 +572,12 @@ data "aws_iam_policy_document" "batch_reencrypt" {
 }
 
 resource "aws_iam_role" "batch_reencrypt" {
-  name_prefix        = "${var.prefix}-alb-batch-reencrypt-"
+  name_prefix        = "${local.iam_role_prefix}-alb-batch-reencrypt-"
   assume_role_policy = data.aws_iam_policy_document.batch_reencrypt_assume_role.json
 }
 
 resource "aws_iam_role_policy" "batch_reencrypt" {
-  name_prefix = "${var.prefix}-alb-batch-reencrypt-"
+  name_prefix = "${local.iam_role_prefix}-alb-batch-reencrypt-"
   role        = aws_iam_role.batch_reencrypt.id
   policy      = data.aws_iam_policy_document.batch_reencrypt.json
 }

@@ -65,6 +65,17 @@ variable "kms_base_policy" {
   description = "Optional base KMS key-policy statements to apply to module-created CMKs before module-required service access statements are merged in. If null, the module defaults to the historical root `kms:*` statement."
 }
 
+variable "iam_role_name_prefix" {
+  description = "Optional shorter prefix for IAM role name_prefix fields (max 16 characters to fit within the 38-char AWS limit). Defaults to var.prefix."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.iam_role_name_prefix == null || length(var.iam_role_name_prefix) <= 16
+    error_message = "iam_role_name_prefix must be 16 characters or fewer. The longest IAM role suffix is '-alb-batch-reencrypt-' (22 chars), and AWS limits name_prefix to 38 characters."
+  }
+}
+
 variable "extra_s3_log_policies" {
   type    = list(any)
   default = []
