@@ -69,11 +69,6 @@ variable "iam_role_name_prefix" {
   description = "Optional shorter prefix for IAM role name_prefix fields, only used when enable_reencrypt_sweep = true (max 16 characters to fit within the 38-char AWS limit). Defaults to var.prefix."
   type        = string
   default     = null
-
-  validation {
-    condition     = var.iam_role_name_prefix == null || length(var.iam_role_name_prefix) <= 16
-    error_message = "iam_role_name_prefix must be 16 characters or fewer. The longest IAM role suffix is '-alb-batch-reencrypt-' (22 chars), and AWS limits name_prefix to 38 characters."
-  }
 }
 
 variable "enable_reencrypt_sweep" {
