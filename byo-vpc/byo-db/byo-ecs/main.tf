@@ -792,6 +792,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "software_installe
   count  = var.fleet_config.software_installers.create_bucket == true ? 1 : 0
   bucket = aws_s3_bucket.software_installers[0].bucket
   rule {
+    blocked_encryption_types = ["NONE"]
     apply_server_side_encryption_by_default {
       kms_master_key_id = local.software_installers_kms_key_id
       sse_algorithm     = "aws:kms"

@@ -244,7 +244,7 @@ resource "aws_kms_alias" "logs_alias" {
 
 module "s3_bucket_for_logs" {
   source  = "terraform-aws-modules/s3-bucket/aws"
-  version = "5.0.0"
+  version = "5.12.0"
 
   bucket = local.landing_bucket_name
 
@@ -267,7 +267,8 @@ module "s3_bucket_for_logs" {
 
   server_side_encryption_configuration = {
     rule = {
-      bucket_key_enabled = true
+      blocked_encryption_types = ["NONE"]
+      bucket_key_enabled       = true
       apply_server_side_encryption_by_default = {
         sse_algorithm = "AES256"
       }
@@ -582,7 +583,7 @@ resource "aws_athena_database" "logs" {
 module "athena-s3-bucket" {
   count   = var.enable_athena == true ? 1 : 0
   source  = "terraform-aws-modules/s3-bucket/aws"
-  version = "5.0.0"
+  version = "5.12.0"
 
   bucket = "${var.prefix}-alb-logs-athena"
 
@@ -601,6 +602,7 @@ module "athena-s3-bucket" {
   restrict_public_buckets               = true
   server_side_encryption_configuration = {
     rule = {
+      blocked_encryption_types = ["NONE"]
       apply_server_side_encryption_by_default = {
         kms_master_key_id = aws_kms_key.logs.arn
         sse_algorithm     = "aws:kms"
