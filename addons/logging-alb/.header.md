@@ -36,7 +36,7 @@ module "main" {
 }
 
 module "logging_alb" {
-  source                 = "github.com/fleetdm/fleet-terraform//addons/logging-alb?ref=main"
+  source                 = "github.com/fleetdm/fleet-terraform//addons/logging-alb?ref=tf-mod-addon-logging-alb-v2.2.2"
   prefix                 = "fleet"
   enable_athena          = true
 
