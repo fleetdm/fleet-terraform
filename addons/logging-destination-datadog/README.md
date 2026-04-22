@@ -11,7 +11,7 @@ This addon configures AWS Kinesis Firehose to send Fleet's osquery logs to Datad
 
 ```hcl
 module "datadog-logging" {
-  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-datadog?ref=tf-mod-addon-logging-destination-datadog-v1.1.2"
+  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-datadog?ref=tf-mod-addon-datadog-logging-v1.1.2"
 
   datadog_api_key = "your-datadog-api-key"
 
