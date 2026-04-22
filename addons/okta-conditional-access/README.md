@@ -59,7 +59,7 @@ resource "aws_route53_record" "okta" {
 }
 
 module "fleet" {
-  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.19.0"
+  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.26.1"
   ...
   fleet_config = {
     ...
@@ -86,7 +86,7 @@ module "fleet" {
 }
 
 module "okta-conditional-access" {
-  source = "github.com/fleetdm/fleet-terraform/addons/okta-conditional-access?depth=1&ref=tf-mod-addon-okta-conditional-access-v0.5.0"
+  source = "github.com/fleetdm/fleet-terraform/addons/okta-conditional-access?depth=1&ref=tf-mod-addon-okta-conditional-access-v0.5.1"
   customer_prefix = "fleet"
   vpc_id = module.fleet.vpc.vpc_id
   trust_store_s3_config = {
@@ -126,7 +126,7 @@ No requirements.
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.28.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.41.0 |
 
 ## Modules
 

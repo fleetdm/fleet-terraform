@@ -25,7 +25,7 @@ provider "aws" {
 }
 
 module "fleet_log_sharing_target" {
-  source = "github.com/fleetdm/fleet-terraform//addons/byo-cloudwatch-log-sharing/target-account-firehose?depth=1&ref=tf-mod-addon-byo-cloudwatch-log-sharing-v1.0.0"
+  source = "github.com/fleetdm/fleet-terraform//addons/byo-cloudwatch-log-sharing/target-account-firehose?depth=1&ref=tf-mod-addon-byo-cloudwatch-log-sharing-v1.0.1"
 
   providers = {
     aws.destination = aws.source_region
@@ -71,9 +71,9 @@ Then apply the source account module (`../cloudwatch`) using `module.fleet_log_s
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 5.29.0 |
-| <a name="provider_aws.destination"></a> [aws.destination](#provider\_aws.destination) | >= 5.29.0 |
-| <a name="provider_aws.target"></a> [aws.target](#provider\_aws.target) | >= 5.29.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.41.0 |
+| <a name="provider_aws.destination"></a> [aws.destination](#provider\_aws.destination) | 6.41.0 |
+| <a name="provider_aws.target"></a> [aws.target](#provider\_aws.target) | 6.41.0 |
 
 ## Modules
 
