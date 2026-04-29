@@ -151,13 +151,13 @@ module "monitoring" {
 Valid targets for `sns_topic_arns_map`:
 
  - acm\_certificate\_expired
- - alb\_helthyhosts
+ - alb\_healthyhosts
  - alb\_httpcode\_5xx
  - backend\_response\_time
  - cron\_monitoring (notifications about failures in the cron scheduler)
  - cron\_job\_failure\_monitoring (notifications about errors in individual cron jobs - defaults to value of `cron_monitoring`)
  - log\_monitoring
- - rds\_cpu\_untilizaton\_too\_high
+ - rds\_cpu\_utilization\_too\_high
  - rds\_db\_event\_subscription
  - redis\_cpu\_engine\_utilization
  - redis\_cpu\_utilization
@@ -166,6 +166,11 @@ Valid targets for `sns_topic_arns_map`:
  - redis\_replication\_lag
 
 If you want to publish to all, use `default_sns_topic_arns` instead and include your notification ARNs there.
+
+Deprecated (typo) aliases are still accepted for backwards compatibility:
+
+ - alb\_helthyhosts (use alb\_healthyhosts)
+ - rds\_cpu\_untilizaton\_too\_high (use rds\_cpu\_utilization\_too\_high)
 
 # Cron Names
 

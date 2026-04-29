@@ -10,8 +10,8 @@ resource "aws_cloudwatch_metric_alarm" "cpu_utilization_too_high" {
   statistic           = "Average"
   threshold           = 80
   alarm_description   = "Average database CPU utilization over last 5 minutes too high"
-  alarm_actions       = lookup(var.sns_topic_arns_map, "rds_cpu_untilizaton_too_high", var.default_sns_topic_arns)
-  ok_actions          = lookup(var.sns_topic_arns_map, "rds_cpu_untilizaton_too_high", var.default_sns_topic_arns)
+  alarm_actions       = lookup(var.sns_topic_arns_map, "rds_cpu_utilization_too_high", lookup(var.sns_topic_arns_map, "rds_cpu_untilizaton_too_high", var.default_sns_topic_arns))
+  ok_actions          = lookup(var.sns_topic_arns_map, "rds_cpu_utilization_too_high", lookup(var.sns_topic_arns_map, "rds_cpu_untilizaton_too_high", var.default_sns_topic_arns))
   dimensions = {
     DBInstanceIdentifier = each.key
   }
@@ -162,8 +162,8 @@ resource "aws_cloudwatch_metric_alarm" "alb_healthyhosts" {
   threshold           = each.value.min_containers
   alarm_description   = "This alarm indicates the number of Healthy Fleet hosts is lower than expected. Please investigate the load balancer \"${each.value.name}\" or the target group \"${each.value.target_group_name}\" and the fleet backend service \"${each.value.ecs_service_name}\""
   actions_enabled     = "true"
-  alarm_actions       = lookup(var.sns_topic_arns_map, "alb_helthyhosts", var.default_sns_topic_arns)
-  ok_actions          = lookup(var.sns_topic_arns_map, "alb_helthyhosts", var.default_sns_topic_arns)
+  alarm_actions       = lookup(var.sns_topic_arns_map, "alb_healthyhosts", lookup(var.sns_topic_arns_map, "alb_helthyhosts", var.default_sns_topic_arns))
+  ok_actions          = lookup(var.sns_topic_arns_map, "alb_healthyhosts", lookup(var.sns_topic_arns_map, "alb_helthyhosts", var.default_sns_topic_arns))
   dimensions = {
     TargetGroup  = each.value.target_group_arn_suffix
     LoadBalancer = each.value.arn_suffix
