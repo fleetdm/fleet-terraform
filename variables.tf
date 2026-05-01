@@ -519,7 +519,7 @@ variable "fleet_config" {
     pid_mode                     = optional(string, null)
     command                      = optional(list(string), null)
     private_key_delivery_method  = optional(string, "ecs")
-    image                        = optional(string, "fleetdm/fleet:v4.84.0")
+    image                        = optional(string, "fleetdm/fleet:v4.84.1")
     family                       = optional(string, "fleet")
     sidecars                     = optional(list(any), [])
     depends_on                   = optional(list(any), [])
@@ -721,7 +721,7 @@ variable "fleet_config" {
     pid_mode                     = null
     command                      = null
     private_key_delivery_method  = "ecs"
-    image                        = "fleetdm/fleet:v4.84.0"
+    image                        = "fleetdm/fleet:v4.84.1"
     family                       = "fleet"
     sidecars                     = []
     depends_on                   = []
