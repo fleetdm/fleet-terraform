@@ -13,13 +13,13 @@ If you wanted to make changes to the individual files to fit your environment, f
 ```
 module "firehose_logging" {
   source = "github.com/fleetdm/fleet-terraform//addons/byo-firehose-logging-destination/target-account"
-  
   # Variables
   osquery_logging_destination_bucket_name = {your-desired-bucket-prefix}
   fleet_iam_role_arn                      = {supplied by Fleet}
   sts_external_id                         = {if using}
 }
 ```
+
 ## Requirements
 
 | Name | Version |
@@ -31,7 +31,7 @@ module "firehose_logging" {
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 5.29.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.41.0 |
 
 ## Modules
 
@@ -64,9 +64,9 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| <a name="input_fleet_iam_role_arn"></a> [fleet\_iam\_role\_arn](#input\_fleet\_iam\_role\_arn) | the arn of the fleet role that firehose will assume to write data to your bucket | `string` | n/a | yes |
+| <a name="input_fleet_iam_role_arn"></a> [fleet\_iam\_role\_arn](#input\_fleet\_iam\_role\_arn) | The ARN of the IAM role that will be assumed to gain permissions required to write to the Kinesis Firehose delivery stream. | `string` | n/a | yes |
 | <a name="input_kms_key_arn"></a> [kms\_key\_arn](#input\_kms\_key\_arn) | An optional KMS key ARN for server-side encryption. If not provided and encryption is enabled, a new key will be created. | `string` | `""` | no |
-| <a name="input_log_destinations"></a> [log\_destinations](#input\_log\_destinations) | A map of configurations for Firehose delivery streams. | <pre>map(object({<br>    name                = string<br>    prefix              = string<br>    error_output_prefix = string<br>    buffering_size      = number<br>    buffering_interval  = number<br>    compression_format  = string<br>  }))</pre> | <pre>{<br>  "audit": {<br>    "buffering_interval": 120,<br>    "buffering_size": 20,<br>    "compression_format": "UNCOMPRESSED",<br>    "error_output_prefix": "audit/error/error=!{firehose:error-output-type}/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/",<br>    "name": "fleet_audit",<br>    "prefix": "audit/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/"<br>  },<br>  "results": {<br>    "buffering_interval": 120,<br>    "buffering_size": 20,<br>    "compression_format": "UNCOMPRESSED",<br>    "error_output_prefix": "results/error/error=!{firehose:error-output-type}/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/",<br>    "name": "osquery_results",<br>    "prefix": "results/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/"<br>  },<br>  "status": {<br>    "buffering_interval": 120,<br>    "buffering_size": 20,<br>    "compression_format": "UNCOMPRESSED",<br>    "error_output_prefix": "status/error/error=!{firehose:error-output-type}/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/",<br>    "name": "osquery_status",<br>    "prefix": "status/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/"<br>  }<br>}</pre> | no |
+| <a name="input_log_destinations"></a> [log\_destinations](#input\_log\_destinations) | A map of configurations for Firehose delivery streams. | <pre>map(object({<br/>    name                = string<br/>    prefix              = string<br/>    error_output_prefix = string<br/>    buffering_size      = number<br/>    buffering_interval  = number<br/>    compression_format  = string<br/>  }))</pre> | <pre>{<br/>  "audit": {<br/>    "buffering_interval": 120,<br/>    "buffering_size": 20,<br/>    "compression_format": "UNCOMPRESSED",<br/>    "error_output_prefix": "audit/error/error=!{firehose:error-output-type}/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/",<br/>    "name": "fleet_audit",<br/>    "prefix": "audit/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/"<br/>  },<br/>  "results": {<br/>    "buffering_interval": 120,<br/>    "buffering_size": 20,<br/>    "compression_format": "UNCOMPRESSED",<br/>    "error_output_prefix": "results/error/error=!{firehose:error-output-type}/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/",<br/>    "name": "osquery_results",<br/>    "prefix": "results/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/"<br/>  },<br/>  "status": {<br/>    "buffering_interval": 120,<br/>    "buffering_size": 20,<br/>    "compression_format": "UNCOMPRESSED",<br/>    "error_output_prefix": "status/error/error=!{firehose:error-output-type}/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/",<br/>    "name": "osquery_status",<br/>    "prefix": "status/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/"<br/>  }<br/>}</pre> | no |
 | <a name="input_osquery_logging_destination_bucket_name"></a> [osquery\_logging\_destination\_bucket\_name](#input\_osquery\_logging\_destination\_bucket\_name) | name of the bucket to store osquery results & status logs | `string` | n/a | yes |
 | <a name="input_server_side_encryption_enabled"></a> [server\_side\_encryption\_enabled](#input\_server\_side\_encryption\_enabled) | A boolean flag to enable/disable server-side encryption. Defaults to true (enabled). | `bool` | `true` | no |
 | <a name="input_sts_external_id"></a> [sts\_external\_id](#input\_sts\_external\_id) | Optional unique identifier that can be used by the principal assuming the role to assert its identity. | `string` | `""` | no |

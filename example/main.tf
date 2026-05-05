@@ -75,7 +75,7 @@ locals {
 }
 
 module "fleet" {
-  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.26.0"
+  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.26.1"
   certificate_arn = module.acm.acm_certificate_arn
 
   vpc = {
@@ -277,7 +277,7 @@ module "fleet" {
 # doesn't directly support all the features required.  the aws cli is invoked via a null-resource.
 
 module "migrations" {
-  source                   = "github.com/fleetdm/fleet-terraform/addons/migrations?depth=1&ref=tf-mod-addon-migrations-v2.2.0"
+  source                   = "github.com/fleetdm/fleet-terraform/addons/migrations?depth=1&ref=tf-mod-addon-migrations-v2.2.2"
   ecs_cluster              = module.fleet.byo-vpc.byo-db.byo-ecs.service.cluster
   task_definition          = module.fleet.byo-vpc.byo-db.byo-ecs.task_definition.family
   task_definition_revision = module.fleet.byo-vpc.byo-db.byo-ecs.task_definition.revision
@@ -295,7 +295,7 @@ module "migrations" {
 
 # Enable if using s3 for carves
 # module "osquery-carve" {
-#   source = "github.com/fleetdm/fleet-terraform/addons/osquery-carve?depth=1&ref=tf-mod-addon-osquery-carve-v1.3.0"
+#   source = "github.com/fleetdm/fleet-terraform/addons/osquery-carve?depth=1&ref=tf-mod-addon-osquery-carve-v1.3.1"
 #   osquery_carve_s3_bucket = {
 #     name = local.osquery_carve_bucket_name
 #   }
@@ -303,7 +303,7 @@ module "migrations" {
 
 # Uncomment if using firehose logging destination
 # module "firehose-logging" {
-#   source = "github.com/fleetdm/fleet-terraform/addons/logging-destination-firehose?depth=1&ref=tf-mod-addon-logging-destination-firehose-v1.2.5"
+#   source = "github.com/fleetdm/fleet-terraform/addons/logging-destination-firehose?depth=1&ref=tf-mod-addon-logging-destination-firehose-v1.2.6"
 #   osquery_results_s3_bucket = {
 #     name = local.osquery_results_bucket_name
 #   }
