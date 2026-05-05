@@ -24,7 +24,7 @@ variable "image_repository" {
 
 variable "image_tag" {
   type        = string
-  default     = "v4.79.0"
+  default     = "v4.84.2"
   description = "Used to populate the fleet version that will be deployed."
 }
 
@@ -189,8 +189,9 @@ variable "ingress" {
 
 variable "fleet" {
   type = object({
-    listen_port = optional(number, 8080)
-    secret_name = optional(string, "fleet")
+    listen_port  = optional(number, 8080)
+    service_port = optional(number, null)
+    secret_name  = optional(string, "fleet")
     migrations = object({
       auto_apply_sql_migrations = optional(bool, true)
       migration_job_annotations = optional(map(string), {})
@@ -226,6 +227,12 @@ variable "fleet" {
       json           = optional(bool, false)
       disable_banner = optional(bool, false)
     })
+    mdm = optional(object({
+      windows = optional(object({
+        wstep_identity_cert_key = optional(string, "")
+        wstep_identity_key_key  = optional(string, "")
+      }), {})
+    }), {})
     software_installers = object({
       s3 = object({
         bucket_name         = optional(string, "")
@@ -256,6 +263,11 @@ variable "fleet" {
     })
     extra_volumes       = optional(list(any), [])
     extra_volume_mounts = optional(list(any), [])
+    additional_cas = optional(object({
+      enabled     = optional(bool, false)
+      config_maps = optional(list(object({ name = string })), [])
+      secrets     = optional(list(object({ name = string })), [])
+    }), { enabled = false, config_maps = [], secrets = [] })
     security_context = object({
       run_as_user     = optional(number, null)
       run_as_group    = optional(number, null)
@@ -335,8 +347,30 @@ variable "database" {
       cert_key    = optional(string, "")
       key_key     = optional(string, "")
     })
+
+    mysql = optional(object({
+      image_repository = optional(string, "mysql")
+      image_tag        = optional(string, "8.4")
+      root_password    = optional(string, "")
+      password         = optional(string, "")
+      persistence = optional(object({
+        enabled       = optional(bool, true)
+        size          = optional(string, "8Gi")
+        storage_class = optional(string, "")
+      }), {})
+      resources = optional(object({
+        limits = optional(object({
+          cpu    = optional(string, "1")
+          memory = optional(string, "1Gi")
+        }), {})
+        requests = optional(object({
+          cpu    = optional(string, "100m")
+          memory = optional(string, "256Mi")
+        }), {})
+      }), {})
+    }), {})
   })
-  description = "Used to configure database specific values for use in the Fleet deployment, migration job, and vuln-processing cron job."
+  description = "Used to configure database specific values for use in the Fleet deployment, migration job, and vuln-processing cron job. Set enabled=true to deploy a dev/test MySQL instance."
 }
 
 variable "database_read_replica" {
@@ -372,8 +406,23 @@ variable "cache" {
     use_password = optional(bool, false)
     secret_name  = optional(string, "redis")
     password_key = optional(string, "password")
+
+    redis = optional(object({
+      image_repository = optional(string, "valkey/valkey")
+      image_tag        = optional(string, "8")
+      resources = optional(object({
+        limits = optional(object({
+          cpu    = optional(string, "500m")
+          memory = optional(string, "512Mi")
+        }), {})
+        requests = optional(object({
+          cpu    = optional(string, "100m")
+          memory = optional(string, "128Mi")
+        }), {})
+      }), {})
+    }), {})
   })
-  description = "Used to configure redis specific values for use in the Fleet deployment, migration job, and vuln-processing cron job."
+  description = "Used to configure redis/valkey specific values for use in the Fleet deployment, migration job, and vuln-processing cron job. Set enabled=true to deploy a dev/test Valkey instance."
 }
 
 variable "gke" {

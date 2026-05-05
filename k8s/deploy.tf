@@ -42,6 +42,60 @@ resource "kubernetes_deployment" "fleet" {
 
       spec {
         service_account_name = resource.kubernetes_service_account.fleet-sa.metadata[0].name
+
+        dynamic "init_container" {
+          for_each = local.additional_cas_enabled ? [1] : []
+
+          content {
+            name  = "install-trusted-cas"
+            image = "${local.image_repository}:${local.image_tag}"
+
+            security_context {
+              run_as_user                = 0
+              run_as_non_root            = false
+              allow_privilege_escalation = false
+            }
+
+            command = ["sh", "-c", <<-EOT
+              set -e
+              apk add ca-certificates
+              echo "Installing trusted CA certificates..."
+              for dir in /custom-ca/*; do
+                if [ -d "$dir" ]; then
+                  cp "$dir"/*.crt /usr/local/share/ca-certificates/
+                fi
+              done
+              update-ca-certificates
+            EOT
+            ]
+
+            dynamic "volume_mount" {
+              for_each = local.fleet.additional_cas.config_maps
+
+              content {
+                name       = "ca-configmap-${volume_mount.value.name}"
+                mount_path = "/custom-ca/configmap-${volume_mount.value.name}"
+                read_only  = true
+              }
+            }
+
+            dynamic "volume_mount" {
+              for_each = local.fleet.additional_cas.secrets
+
+              content {
+                name       = "ca-secret-${volume_mount.value.name}"
+                mount_path = "/custom-ca/secret-${volume_mount.value.name}"
+                read_only  = true
+              }
+            }
+
+            volume_mount {
+              name       = "ca-certs"
+              mount_path = "/etc/ssl/certs"
+            }
+          }
+        }
+
         container {
           name  = "fleet"
           image = "${local.image_repository}:${local.image_tag}"
@@ -81,6 +135,23 @@ resource "kubernetes_deployment" "fleet" {
             content {
               name  = env.value.name
               value = env.value.value
+            }
+          }
+
+          dynamic "env" {
+            for_each = local.fleet.mdm.windows.wstep_identity_cert_key != "" ? [
+              { name = "FLEET_MDM_WINDOWS_WSTEP_IDENTITY_CERT_BYTES", key = local.fleet.mdm.windows.wstep_identity_cert_key },
+              { name = "FLEET_MDM_WINDOWS_WSTEP_IDENTITY_KEY_BYTES", key = local.fleet.mdm.windows.wstep_identity_key_key }
+            ] : []
+
+            content {
+              name = env.value.name
+              value_from {
+                secret_key_ref {
+                  name = local.fleet.secret_name
+                  key  = env.value.key
+                }
+              }
             }
           }
 
@@ -257,10 +328,40 @@ resource "kubernetes_deployment" "fleet" {
           }
 
           dynamic "env" {
+            for_each = local.database.tls.enabled && local.database.tls.ca_cert_key != "" ? [
+              { name = "FLEET_MYSQL_TLS_CA", value = "/secrets/mysql/${local.database.tls.ca_cert_key}" }
+            ] : []
+
+            content {
+              name  = env.value.name
+              value = env.value.value
+            }
+          }
+
+          dynamic "env" {
+            for_each = local.database.tls.enabled && local.database.tls.cert_key != "" ? [
+              { name = "FLEET_MYSQL_TLS_CERT", value = "/secrets/mysql/${local.database.tls.cert_key}" }
+            ] : []
+
+            content {
+              name  = env.value.name
+              value = env.value.value
+            }
+          }
+
+          dynamic "env" {
+            for_each = local.database.tls.enabled && local.database.tls.key_key != "" ? [
+              { name = "FLEET_MYSQL_TLS_KEY", value = "/secrets/mysql/${local.database.tls.key_key}" }
+            ] : []
+
+            content {
+              name  = env.value.name
+              value = env.value.value
+            }
+          }
+
+          dynamic "env" {
             for_each = local.database.tls.enabled ? [
-              { name = "FLEET_MYSQL_TLS_CA", value = "/secrets/mysql/${local.database.tls.ca_cert_key}" },
-              { name = "FLEET_MYSQL_TLS_CERT", value = "/secrets/mysql/${local.database.tls.cert_secret_key}" },
-              { name = "FLEET_MYSQL_TLS_KEY", value = "/secrets/mysql/${local.database.tls.key_key}" },
               { name = "FLEET_MYSQL_TLS_CONFIG", value = local.database.tls.config },
               { name = "FLEET_MYSQL_TLS_SERVER_NAME", value = local.database.tls.server_name }
             ] : []
@@ -315,7 +416,7 @@ resource "kubernetes_deployment" "fleet" {
           dynamic "env" {
             for_each = local.database_read_replica.enabled && local.database.tls.enabled ? [
               { name = "FLEET_MYSQL_READ_REPLICA_TLS_CA", value = "/secrets/mysql/${local.database_read_replica.tls.ca_cert_key}" },
-              { name = "FLEET_MYSQL_READ_REPLICA_TLS_CERT", value = "/secrets/mysql/${local.database_read_replica.tls.cert_secret_key}" },
+              { name = "FLEET_MYSQL_READ_REPLICA_TLS_CERT", value = "/secrets/mysql/${local.database_read_replica.tls.cert_key}" },
               { name = "FLEET_MYSQL_READ_REPLICA_TLS_KEY", value = "/secrets/mysql/${local.database_read_replica.tls.key_key}" },
               { name = "FLEET_MYSQL_READ_REPLICA_TLS_CONFIG", value = local.database_read_replica.tls.config },
               { name = "FLEET_MYSQL_READ_REPLICA_TLS_SERVER_NAME", value = local.database_read_replica.tls.server_name }
@@ -323,7 +424,7 @@ resource "kubernetes_deployment" "fleet" {
 
             content {
               name  = env.value.name
-              value = ocal.database.tls.enabled
+              value = env.value.value
             }
           }
 
@@ -804,6 +905,28 @@ resource "kubernetes_deployment" "fleet" {
               mount_path = volume_mount.value.mount_path
             }
           }
+
+          dynamic "volume_mount" {
+            for_each = local.additional_cas_enabled ? [
+              { name = "ca-certs", mount_path = "/etc/ssl/certs" }
+            ] : []
+
+            content {
+              name       = volume_mount.value.name
+              mount_path = volume_mount.value.mount_path
+            }
+          }
+
+          dynamic "volume_mount" {
+            for_each = local.fleet.extra_volume_mounts
+
+            content {
+              name       = volume_mount.value.name
+              mount_path = volume_mount.value.mount_path
+              read_only  = lookup(volume_mount.value, "read_only", null)
+              sub_path   = lookup(volume_mount.value, "sub_path", null)
+            }
+          }
         }
 
         dynamic "container" {
@@ -814,7 +937,7 @@ resource "kubernetes_deployment" "fleet" {
               command = ["/cloud_sql_proxy", "-verbose=${local.gke.cloud_sql.verbose}", "-instances=${local.gke.cloud_sql.instance_name}=tcp:3306"]
               resources = {
                 limits = {
-                  cpu    = "0.1",
+                  cpu    = "0.5",
                   memory = "150Mi"
                 },
                 requests = {
@@ -877,7 +1000,7 @@ resource "kubernetes_deployment" "fleet" {
           for_each = local.fleet.tls.enabled ? [
             {
               name        = "fleet-tls",
-              secret_name = local.fleet.tls.unique_tls_secret ? local.fleet.tls.secretName : local.fleet.secret_name
+              secret_name = local.fleet.tls.unique_tls_secret ? local.fleet.tls.secret_name : local.fleet.secret_name
             }
           ] : []
 
@@ -893,7 +1016,7 @@ resource "kubernetes_deployment" "fleet" {
           for_each = local.database.tls.enabled ? [
             {
               name        = "mysql-tls",
-              secret_name = local.database.tls.secret_name
+              secret_name = local.database.secret_name
             }
           ] : []
 
@@ -917,6 +1040,61 @@ resource "kubernetes_deployment" "fleet" {
             name = volume.value.name
             empty_dir {
               size_limit = volume.value.size_limit
+            }
+          }
+        }
+
+        dynamic "volume" {
+          for_each = local.additional_cas_enabled ? local.fleet.additional_cas.config_maps : []
+
+          content {
+            name = "ca-configmap-${volume.value.name}"
+            config_map {
+              name = volume.value.name
+            }
+          }
+        }
+
+        dynamic "volume" {
+          for_each = local.additional_cas_enabled ? local.fleet.additional_cas.secrets : []
+
+          content {
+            name = "ca-secret-${volume.value.name}"
+            secret {
+              secret_name = volume.value.name
+            }
+          }
+        }
+
+        dynamic "volume" {
+          for_each = local.additional_cas_enabled ? [{ name = "ca-certs" }] : []
+
+          content {
+            name = volume.value.name
+            empty_dir {}
+          }
+        }
+
+        dynamic "volume" {
+          for_each = local.fleet.extra_volumes
+
+          content {
+            name = volume.value.name
+            dynamic "empty_dir" {
+              for_each = lookup(volume.value, "empty_dir", null) != null ? [volume.value.empty_dir] : []
+              content {}
+            }
+            dynamic "secret" {
+              for_each = lookup(volume.value, "secret_name", null) != null ? [volume.value.secret_name] : []
+              content {
+                secret_name = secret.value
+              }
+            }
+            dynamic "config_map" {
+              for_each = lookup(volume.value, "config_map_name", null) != null ? [volume.value.config_map_name] : []
+              content {
+                name = config_map.value
+              }
             }
           }
         }
@@ -989,6 +1167,19 @@ resource "kubernetes_deployment" "fleet" {
             }
           }
         }
+
+        dynamic "toleration" {
+          for_each = local.tolerations
+
+          content {
+            key      = toleration.value.key
+            operator = toleration.value.operator
+            value    = toleration.value.value
+            effect   = toleration.value.effect
+          }
+        }
+
+        node_selector = local.node_selector
 
         dynamic "image_pull_secrets" {
           for_each = var.image_pull_secrets

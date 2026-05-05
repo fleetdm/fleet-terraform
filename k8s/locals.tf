@@ -24,4 +24,5 @@ locals {
   environment_variables        = var.environment_variables
   environment_from_config_maps = var.environment_from_config_maps
   environment_from_secrets     = var.environment_from_secrets
+  additional_cas_enabled       = local.fleet.additional_cas.enabled && (length(local.fleet.additional_cas.config_maps) > 0 || length(local.fleet.additional_cas.secrets) > 0)
 }

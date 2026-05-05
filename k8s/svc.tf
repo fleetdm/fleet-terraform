@@ -13,9 +13,9 @@ resource "kubernetes_service" "fleet-service" {
 
     dynamic "port" {
       for_each = local.gke.ingress.use_gke_ingress && local.gke.ingress.node_port != "" ? [
-        { name = "fleet", port = local.fleet.listen_port, target_port = local.fleet.listen_port, protocol = "TCP", node_port = local.gke.ingress.node_port }
+        { name = "fleet", port = local.fleet.service_port != null ? local.fleet.service_port : local.fleet.listen_port, target_port = local.fleet.listen_port, protocol = "TCP", node_port = local.gke.ingress.node_port }
         ] : [
-        { name = "fleet", port = local.fleet.listen_port, target_port = local.fleet.listen_port, protocol = "TCP", node_port = null }
+        { name = "fleet", port = local.fleet.service_port != null ? local.fleet.service_port : local.fleet.listen_port, target_port = local.fleet.listen_port, protocol = "TCP", node_port = null }
       ]
 
       content {

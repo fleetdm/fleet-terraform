@@ -28,6 +28,59 @@ resource "kubernetes_cron_job_v1" "fleet_vuln_processing_cron_job" {
             restart_policy          = local.vuln_processing.restart_policy
             service_account_name    = resource.kubernetes_service_account.fleet-sa.metadata[0].name
 
+            dynamic "init_container" {
+              for_each = local.additional_cas_enabled ? [1] : []
+
+              content {
+                name  = "install-trusted-cas"
+                image = "${local.image_repository}:${local.image_tag}"
+
+                security_context {
+                  run_as_user                = 0
+                  run_as_non_root            = false
+                  allow_privilege_escalation = false
+                }
+
+                command = ["sh", "-c", <<-EOT
+                  set -e
+                  apk add ca-certificates
+                  echo "Installing trusted CA certificates..."
+                  for dir in /custom-ca/*; do
+                    if [ -d "$dir" ]; then
+                      cp "$dir"/*.crt /usr/local/share/ca-certificates/
+                    fi
+                  done
+                  update-ca-certificates
+                EOT
+                ]
+
+                dynamic "volume_mount" {
+                  for_each = local.fleet.additional_cas.config_maps
+
+                  content {
+                    name       = "ca-configmap-${volume_mount.value.name}"
+                    mount_path = "/custom-ca/configmap-${volume_mount.value.name}"
+                    read_only  = true
+                  }
+                }
+
+                dynamic "volume_mount" {
+                  for_each = local.fleet.additional_cas.secrets
+
+                  content {
+                    name       = "ca-secret-${volume_mount.value.name}"
+                    mount_path = "/custom-ca/secret-${volume_mount.value.name}"
+                    read_only  = true
+                  }
+                }
+
+                volume_mount {
+                  name       = "ca-certs"
+                  mount_path = "/etc/ssl/certs"
+                }
+              }
+            }
+
             container {
               name  = "fleet-vulnprocessing"
               image = "${local.image_repository}:${local.image_tag}"
@@ -105,10 +158,40 @@ resource "kubernetes_cron_job_v1" "fleet_vuln_processing_cron_job" {
               }
 
               dynamic "env" {
+                for_each = local.database.tls.enabled && local.database.tls.ca_cert_key != "" ? [
+                  { name = "FLEET_MYSQL_TLS_CA", value = "/secrets/mysql/${local.database.tls.ca_cert_key}" }
+                ] : []
+
+                content {
+                  name  = env.value.name
+                  value = env.value.value
+                }
+              }
+
+              dynamic "env" {
+                for_each = local.database.tls.enabled && local.database.tls.cert_key != "" ? [
+                  { name = "FLEET_MYSQL_TLS_CERT", value = "/secrets/mysql/${local.database.tls.cert_key}" }
+                ] : []
+
+                content {
+                  name  = env.value.name
+                  value = env.value.value
+                }
+              }
+
+              dynamic "env" {
+                for_each = local.database.tls.enabled && local.database.tls.key_key != "" ? [
+                  { name = "FLEET_MYSQL_TLS_KEY", value = "/secrets/mysql/${local.database.tls.key_key}" }
+                ] : []
+
+                content {
+                  name  = env.value.name
+                  value = env.value.value
+                }
+              }
+
+              dynamic "env" {
                 for_each = local.database.tls.enabled ? [
-                  { name = "FLEET_MYSQL_TLS_CA", value = "/secrets/mysql/${local.database.tls.ca_cert_key}" },
-                  { name = "FLEET_MYSQL_TLS_CERT", value = "/secrets/mysql/${local.database.tls.cert_secret_key}" },
-                  { name = "FLEET_MYSQL_TLS_KEY", value = "/secrets/mysql/${local.database.tls.key_key}" },
                   { name = "FLEET_MYSQL_TLS_CONFIG", value = local.database.tls.config },
                   { name = "FLEET_MYSQL_TLS_SERVER_NAME", value = local.database.tls.server_name }
                 ] : []
@@ -163,7 +246,7 @@ resource "kubernetes_cron_job_v1" "fleet_vuln_processing_cron_job" {
               dynamic "env" {
                 for_each = local.database_read_replica.enabled && local.database.tls.enabled ? [
                   { name = "FLEET_MYSQL_READ_REPLICA_TLS_CA", value = "/secrets/mysql/${local.database_read_replica.tls.ca_cert_key}" },
-                  { name = "FLEET_MYSQL_READ_REPLICA_TLS_CERT", value = "/secrets/mysql/${local.database_read_replica.tls.cert_secret_key}" },
+                  { name = "FLEET_MYSQL_READ_REPLICA_TLS_CERT", value = "/secrets/mysql/${local.database_read_replica.tls.cert_key}" },
                   { name = "FLEET_MYSQL_READ_REPLICA_TLS_KEY", value = "/secrets/mysql/${local.database_read_replica.tls.key_key}" },
                   { name = "FLEET_MYSQL_READ_REPLICA_TLS_CONFIG", value = local.database_read_replica.tls.config },
                   { name = "FLEET_MYSQL_READ_REPLICA_TLS_SERVER_NAME", value = local.database_read_replica.tls.server_name }
@@ -247,8 +330,18 @@ resource "kubernetes_cron_job_v1" "fleet_vuln_processing_cron_job" {
                 read_only_root_filesystem  = "true"
                 privileged                 = "false"
                 allow_privilege_escalation = "false"
-                capabilities {
-                  drop = ["ALL"]
+
+                dynamic "capabilities" {
+                  for_each = local.gke.cloud_sql.enable_proxy ? [
+                    { name = "add", values = ["SYS_PTRACE"] }
+                    ] : [
+                    { name = "drop", values = ["ALL"] }
+                  ]
+
+                  content {
+                    add  = capabilities.value.name == "add" ? capabilities.value.values : []
+                    drop = capabilities.value.name == "drop" ? capabilities.value.values : []
+                  }
                 }
               }
 
@@ -276,6 +369,17 @@ resource "kubernetes_cron_job_v1" "fleet_vuln_processing_cron_job" {
                 content {
                   name       = volume_mount.value.name
                   read_only  = volume_mount.value.read_only
+                  mount_path = volume_mount.value.mount_path
+                }
+              }
+
+              dynamic "volume_mount" {
+                for_each = local.additional_cas_enabled ? [
+                  { name = "ca-certs", mount_path = "/etc/ssl/certs" }
+                ] : []
+
+                content {
+                  name       = volume_mount.value.name
                   mount_path = volume_mount.value.mount_path
                 }
               }
@@ -348,7 +452,7 @@ resource "kubernetes_cron_job_v1" "fleet_vuln_processing_cron_job" {
               for_each = local.database.tls.enabled ? [
                 {
                   name        = "mysql-tls",
-                  secret_name = local.database.tls.secret_name
+                  secret_name = local.database.secret_name
                 }
               ] : []
 
@@ -357,6 +461,37 @@ resource "kubernetes_cron_job_v1" "fleet_vuln_processing_cron_job" {
                 secret {
                   secret_name = volume.value.secret_name
                 }
+              }
+            }
+
+            dynamic "volume" {
+              for_each = local.additional_cas_enabled ? local.fleet.additional_cas.config_maps : []
+
+              content {
+                name = "ca-configmap-${volume.value.name}"
+                config_map {
+                  name = volume.value.name
+                }
+              }
+            }
+
+            dynamic "volume" {
+              for_each = local.additional_cas_enabled ? local.fleet.additional_cas.secrets : []
+
+              content {
+                name = "ca-secret-${volume.value.name}"
+                secret {
+                  secret_name = volume.value.name
+                }
+              }
+            }
+
+            dynamic "volume" {
+              for_each = local.additional_cas_enabled ? [{ name = "ca-certs" }] : []
+
+              content {
+                name = volume.value.name
+                empty_dir {}
               }
             }
 
@@ -433,10 +568,10 @@ resource "kubernetes_cron_job_v1" "fleet_vuln_processing_cron_job" {
               for_each = local.tolerations
 
               content {
-                key      = toleration.env.key
-                operator = toleration.env.operator
-                value    = toleration.env.value
-                effect   = toleration.env.effect
+                key      = toleration.value.key
+                operator = toleration.value.operator
+                value    = toleration.value.value
+                effect   = toleration.value.effect
               }
             }
 
