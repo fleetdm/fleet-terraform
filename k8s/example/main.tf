@@ -329,10 +329,10 @@ module "fleet" {
   database = {
     enabled           = false
     secret_name       = "mysql"
-    address           = "fleet-database-mysql:3306"
+    address           = "mysql:3306"
     database          = "fleet"
     username          = "fleet"
-    password_key      = "password"
+    password_key      = "mysql-password"
     max_open_conns    = 50
     max_idle_conns    = 50
     conn_max_lifetime = 0
@@ -346,32 +346,29 @@ module "fleet" {
       key_key     = ""
     }
 
-    /*
-            Set database.enabled = true and configure mysql to deploy a dev/test MySQL instance.
-            For production, use an external MySQL and leave enabled = false.
-
-            mysql = {
-                image_repository = "mysql"
-                image_tag        = "8.4"
-                root_password    = ""   # auto-generated if empty
-                password         = ""   # auto-generated if empty
-                persistence = {
-                    enabled       = true
-                    size          = "8Gi"
-                    storage_class = ""
-                }
-                resources = {
-                    limits = {
-                        cpu    = "1"
-                        memory = "1Gi"
-                    }
-                    requests = {
-                        cpu    = "100m"
-                        memory = "256Mi"
-                    }
-                }
-            }
-        */
+    # Set database.enabled = true to deploy a dev/test MySQL instance.
+    # For production, use an external MySQL and leave enabled = false.
+    mysql = {
+      image_repository = "mysql"
+      image_tag        = "8.4"
+      root_password    = "" # auto-generated if empty
+      password         = "" # auto-generated if empty
+      persistence = {
+        enabled       = true
+        size          = "8Gi"
+        storage_class = ""
+      }
+      resources = {
+        limits = {
+          cpu    = "1"
+          memory = "1Gi"
+        }
+        requests = {
+          cpu    = "100m"
+          memory = "256Mi"
+        }
+      }
+    }
   }
 
   /*
@@ -405,31 +402,28 @@ module "fleet" {
 
   cache = {
     enabled      = false
-    address      = "fleet-cache-redis-master:6379"
+    address      = "redis:6379"
     database     = "0"
-    use_password = true
+    use_password = false
     secret_name  = "redis"
     password_key = "password"
 
-    /*
-            Set cache.enabled = true and configure redis to deploy a dev/test Valkey instance.
-            For production, use an external Redis/Valkey and leave enabled = false.
-
-            redis = {
-                image_repository = "valkey/valkey"
-                image_tag        = "8"
-                resources = {
-                    limits = {
-                        cpu    = "500m"
-                        memory = "512Mi"
-                    }
-                    requests = {
-                        cpu    = "100m"
-                        memory = "128Mi"
-                    }
-                }
-            }
-        */
+    # Set cache.enabled = true to deploy a dev/test Valkey instance.
+    # For production, use an external Redis/Valkey and leave enabled = false.
+    redis = {
+      image_repository = "valkey/valkey"
+      image_tag        = "8"
+      resources = {
+        limits = {
+          cpu    = "500m"
+          memory = "512Mi"
+        }
+        requests = {
+          cpu    = "100m"
+          memory = "128Mi"
+        }
+      }
+    }
   }
 
   gke = {
