@@ -95,14 +95,9 @@ Review `variables.tf` and `byo-project/variables.tf` for all available options a
 
 ## Known Limitations
 
-1. To handle large uploads, we need to bypass GCP cloud run's 32MB HTTP/1 body limit, by setting `fleet_config.use_h2c = true` which forces Fleet to use HTTP/2. However, as Cloud Run documentation notes, HTTP/2 end-to-end breaks connection upgrades, affecting WebSocket support and Fleet functionality for features such as Live Queries.
-    
-    **Workaround**: [Use Fleet Gitops Flow](https://fleetdm.com/docs/using-fleet/gitops#managing-software-installers)
-    * Set `fleet_config.use_h2c = false` to force HTTP/1
-    * If you have large uploads, use `fleetctl apply` with a url field in your software YAML. The data flow avoids the ingress limit:
-        * Apply the YAML (small request).
-        * The Fleet Server makes an outbound GET request to download the file from the URL (S3, GCS, etc).
-        * Cloud Run doesn't apply the 32MB limit to outbound requests.
+1. To handle large software installer uploads and downloads without breaking WebSocket-dependent Fleet features, this module keeps the primary Fleet Cloud Run service on HTTP/1 by default and creates a second h2c Cloud Run service for byte-heavy software installer paths. The load balancer routes software package upload/download endpoints to the h2c service while normal Fleet UI/API/WebSocket traffic stays on the primary service.
+
+    Keep `fleet_config.use_h2c = false` unless you intentionally want all Fleet traffic to use h2c. The per-path h2c service is the preferred workaround for Cloud Run's 32MB HTTP/1 request and non-streaming response limits.
 
 ## Deployment Steps
 

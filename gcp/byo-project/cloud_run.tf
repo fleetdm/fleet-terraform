@@ -36,6 +36,9 @@ locals {
     FLEET_S3_SOFTWARE_INSTALLERS_FORCE_S3_PATH_STYLE = "true"
     FLEET_S3_SOFTWARE_INSTALLERS_REGION              = var.region
   })
+  fleet_bulk_env_vars = merge(local.fleet_env_vars, {
+    FLEET_SERVER_FORCE_H2C = "true"
+  })
 
   fleet_vpc_network_id = module.vpc.network_id
   # Use the direct construction for the subnet ID key as discussed
@@ -113,6 +116,77 @@ module "fleet-service" {
       }
 
       env_vars        = local.fleet_env_vars
+      env_secret_vars = local.fleet_secrets_env_vars
+    }
+  ]
+}
+
+module "fleet-bulk-service" {
+  source  = "GoogleCloudPlatform/cloud-run/google//modules/v2"
+  version = "0.17.2"
+
+  service_name                  = "fleet-api-bulk"
+  project_id                    = var.project_id
+  location                      = var.region
+  create_service_account        = false
+  service_account               = google_service_account.fleet_run_sa.email
+  enable_prometheus_sidecar     = false
+  cloud_run_deletion_protection = false
+
+  vpc_access = {
+    network_interfaces = {
+      network    = local.fleet_vpc_network_id
+      subnetwork = local.fleet_vpc_subnet_id
+    }
+    egress = "ALL_TRAFFIC"
+  }
+  ingress = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+  timeout = "300s"
+
+  service_scaling = {
+    min_instance_count = 0
+  }
+
+  template_scaling = {
+    min_instance_count = 0
+    max_instance_count = var.fleet_config.max_instance_count
+  }
+
+  containers = [
+    {
+      container_image = local.fleet_image_tag
+      ports = {
+        name           = "h2c"
+        container_port = 8080
+      }
+
+      startup_probe = {
+        initial_delay_seconds = 30
+        timeout_seconds       = 2
+        period_seconds        = 60
+        failure_threshold     = 3
+
+        tcp_socket = {
+          port = 8080
+        }
+      }
+
+      liveness_probe = {
+        initial_delay_seconds = 30
+        timeout_seconds       = 2
+        failure_threshold     = 3
+        period_seconds        = 60
+        http_get = {
+          path         = "/healthz"
+          http_headers = []
+        }
+      }
+
+      resources = {
+        limits = local.fleet_resources_limits
+      }
+
+      env_vars        = local.fleet_bulk_env_vars
       env_secret_vars = local.fleet_secrets_env_vars
     }
   ]
@@ -214,6 +288,17 @@ resource "google_compute_region_network_endpoint_group" "neg" {
   depends_on = [module.fleet-service]
 }
 
+resource "google_compute_region_network_endpoint_group" "bulk_neg" {
+  name                  = "${var.prefix}-bulk-neg"
+  region                = var.region
+  project               = var.project_id
+  network_endpoint_type = "SERVERLESS"
+  cloud_run {
+    service = module.fleet-bulk-service.service_name
+  }
+  depends_on = [module.fleet-bulk-service]
+}
+
 data "google_project" "project" {
   project_id = var.project_id
 }
@@ -222,6 +307,14 @@ resource "google_cloud_run_v2_service_iam_member" "allow_lb_invoker" {
   project  = var.project_id
   location = module.fleet-service.location
   name     = module.fleet-service.service_name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
+resource "google_cloud_run_v2_service_iam_member" "allow_lb_bulk_invoker" {
+  project  = var.project_id
+  location = module.fleet-bulk-service.location
+  name     = module.fleet-bulk-service.service_name
   role     = "roles/run.invoker"
   member   = "allUsers"
 }
