@@ -65,6 +65,7 @@ sanitize_role_name() {
 source_bucket=""
 kms_key_arn=""
 account_id=""
+partition=""
 region=""
 report_bucket=""
 report_prefix="_batch-copy-migration/"
@@ -164,6 +165,8 @@ if [[ -z "$account_id" ]]; then
   account_id="$(aws sts get-caller-identity --query 'Account' --output text)"
 fi
 
+partition="$(aws sts get-caller-identity --query 'Arn' --output text | cut -d: -f2)"
+
 if [[ -z "$region" && -n "$source_bucket" ]]; then
   region="$(aws s3api get-bucket-location --bucket "$source_bucket" --query 'LocationConstraint' --output text)"
   if [[ "$region" == "None" ]]; then
@@ -210,7 +213,7 @@ if [[ -z "$batch_role_arn" ]]; then
   if [[ -z "$batch_role_name" ]]; then
     batch_role_name="$(sanitize_role_name "${source_bucket}-s3-batch-copy")"
   fi
-  batch_role_arn="arn:aws:iam::${account_id}:role/${batch_role_name}"
+  batch_role_arn="arn:${partition}:iam::${account_id}:role/${batch_role_name}"
 elif [[ -z "$batch_role_name" ]]; then
   batch_role_name="${batch_role_arn##*/}"
 fi
@@ -247,8 +250,8 @@ fi
 
 # ── Build manifest ────────────────────────────────────────────────────────────
 
-source_bucket_arn="arn:aws:s3:::${source_bucket}"
-report_bucket_arn="arn:aws:s3:::${report_bucket}"
+source_bucket_arn="arn:${partition}:s3:::${source_bucket}"
+report_bucket_arn="arn:${partition}:s3:::${report_bucket}"
 client_request_token="$(uuidgen | tr '[:upper:]' '[:lower:]')"
 
 tmpdir="$(mktemp -d)"

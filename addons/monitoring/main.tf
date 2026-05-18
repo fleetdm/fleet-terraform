@@ -526,7 +526,7 @@ resource "aws_iam_role_policy_attachment" "cron_monitoring_lambda" {
 resource "aws_iam_role_policy_attachment" "cron_monitoring_lambda_managed" {
   count      = var.cron_monitoring == null ? 0 : 1
   role       = aws_iam_role.cron_monitoring_lambda[0].id
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
 resource "aws_iam_policy" "cron_monitoring_lambda" {

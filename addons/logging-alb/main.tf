@@ -548,6 +548,7 @@ resource "aws_lambda_function" "sweep_reencrypt" {
       LOG_PREFIX     = local.s3_path_prefix
       ACCOUNT_ID     = data.aws_caller_identity.current.account_id
       REGION         = data.aws_region.current.region
+      PARTITION      = data.aws_partition.current.partition
       BATCH_ROLE_ARN = aws_iam_role.batch_reencrypt[0].arn
     }
   }
