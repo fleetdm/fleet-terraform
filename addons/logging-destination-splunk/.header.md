@@ -58,7 +58,7 @@ Then you can use the module's outputs in your Fleet configuration:
 
 ```hcl
 module "fleet" {
-  source = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.26.1"
+  source = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.27.0"
   certificate_arn = module.acm.acm_certificate_arn
 
   vpc = {

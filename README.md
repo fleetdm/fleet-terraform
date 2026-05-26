@@ -86,7 +86,7 @@ DELETE_OLD_STREAMS=false ./scripts/cloudwatch_logs_kms_migration.sh <log-group-n
 
 ```hcl
 module "fleet" {
-  source = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.26.0"
+  source = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.27.0"
 
   certificate_arn = module.acm.acm_certificate_arn
 

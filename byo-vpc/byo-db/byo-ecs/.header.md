@@ -28,7 +28,7 @@ IAM permissions for using these keys are managed in-module where possible. For m
 
 ```hcl
 module "fleet_byo_ecs" {
-  source = "github.com/fleetdm/fleet-terraform//byo-vpc/byo-db/byo-ecs?ref=tf-mod-byo-ecs-v1.15.0"
+  source = "github.com/fleetdm/fleet-terraform//byo-vpc/byo-db/byo-ecs?ref=tf-mod-byo-ecs-v1.19.0"
 
   ecs_cluster = "fleet"
   vpc_id      = "vpc-1234567890abcdef0"
