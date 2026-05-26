@@ -117,6 +117,7 @@ variable "rds_config" {
       }
     })
     master_username              = optional(string, "fleet")
+    database_name                = optional(string, "fleet")
     snapshot_identifier          = optional(string)
     cluster_tags                 = optional(map(string), {})
     preferred_maintenance_window = optional(string, "thu:23:00-fri:00:00")
@@ -178,6 +179,7 @@ variable "rds_config" {
       }
     }
     master_username              = "fleet"
+    database_name                = "fleet"
     snapshot_identifier          = null
     cluster_tags                 = {}
     preferred_maintenance_window = "thu:23:00-fri:00:00"
@@ -479,11 +481,11 @@ variable "fleet_config" {
       name = "fleet"
     })
     database = optional(object({
-      password_secret_arn         = string
+      password_secret_arn         = optional(string, null)
       password_secret_kms_key_arn = optional(string, null)
-      user                        = string
-      database                    = string
-      address                     = string
+      user                        = optional(string, null)
+      database                    = optional(string, null)
+      address                     = optional(string, null)
       rr_address                  = optional(string, null)
       }), {
       password_secret_arn         = null

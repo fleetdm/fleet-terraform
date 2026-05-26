@@ -194,6 +194,17 @@ data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 data "aws_region" "current" {}
 
+check "fleet_config_database_overrides_rds_config" {
+  assert {
+    condition     = var.fleet_config.database.user == null || var.fleet_config.database.user == var.rds_config.master_username
+    error_message = "fleet_config.database.user (${coalesce(var.fleet_config.database.user, "(null)")}) overrides rds_config.master_username (${var.rds_config.master_username}). If this is intentional, ignore this warning. Otherwise, remove fleet_config.database.user so it falls back to rds_config.master_username."
+  }
+  assert {
+    condition     = var.fleet_config.database.database == null || var.fleet_config.database.database == var.rds_config.database_name
+    error_message = "fleet_config.database.database (${coalesce(var.fleet_config.database.database, "(null)")}) overrides rds_config.database_name (${var.rds_config.database_name}). If this is intentional, ignore this warning. Otherwise, remove fleet_config.database.database so it falls back to rds_config.database_name."
+  }
+}
+
 check "kms_base_policy_requires_module_managed_cmk" {
   assert {
     condition = var.kms_base_policy == null || (
@@ -748,8 +759,8 @@ module "byo-db" {
     database = {
       address                     = module.rds.cluster_endpoint
       rr_address                  = module.rds.cluster_reader_endpoint
-      database                    = "fleet"
-      user                        = "fleet"
+      database                    = coalesce(var.fleet_config.database.database, var.rds_config.database_name)
+      user                        = coalesce(var.fleet_config.database.user, var.rds_config.master_username)
       password_secret_arn         = module.secrets-manager-1.secret_arns["${var.rds_config.name}-database-password"]
       password_secret_kms_key_arn = local.rds_password_secret_kms_key_arn
     }
@@ -827,7 +838,7 @@ module "rds" {
   enabled_cloudwatch_logs_exports = var.rds_config.enabled_cloudwatch_logs_exports
   master_username                 = var.rds_config.master_username
   master_password                 = random_password.rds.result
-  database_name                   = "fleet"
+  database_name                   = var.rds_config.database_name
   skip_final_snapshot             = var.rds_config.skip_final_snapshot
   final_snapshot_identifier       = local.rds_final_snapshot_identifier
   snapshot_identifier             = var.rds_config.snapshot_identifier

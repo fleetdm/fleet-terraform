@@ -33,6 +33,6 @@ variable "bypass_urls" {
 Optional list of regex patterns for URL paths that bypass the IP allowlist WAF rule.
 The patterns must be valid AWS WAF regex strings.
 EOT
-  type    = list(string)
-  default = []
+  type        = list(string)
+  default     = []
 }

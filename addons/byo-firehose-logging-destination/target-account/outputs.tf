@@ -8,5 +8,5 @@ output "s3_destination" {
 
 output "log_destinations" {
   description = "Map of Firehose delivery streams' names."
-  value = { for key, stream in aws_kinesis_firehose_delivery_stream.fleet_log_destinations : key => stream.name }
+  value       = { for key, stream in aws_kinesis_firehose_delivery_stream.fleet_log_destinations : key => stream.name }
 }

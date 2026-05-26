@@ -172,11 +172,11 @@ resource "aws_ecs_task_definition" "mdmproxy" {
 
   container_definitions = jsonencode([
     {
-      name        = "mdmproxy"
-      image       = var.config.image
-      cpu         = var.config.cpu
-      memory      = var.config.mem
-      essential   = true
+      name      = "mdmproxy"
+      image     = var.config.image
+      cpu       = var.config.cpu
+      memory    = var.config.mem
+      essential = true
       portMappings = [
         {
           # This port is the same that the contained application also uses
