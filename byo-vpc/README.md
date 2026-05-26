@@ -74,7 +74,7 @@ locals {
 }
 
 module "fleet_byo_vpc" {
-  source = "github.com/fleetdm/fleet-terraform//byo-vpc?depth=1&ref=tf-mod-byo-vpc-v1.27.0"
+  source = "github.com/fleetdm/fleet-terraform//byo-vpc?depth=1&ref=tf-mod-byo-vpc-v1.28.0"
 
   kms_base_policy = local.kms_base_policy_statements # your restrictive policy
 
@@ -102,7 +102,7 @@ module "fleet_byo_vpc" {
 }
 
 module "monitoring" {
-  source = "github.com/fleetdm/fleet-terraform//addons/monitoring?ref=tf-mod-addon-monitoring-v1.12.0"
+  source = "github.com/fleetdm/fleet-terraform//addons/monitoring?ref=tf-mod-addon-monitoring-v1.13.0"
 
   # ...
   cron_monitoring = {
@@ -120,7 +120,7 @@ Lambda's IAM policy alone is sufficient and `extra_kms_policies` is not needed.
 
 ```hcl
 module "fleet_byo_vpc" {
-  source = "github.com/fleetdm/fleet-terraform//byo-vpc?depth=1&ref=tf-mod-byo-vpc-v1.27.0"
+  source = "github.com/fleetdm/fleet-terraform//byo-vpc?depth=1&ref=tf-mod-byo-vpc-v1.28.0"
 
   vpc_config = {
     vpc_id = "vpc-1234567890abcdef0"

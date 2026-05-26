@@ -59,7 +59,7 @@ resource "aws_route53_record" "okta" {
 }
 
 module "fleet" {
-  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.26.1"
+  source          = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.27.0"
   ...
   fleet_config = {
     ...
