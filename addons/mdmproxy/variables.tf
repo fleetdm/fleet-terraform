@@ -55,7 +55,7 @@ variable "config" {
         ipv6_cidr_blocks = optional(list(string), [])
         security_groups  = optional(list(string), [])
         prefix_list_ids  = optional(list(string), [])
-      }), {
+        }), {
         cidr_blocks      = []
         ipv6_cidr_blocks = []
         security_groups  = []

@@ -180,7 +180,7 @@ resource "aws_wafv2_regex_pattern_set" "bypass_urls" {
   scope = "REGIONAL"
 
   dynamic "regular_expression" {
-    for_each     = toset(var.bypass_urls)
+    for_each = toset(var.bypass_urls)
     content {
       regex_string = regular_expression.value
     }
