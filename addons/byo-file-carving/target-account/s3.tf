@@ -1,4 +1,5 @@
 data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
 
 # IAM policy document for the KMS key
 data "aws_iam_policy_document" "kms_key_policy" {
@@ -8,7 +9,7 @@ data "aws_iam_policy_document" "kms_key_policy" {
     resources = ["*"]
     principals {
       type        = "AWS"
-      identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
+      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
     }
   }
 }

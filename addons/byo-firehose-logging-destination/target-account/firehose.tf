@@ -1,3 +1,5 @@
+data "aws_partition" "current" {}
+
 data "aws_iam_policy_document" "osquery_firehose_assume_role" {
   statement {
     effect  = "Allow"
@@ -31,7 +33,7 @@ data "aws_iam_policy_document" "firehose_policy" {
     effect  = "Allow"
     actions = ["logs:PutLogEvents"]
     resources = [
-      for name in keys(var.log_destinations) : "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/kinesisfirehose/${var.log_destinations[name].name}:*"
+      for name in keys(var.log_destinations) : "arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/kinesisfirehose/${var.log_destinations[name].name}:*"
     ]
   }
 

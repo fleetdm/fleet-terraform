@@ -13,6 +13,12 @@ Module layout:
 * `byo-vpc/byo-db`
 * `byo-vpc/byo-db/byo-ecs`
 
+# AWS GovCloud Compatibility
+
+The root module, `byo-vpc`, its nested AWS modules, and non-CloudFront addons are intended to remain partition-aware so they can be used in AWS GovCloud (US) where the underlying AWS service is available.
+
+`addons/cloudfront-software-installers` is intentionally out of scope for AWS GovCloud compatibility because CloudFront is not available inside the AWS GovCloud (US) partition. Any deployment that combines CloudFront with GovCloud resources is a cross-partition architecture and should be reviewed separately.
+
 # KMS Coverage
 
 This root module now exposes optional customer-managed KMS key (CMK) support for every KMS-capable surface that this stack manages directly or passes through to child modules.

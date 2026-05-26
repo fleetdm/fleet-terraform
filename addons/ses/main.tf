@@ -5,6 +5,24 @@ locals {
     var.custom_mail_from.enabled == true ? "${var.custom_mail_from.domain_prefix}.${aws_ses_domain_identity.default.domain}" : null
   ]))
   dmarc_domain = "_dmarc.${aws_ses_domain_identity.default.domain}"
+
+  # Most SES regions use dkim.amazonses.com, but AWS documents a small set of
+  # region-specific DKIM domains that must be used instead:
+  # https://docs.aws.amazon.com/general/latest/gr/ses.html#ses_dkim_domains
+  ses_dkim_domains = {
+    af-south-1     = "dkim.af-south-1.amazonses.com"
+    ap-northeast-3 = "dkim.ap-northeast-3.amazonses.com"
+    ap-south-2     = "dkim.ap-south-2.amazonses.com"
+    ap-southeast-3 = "dkim.ap-southeast-3.amazonses.com"
+    ap-southeast-5 = "dkim.ap-southeast-5.amazonses.com"
+    ca-west-1      = "dkim.ca-west-1.amazonses.com"
+    eu-central-2   = "dkim.eu-central-2.amazonses.com"
+    eu-south-1     = "dkim.eu-south-1.amazonses.com"
+    il-central-1   = "dkim.il-central-1.amazonses.com"
+    me-central-1   = "dkim.me-central-1.amazonses.com"
+    us-gov-east-1  = "dkim.us-gov-east-1.amazonses.com"
+  }
+  dkim_domain = lookup(local.ses_dkim_domains, data.aws_region.current.region, "dkim.amazonses.com")
 }
 
 data "aws_region" "current" {}
@@ -42,7 +60,7 @@ resource "aws_route53_record" "amazonses_dkim_record" {
   name    = "${element(aws_ses_domain_dkim.default.dkim_tokens, count.index)}._domainkey.${var.domain}"
   type    = "CNAME"
   ttl     = "600"
-  records = ["${element(aws_ses_domain_dkim.default.dkim_tokens, count.index)}.dkim.amazonses.com"]
+  records = ["${element(aws_ses_domain_dkim.default.dkim_tokens, count.index)}.${local.dkim_domain}"]
 }
 
 resource "aws_route53_record" "spf_domain" {
@@ -63,7 +81,7 @@ resource "aws_route53_record" "dmarc_domain" {
 }
 
 resource "aws_iam_policy" "main" {
-  count = var.create_iam_policy ? 1 : 0
+  count  = var.create_iam_policy ? 1 : 0
   policy = data.aws_iam_policy_document.main[0].json
 }
 

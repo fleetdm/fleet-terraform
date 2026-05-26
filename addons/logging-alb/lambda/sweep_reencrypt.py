@@ -16,6 +16,7 @@ KMS_KEY_ARN = os.environ["KMS_KEY_ARN"]
 LOG_PREFIX = os.environ["LOG_PREFIX"]
 ACCOUNT_ID = os.environ["ACCOUNT_ID"]
 REGION = os.environ["REGION"]
+PARTITION = os.environ["PARTITION"]
 BATCH_ROLE_ARN = os.environ["BATCH_ROLE_ARN"]
 
 
@@ -70,7 +71,7 @@ def handler(event, context):
     manifest_etag = put_resp["ETag"]
 
     # Submit S3 Batch Operations job
-    bucket_arn = f"arn:aws:s3:::{BUCKET}"
+    bucket_arn = f"arn:{PARTITION}:s3:::{BUCKET}"
     job = s3control.create_job(
         AccountId=ACCOUNT_ID,
         Operation={

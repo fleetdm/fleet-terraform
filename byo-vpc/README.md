@@ -70,7 +70,7 @@ Example:
 
 ```hcl
 locals {
-  cron_monitoring_lambda_role_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.customer}-cron-monitoring-lambda"
+  cron_monitoring_lambda_role_arn = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${local.customer}-cron-monitoring-lambda"
 }
 
 module "fleet_byo_vpc" {
