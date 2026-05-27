@@ -53,6 +53,16 @@ output "software_installers_bucket_url" {
   value       = google_storage_bucket.software_installers.url
 }
 
+output "carves_bucket_name" {
+  description = "The name of the GCS bucket for Fleet osquery file carves."
+  value       = google_storage_bucket.carves.name
+}
+
+output "carves_bucket_url" {
+  description = "The gsutil URL of the GCS bucket for Fleet osquery file carves."
+  value       = google_storage_bucket.carves.url
+}
+
 output "fleet_service_account_email" {
   description = "The email address of the service account used by the Fleet Cloud Run service."
   value       = google_service_account.fleet_run_sa.email

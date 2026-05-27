@@ -29,12 +29,22 @@ locals {
     FLEET_LOGGING_JSON                               = "true"
     FLEET_LOGGING_DEBUG                              = var.fleet_config.debug_logging
     FLEET_SERVER_TLS                                 = "false"
+    # Software installers (also stores software title icons and MDM
+    # bootstrap packages under hard-coded sub-prefixes).
     FLEET_S3_SOFTWARE_INSTALLERS_BUCKET              = google_storage_bucket.software_installers.id
     FLEET_S3_SOFTWARE_INSTALLERS_ACCESS_KEY_ID       = google_storage_hmac_key.key.access_id
     FLEET_S3_SOFTWARE_INSTALLERS_SECRET_ACCESS_KEY   = google_storage_hmac_key.key.secret
     FLEET_S3_SOFTWARE_INSTALLERS_ENDPOINT_URL        = "https://storage.googleapis.com"
     FLEET_S3_SOFTWARE_INSTALLERS_FORCE_S3_PATH_STYLE = "true"
     FLEET_S3_SOFTWARE_INSTALLERS_REGION              = var.region
+    # File carves. Reuses the same HMAC key — one key per service account
+    # covers every GCS bucket in the project.
+    FLEET_S3_CARVES_BUCKET              = google_storage_bucket.carves.id
+    FLEET_S3_CARVES_ACCESS_KEY_ID       = google_storage_hmac_key.key.access_id
+    FLEET_S3_CARVES_SECRET_ACCESS_KEY   = google_storage_hmac_key.key.secret
+    FLEET_S3_CARVES_ENDPOINT_URL        = "https://storage.googleapis.com"
+    FLEET_S3_CARVES_FORCE_S3_PATH_STYLE = "true"
+    FLEET_S3_CARVES_REGION              = var.region
   })
 
   fleet_vpc_network_id = module.vpc.network_id
