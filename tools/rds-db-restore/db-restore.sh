@@ -45,7 +45,7 @@ Options:
                                  Default: <customer-env>/main.tf.
   --destination-name <name>      Override restored DB name. Default increments
                                  <customer>, <customer>-1, <customer>-2, ...
- --fleet-image <image-or-tag>   Required with --rollback. For template-style
+  --fleet-image <image-or-tag>   Required with --rollback. For template-style
                                   local.fleet_image, a tag like v4.84.0 updates
                                   the existing repo expression; a full image URI
                                   replaces the whole value.
