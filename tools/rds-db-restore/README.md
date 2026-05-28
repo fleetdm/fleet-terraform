@@ -1,6 +1,6 @@
 # Fleet Database Restore on AWS
 
-`db-restore.sh` automates the restoration of a Fleet-managed Aurora database cluster using Terraform and AWS RDS APIs. It supports point-in-time recovery (PITR), RDS snapshot restoration, dry-runs, ECS scale-down handling, optional Fleet image rollback, and delayed cleanup of old DB resources.
+`db-restore.sh` automates the restoration of a Fleet-managed Aurora database cluster using Terraform and AWS RDS APIs. It supports point-in-time recovery (PITR), RDS snapshot restoration, dry-runs, ECS scale-down handling, optional Fleet image rollback, RDS master username updates, and delayed cleanup of old DB resources.
 
 This script is designed for self-hosted Fleet deployments provisioned via `fleet-terraform`.
 
@@ -12,26 +12,29 @@ This script is designed for self-hosted Fleet deployments provisioned via `fleet
 
 ## Quick Start
 
-1. **List available restore points:**
+Copy the script into your environment directory and run it from there. The script defaults to `$PWD`, so it will find your Terraform state and config automatically.
+
+1. **Copy the script to your environment directory:**
    ```bash
-   AWS_PROFILE=<profile> ./db-restore.sh example --env-dir fleet-terraform/example --list
+   cp tools/rds-db-restore/db-restore.sh fleet-terraform/example/
+   cd fleet-terraform/example
    ```
-2. **Dry-run a point-in-time restore:**
+2. **List available restore points:**
    ```bash
-   AWS_PROFILE=<profile> ./db-restore.sh example \
-     --env-dir fleet-terraform/example \
+   AWS_PROFILE=<profile> ./db-restore.sh --list
+   ```
+3. **Dry-run a point-in-time restore:**
+   ```bash
+   AWS_PROFILE=<profile> ./db-restore.sh \
      --restore-time 2026-05-05T11:00:00Z \
      --dry-run
    ```
-3. **Execute the restore:**
+4. **Execute the restore:**
    ```bash
-   AWS_PROFILE=<profile> ./db-restore.sh example \
-     --env-dir fleet-terraform/example \
+   AWS_PROFILE=<profile> ./db-restore.sh \
      --restore-time 2026-05-05T11:00:00Z \
      --confirm
    ```
-
-> These examples use the standard `fleet-terraform/example` layout. Update the environment name and `--env-dir` path to match your deployment.
 
 ## Supported Terraform Layouts
 
@@ -49,67 +52,60 @@ If auto-detection fails, pass `--module-address <path>` explicitly. The script e
 When running a standard restore with migrations enabled, the script performs the following steps:
 
 1. Captures a full copy of Terraform state and resource metadata into `.db-restore-<timestamp>/`.
-2. Ensures `fleet_image` is explicitly defined in `main.tf` (extracted from ECS state if missing).
-3. Updates the `rds_config` block to point to the restored database.
-4. Scales Fleet ECS services to `0` so no tasks connect during the restore.
-5. Removes old RDS resources from Terraform state.
-6. Creates a new Aurora cluster from the chosen restore point.
-7. Restores the original `rds_config` and re-applies monitoring/observability settings.
-8. Applies ECS services and runs database migrations (`module.migrations`).
-9. Scales ECS services back up.
-10. Keeps old DB resources intact for safe cleanup later.
+2. Ensures `fleet_config.image` is explicitly defined in `main.tf` (extracted from ECS state if missing).
+3. Optionally adds/updates `rds_config.master_username` if `--master-username` is provided.
+4. Updates the `rds_config` block to point to the restored database.
+5. Scales Fleet ECS services to `0` so no tasks connect during the restore.
+6. Removes old RDS resources from Terraform state.
+7. Creates a new Aurora cluster from the chosen restore point.
+8. Restores the original `rds_config` and re-applies monitoring/observability settings.
+9. Applies ECS services and runs database migrations (`module.migrations`).
+10. Scales ECS services back up.
+11. Keeps old DB resources intact for safe cleanup later.
 
 ## Configuration & Flags
 
 | Flag | Required | Description |
 |---|---|---|
-| `--cleanup-old-resources` | No | Delete old DB resources immediately after restore. |
+| `--cleanup-only` | No | Cleanup mode. Requires `--manifest`. Deletes old DB resources from a previous restore. |
+| `--cleanup-old-resources` | No | Delete old DB resources immediately after restore. Default keeps them for safe later cleanup. |
 | `--confirm` | No | Skips the interactive typed confirmation prompt. Without it, you will be prompted to type the environment name. |
 | `--config-file <path>` | No | Terraform file containing `rds_config`. Default: `<env-dir>/main.tf`. |
-| `--destination-name <name>` | No | Override restored DB name. Default increments from current state name. |
+| `--destination-name <name>` | No | Override restored DB name. Default increments from current cluster name. |
 | `--dry-run` | No | Print the execution path and planned mutations. Creates a manifest without applying changes. |
-| `--env-dir <path>` | No | Root directory containing the environment. Default: parent of this script. |
-| `--fleet-image <uri-or-tag>` | No | Specifies the Fleet image version when using `--rollback`. Updates the existing repo expression or replaces it. |
+| `--env-dir <path>` | No | Root directory containing the environment. Default: `$PWD`. |
+| `--fleet-image <uri-or-tag>` | No | Specifies the Fleet image version when using `--rollback`. |
+| `--help` | No | Show help text. |
+| `--master-username <name>` | No | Set `rds_config.master_username`. Adds if absent, updates if present. Requires fleet-terraform root module tag >= `tf-mod-root-v1.28.0` or byo-vpc tag >= `tf-mod-byo-vpc-v1.29.0`. |
 | `--manifest <path>` | Yes (with `--cleanup-only`) | Manifest file path for `--cleanup-only`. |
 | `--module-address <addr>` | No | Terraform address of the parent module. Auto-detected when possible. |
 | `--no-ecs-apply` | No | Do not apply ECS targets or scale services back up. Services remain at `0` for manual validation. |
+| `--old-final-snapshot-id <id>` | No | Final snapshot ID for old cluster deletion. Auto-generated if omitted. |
 | `--region <region>` | No | AWS region. Default: `AWS_REGION` / `AWS_DEFAULT_REGION` / `us-east-2`. |
-| `--rollback` | No | Update `fleet_image` before ECS is applied. Requires `--fleet-image`. |
+| `--restore-snapshot <id\|arn>` | No | Restore from an RDS DB cluster snapshot identifier or ARN. |
+| `--restore-time <time>` | No | Restore to a point in time. Requires UTC ISO-8601 format (e.g. `2026-05-05T11:00:00Z`). |
+| `--rollback` | No | Update `fleet_config.image` before ECS is applied. Requires `--fleet-image`. |
 | `--skip-migrations` | No | Do not run `module.migrations`. ECS can still be targeted and scaled back up. |
-
-## Testing Checklist
-
-Before running a production restore:
-1. Run `--list` and confirm the PITR window or snapshot exists.
-2. Run the intended command with `--dry-run`.
-3. Confirm the destination name is correct.
-4. Confirm the restore mode is correct: `--restore-time` or `--restore-snapshot`.
-5. Decide whether ECS should stay down (`--no-ecs-apply`).
-6. Decide whether migrations should run or be skipped.
-7. Decide whether Fleet image rollback is needed.
-8. Keep old DB resources unless immediate cleanup is intentionally required.
+| `--skip-old-final-snapshot` | No | Delete old cluster without taking a final snapshot. |
 
 ## Usage Examples
 
 ### List available restore points
 ```bash
-AWS_PROFILE=<profile> ./db-restore.sh example \
-  --env-dir fleet-terraform/example \
-  --list
+cd fleet-terraform/example
+AWS_PROFILE=<profile> ./db-restore.sh --list
 ```
 
 ### Dry-run a PITR restore
 ```bash
-AWS_PROFILE=<profile> ./db-restore.sh example \
-  --env-dir fleet-terraform/example \
+AWS_PROFILE=<profile> ./db-restore.sh \
   --restore-time 2026-05-05T11:00:00Z \
   --dry-run
 ```
 
 ### Restore from a snapshot
 ```bash
-AWS_PROFILE=<profile> ./db-restore.sh example \
-  --env-dir fleet-terraform/example \
+AWS_PROFILE=<profile> ./db-restore.sh \
   --restore-snapshot rds:<cluster>-2026-04-06-02-08 \
   --confirm
 ```
@@ -117,8 +113,7 @@ AWS_PROFILE=<profile> ./db-restore.sh example \
 ### Restore without bringing ECS services back up
 Useful for inspecting the database manually before reconnecting the application.
 ```bash
-AWS_PROFILE=<profile> ./db-restore.sh example \
-  --env-dir fleet-terraform/example \
+AWS_PROFILE=<profile> ./db-restore.sh \
   --restore-time 2026-05-05T11:00:00Z \
   --no-ecs-apply \
   --confirm
@@ -127,11 +122,19 @@ AWS_PROFILE=<profile> ./db-restore.sh example \
 ### Restore with Fleet image rollback
 Combines database recovery with rolling back the Fleet application image.
 ```bash
-AWS_PROFILE=<profile> ./db-restore.sh example \
-  --env-dir fleet-terraform/example \
+AWS_PROFILE=<profile> ./db-restore.sh \
   --restore-time 2026-05-05T10:45:00Z \
   --rollback \
   --fleet-image v4.84.0 \
+  --confirm
+```
+
+### Restore with master username change
+Sets `rds_config.master_username` before the restore begins.
+```bash
+AWS_PROFILE=<profile> ./db-restore.sh \
+  --restore-time 2026-05-05T11:00:00Z \
+  --master-username fleetadmin \
   --confirm
 ```
 
@@ -139,6 +142,8 @@ AWS_PROFILE=<profile> ./db-restore.sh example \
 ```bash
 AWS_PROFILE=<profile> ./db-restore.sh \
   --cleanup-only \
-  --manifest fleet-terraform/example/.db-restore-<timestamp>/manifest.json \
+  --manifest .db-restore-<timestamp>/manifest.json \
   --confirm
 ```
+
+

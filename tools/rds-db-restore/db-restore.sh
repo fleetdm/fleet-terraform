@@ -7,9 +7,9 @@ SCRIPTS_BASE_DIR="$(cd "${SCRIPTS_DIR}/.." && pwd)"
 usage() {
   cat <<'EOF'
 Usage:
-  db-restore.sh <customer-env> --list [options]
-  db-restore.sh <customer-env> --restore-time <UTC-ISO-time> [options]
-  db-restore.sh <customer-env> --restore-snapshot <snapshot-id-or-arn> [options]
+  db-restore.sh --list [options]
+  db-restore.sh --restore-time <UTC-ISO-time> [options]
+  db-restore.sh --restore-snapshot <snapshot-id-or-arn> [options]
   db-restore.sh --cleanup-only --manifest <path> [options]
 
 Restore a Terraform-managed Fleet Aurora database by replacing the RDS resources
@@ -37,18 +37,21 @@ Options:
   --region <region>              AWS region. Default: AWS_REGION /
                                  AWS_DEFAULT_REGION / us-east-2.
   --env-dir <path>               Root directory containing the environment.
-                                   Default: parent of this script.
-                                   Use when environments live elsewhere.
+                                    Default: $PWD. Use when running from
+                                    outside the environment directory.
   --module-address <addr>        Terraform address of the byo-db module.
                                   Auto-detected from state when possible.
   --config-file <path>           Terraform file containing inline rds_config.
                                  Default: <customer-env>/main.tf.
   --destination-name <name>      Override restored DB name. Default increments
                                  <customer>, <customer>-1, <customer>-2, ...
-  --fleet-image <image-or-tag>   Required with --rollback. For template-style
-                                 local.fleet_image, a tag like v4.84.0 updates
-                                 the existing repo expression; a full image URI
-                                 replaces the whole value.
+ --fleet-image <image-or-tag>   Required with --rollback. For template-style
+                                  local.fleet_image, a tag like v4.84.0 updates
+                                  the existing repo expression; a full image URI
+                                  replaces the whole value.
+  --master-username <name>       Set rds_config.master_username to the provided
+                                  value. Adds it if absent, updates if present.
+                                  Omit to leave the config unchanged.
   --rollback                     Update local.fleet_image before ECS is applied.
                                  Requires --fleet-image.
   --skip-migrations              Do not run module.migrations. ECS can still be
@@ -597,8 +600,8 @@ my $matched = 0;
 
 sub replace_fleet_image {
   my ($prefix, $rhs, $suffix) = @_;
-  die "fleet_image uses a variable expression ($rhs); restore rollback requires a template-style literal repo/tag expression or full image URI\n"
-    if $rhs =~ m{var\.};
+  die "image uses a variable expression ($rhs); restore rollback requires a template-style literal repo/tag expression or full image URI\n"
+    if $rhs =~ m{(var|local)\.};
   my $new_rhs;
   my $has_repo = ($value =~ m{[/:]}) || (substr($value, 0, 2) eq "\${");
   if ($has_repo) {
@@ -606,15 +609,9 @@ sub replace_fleet_image {
   } elsif ($rhs =~ m/^"(.+):[^:}"]+"$/) {
     $new_rhs = quote_hcl($1 . ":" . $value);
   } else {
-    die "could not update fleet_image tag in $rhs; pass a full image URI to --fleet-image\n";
+    die "could not update image tag in $rhs; pass a full image URI to --fleet-image\n";
   }
   return $prefix . $new_rhs . ($suffix // "");
-}
-
-sub replace_fleet_image_track {
-  my ($prefix, $rhs, $suffix) = @_;
-  $matched = 1;
-  return replace_fleet_image($prefix, $rhs, $suffix);
 }
 
 sub replace_fleet_config_image {
@@ -623,12 +620,9 @@ sub replace_fleet_config_image {
   return $block_start . $image_prefix . replace_fleet_image("", $rhs, $suffix);
 }
 
-s/^([ \t]*fleet_image[ \t]*=[ \t]*)("[^"]*"|[^\n#]+)(.*)$/replace_fleet_image_track($1, $2, $3)/gem;
+s/(fleet_config\s*=\s*\{.*?)(\s*image\s*=\s*)("[^"]*"|[^\n#]+)(.*)$/replace_fleet_config_image($1, $2, $3, $4)/sge;
 if (!$matched) {
-  s/(fleet_config\s*=\s*\{.*?)(\s*image\s*=\s*)("[^"]*"|[^\n#]+)(.*)$/replace_fleet_config_image($1, $2, $3, $4)/sge;
-}
-if (!$matched) {
-  warn "[db-restore] could not find local.fleet_image or fleet_config.image to update; skipping image rollback\n";
+  warn "[db-restore] could not find image or fleet_config.image to update; skipping image rollback\n";
 }
   ' "$file"
 }
@@ -678,21 +672,27 @@ next_destination_name() {
   local highest=0
   local names_text=""
   local name=""
+  local truebase="$base"
+
+  # Strip all trailing -N suffixes to find the true base name
+  while [[ "$truebase" =~ ^(.+)-([0-9]+)$ ]]; do
+    truebase="${BASH_REMATCH[1]}"
+  done
 
   names_text="$(printf '%s\n' "$config_name"; terraform_cmd state list 2>/dev/null | grep -E '\.module\.rds\.aws_rds_cluster\.this' | while read -r addr; do state_value "$addr" '.values.cluster_identifier // .values.id'; done || true)"
   names_text="$names_text"$'\n'"$(aws_cmd rds describe-db-clusters --query 'DBClusters[].DBClusterIdentifier' --output text 2>/dev/null | tr '\t' '\n' || true)"
 
   while IFS= read -r name; do
     [[ -n "$name" ]] || continue
-    if [[ "$name" == "$base" ]]; then
+    if [[ "$name" == "$truebase" ]]; then
       (( highest < 0 )) && highest=0
-    elif [[ "$name" =~ ^${base}-([0-9]+)$ ]]; then
+    elif [[ "$name" =~ ^${truebase}-([0-9]+)$ ]]; then
       local n="${BASH_REMATCH[1]}"
       (( n > highest )) && highest="$n"
     fi
   done <<<"$names_text"
 
-  printf '%s\n' "$(sanitize_identifier "${base}-$((highest + 1))")"
+  printf '%s\n' "$(sanitize_identifier "${truebase}-$((highest + 1))")"
 }
 
 ensure_destination_available() {
@@ -1001,6 +1001,7 @@ DESTINATION_NAME=""
 RESTORED_NAME=""
 ROLLBACK="false"
 FLEET_IMAGE=""
+MASTER_USERNAME=""
 SKIP_MIGRATIONS="false"
 NO_ECS_APPLY="false"
 CLEANUP_OLD_RESOURCES="false"
@@ -1013,11 +1014,6 @@ CONFIRM="false"
 if [[ $# -eq 0 ]]; then
   usage
   exit 1
-fi
-
-if [[ "${1:-}" != --* ]]; then
-  ENV_NAME="$1"
-  shift
 fi
 
 while [[ $# -gt 0 ]]; do
@@ -1068,6 +1064,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --fleet-image)
       FLEET_IMAGE="$2"
+      shift 2
+      ;;
+    --master-username)
+      MASTER_USERNAME="$2"
       shift 2
       ;;
     --rollback)
@@ -1128,15 +1128,14 @@ fi
 require_cmd terraform
 require_cmd perl
 
-[[ -n "$ENV_NAME" ]] || die "customer environment is required"
 [[ -n "$MODE" ]] || die "choose exactly one of --list, --restore-time, --restore-snapshot, or --cleanup-only"
 if [[ -n "$ENV_DIR_ARG" ]]; then
   ENV_DIR="${ENV_DIR_ARG}"
-  [[ -d "$ENV_DIR" ]] || die "environment directory not found: $ENV_DIR"
 else
-  ENV_DIR="${SCRIPTS_BASE_DIR}/${ENV_NAME}"
-  [[ -d "$ENV_DIR" ]] || die "environment directory not found: $ENV_DIR; use --env-dir to specify a custom path"
+  ENV_DIR="$PWD"
 fi
+[[ -d "$ENV_DIR" ]] || die "environment directory not found: $ENV_DIR; use --env-dir to specify a custom path"
+ENV_NAME="$(basename "$ENV_DIR")"
 TERRAFORM_DIR="$ENV_DIR"
 [[ -n "$CONFIG_FILE" ]] || CONFIG_FILE="${ENV_DIR}/main.tf"
 [[ "$CONFIG_FILE" == /* ]] || CONFIG_FILE="${ENV_DIR}/${CONFIG_FILE}"
@@ -1233,41 +1232,105 @@ extract_fleet_image_from_state() {
   ' "$STATE_RESOURCES_FILE"
 }
 
-# Ensure fleet_image is explicitly defined in the config
+# Ensure image is explicitly defined in the config
 ensure_fleet_image_in_config() {
-  # Already defined
-  if grep -q '^\s*fleet_image\s*=' "$CONFIG_FILE" 2>/dev/null; then
+  # Check if image is a direct child of fleet_config (not nested inside containers, etc.)
+  if perl -ne '
+    BEGIN { $f = 0 }
+    if (/fleet_config\s*=\s*[{]/) { $in=1; $depth=1 }
+    elsif ($in) {
+      my @ob = /\{/g; my @cb = /\}/g;
+      $depth += scalar @ob - scalar @cb;
+      if ($depth == 1 && /^\s*image\s*=\s*"/ && !/^\s*#/) { $f = 1; last }
+      if ($depth <= 0) { $in = 0 }
+    }
+    END { exit !$f }
+  ' "$CONFIG_FILE" 2>/dev/null; then
     return 0
   fi
   # Extract image from state
   local image=""
   image="$(extract_fleet_image_from_state)"
   if [[ -z "$image" ]]; then
-    log "could not extract fleet image from state; skipping fleet_image addition"
+    log "could not extract fleet image from state; skipping image addition"
     return 0
   fi
-  # Add fleet_image before rds_config block
-  log "adding fleet_image = \"${image}\" to ${CONFIG_FILE}"
-  perl -i -pe '
-    BEGIN { $image = $ENV{ENSURE_IMAGE} // ""; $done = 0; }
-    if (!$done && /^\s*rds_config\s*=\s*\{/) {
-      print "  fleet_image = \"" . $image . "\"\n";
-      $done = 1;
-    }
-  ' "$CONFIG_FILE"
+  # If fleet_config block exists, add image inside it; otherwise add top-level image
+  if grep -q 'fleet_config\s*=' "$CONFIG_FILE" 2>/dev/null; then
+    log "adding fleet_config.image = \"${image}\" to ${CONFIG_FILE}"
+    perl -i -0pe '
+      BEGIN { $image = $ENV{ENSURE_IMAGE} // ""; }
+      s{(fleet_config\s*=\s*\{)}{$1\n    image = "'"$image"'"};
+    ' "$CONFIG_FILE"
+  else
+    log "adding image = \"${image}\" to ${CONFIG_FILE}"
+    perl -i -pe '
+      BEGIN { $image = $ENV{ENSURE_IMAGE} // ""; $done = 0; }
+      if (!$done && /^\s*rds_config\s*=\s*\{/) {
+        print "  image = \"" . $image . "\"\n";
+        $done = 1;
+      }
+    ' "$CONFIG_FILE"
+  fi
 }
 
-if [[ "$DRY_RUN" != "true" ]]; then
-  ENSURE_IMAGE="$(extract_fleet_image_from_state)" ensure_fleet_image_in_config
-fi
+# Ensure master_username is set in rds_config if user provided --master-username
+ensure_master_username_in_config() {
+  if [[ -z "$MASTER_USERNAME" ]]; then
+    return 0
+  fi
+  # Check if master_username already exists as a direct child of rds_config
+  if perl -ne '
+    BEGIN { $f = 0 }
+    if (/rds_config\s*=\s*[{]/) { $in=1; $depth=1 }
+    elsif ($in) {
+      my @ob = /\{/g; my @cb = /\}/g;
+      $depth += scalar @ob - scalar @cb;
+      if ($depth == 1 && /^\s*master_username\s*=/ && !/^\s*#/) { $f = 1; last }
+      if ($depth <= 0) { $in = 0 }
+    }
+    END { exit !$f }
+  ' "$CONFIG_FILE" 2>/dev/null; then
+    # Update existing master_username
+    log "updating rds_config.master_username to \"${MASTER_USERNAME}\" in ${CONFIG_FILE}"
+    MASTER_USERNAME="$MASTER_USERNAME" perl -i -ne '
+      BEGIN { $in = 0; $depth = 0 }
+      if (/^\s*rds_config\s*=\s*\{/) { $in=1; $depth=1; print; next }
+      if ($in) {
+        my @ob = /\{/g; my @cb = /\}/g;
+        $depth += scalar @ob - scalar @cb;
+        if ($depth == 1 && /^\s*master_username\s*=/) {
+          s/^([ \t]*)master_username\s*=.*/$1 . q{master_username = "} . $ENV{MASTER_USERNAME} . q{"}/e;
+        }
+        if ($depth <= 0) { $in = 0 }
+        print; next;
+      }
+      print;
+    ' "$CONFIG_FILE"
+  else
+    # Add master_username inside rds_config
+    log "adding rds_config.master_username = \"${MASTER_USERNAME}\" to ${CONFIG_FILE}"
+    MASTER_USERNAME="$MASTER_USERNAME" perl -i -ne '
+      if (/^\s*rds_config\s*=\s*\{/) {
+        print;
+        print "    master_username = \"" . $ENV{MASTER_USERNAME} . "\"\n";
+      } else {
+        print;
+      }
+    ' "$CONFIG_FILE"
+  fi
+}
 
 confirm_or_die "restore database"
 
 if [[ "$DRY_RUN" == "true" ]]; then
   log "dry run: would edit ${CONFIG_FILE} for initial restore with Performance Insights, Database Insights, and Enhanced Monitoring temporarily disabled"
+  [[ -n "$MASTER_USERNAME" ]] && log "dry run: would ensure rds_config.master_username = \"${MASTER_USERNAME}\" in config"
 else
   update_config_file "$CONFIG_FILE" "initial"
+  ensure_fleet_image_in_config
   update_fleet_image "$CONFIG_FILE"
+  ensure_master_username_in_config
   terraform fmt "$CONFIG_FILE" >/dev/null
   copy_file "$CONFIG_FILE" "$ARTIFACT_DIR/$(basename "$CONFIG_FILE").after-initial-restore-edit"
 fi
@@ -1288,6 +1351,8 @@ if [[ "$DRY_RUN" == "true" ]]; then
 else
   copy_file "$ARTIFACT_DIR/$(basename "$CONFIG_FILE").original" "$CONFIG_FILE"
   update_config_file "$CONFIG_FILE" "post-restore"
+  ensure_master_username_in_config
+  ensure_fleet_image_in_config
   update_fleet_image "$CONFIG_FILE"
   terraform fmt "$CONFIG_FILE" >/dev/null
   copy_file "$CONFIG_FILE" "$ARTIFACT_DIR/$(basename "$CONFIG_FILE").after-post-restore-edit"
