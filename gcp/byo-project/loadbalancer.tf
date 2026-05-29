@@ -28,18 +28,18 @@ resource "google_compute_url_map" "fleet" {
     create_before_destroy = true
   }
 
-  # Default host rule — sends all traffic to the Fleet backend
-  host_rule {
-    hosts        = ["*"]
-    path_matcher = "default"
-  }
-
-  path_matcher {
-    name            = "default"
-    default_service = local.fleet_backend_self_link
-  }
-
-  # Okta subdomain host rule — redirects SSO path, forwards everything else
+  # Okta subdomain host rule — forwards everything to the Fleet backend
+  # via the mTLS proxy (the proxy is what injects X-Client-Cert-Serial).
+  # No SSO redirect here: if the okta path_matcher carried a
+  # url_redirect to the okta subdomain, the LB would 301-loop
+  # okta.*/...idp/sso onto itself.
+  #
+  # Declaration order matters: GCP url_maps evaluate host_rules in
+  # declaration order (first match wins, NOT longest-prefix), so the
+  # specific okta host_rule must come before the `*` host_rule below.
+  # The Terraform google provider currently treats host_rule as an
+  # unordered set on read, so a manual gcloud reorder may be required
+  # the first time the rule is created (see README).
   dynamic "host_rule" {
     for_each = var.okta_subdomain != null ? [1] : []
     content {
@@ -53,8 +53,26 @@ resource "google_compute_url_map" "fleet" {
     content {
       name            = "okta"
       default_service = local.fleet_backend_self_link
+    }
+  }
 
-      path_rule {
+  # Default host rule — catches everything else (the main Fleet domain).
+  host_rule {
+    hosts        = ["*"]
+    path_matcher = "default"
+  }
+
+  path_matcher {
+    name            = "default"
+    default_service = local.fleet_backend_self_link
+
+    # Bounce Okta SSO callbacks from the main domain to the mTLS
+    # subdomain. Only fires on the main fleet domain because the okta
+    # host_rule above routes okta.* traffic to its own path_matcher
+    # (which has no redirect, so requests pass through to the backend).
+    dynamic "path_rule" {
+      for_each = var.okta_subdomain != null ? [1] : []
+      content {
         paths = ["/api/fleet/conditional_access/idp/sso"]
         url_redirect {
           https_redirect = true
@@ -63,6 +81,20 @@ resource "google_compute_url_map" "fleet" {
           strip_query    = false
         }
       }
+    }
+  }
+
+  # Okta CA SSO routing regression guard: requests to the okta
+  # subdomain must reach the Fleet backend (NOT self-redirect). An
+  # earlier shape placed the url_redirect path_rule inside the okta
+  # path_matcher, which 301-looped okta.*/...idp/sso onto itself.
+  dynamic "test" {
+    for_each = var.okta_subdomain != null ? [1] : []
+    content {
+      description = "okta SSO on the okta subdomain reaches the backend (no self-redirect)"
+      host        = var.okta_subdomain
+      path        = "/api/fleet/conditional_access/idp/sso"
+      service     = local.fleet_backend_self_link
     }
   }
 }

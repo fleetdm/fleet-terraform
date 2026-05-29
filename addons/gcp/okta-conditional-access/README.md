@@ -74,7 +74,7 @@ Setting `okta_subdomain` on the `fleet` module causes `gcp/byo-project` to:
 2. Create a managed SSL cert for `okta.<fleet_domain>` only (`fleet-okta-cert`)
 3. Create a second HTTPS proxy with the `ServerTLSPolicy` attached (`fleet-okta-https-proxy`)
 4. Create a forwarding rule on the new IP → okta proxy
-5. Add a URL map host rule redirecting `/api/fleet/conditional_access/idp/sso` to the okta subdomain
+5. Add a URL map redirect from `https://<fleet_domain>/api/fleet/conditional_access/idp/sso` → `https://okta.<fleet_domain>/api/fleet/conditional_access/idp/sso`. The redirect lives on the **main** Fleet domain's path matcher only; the okta subdomain's matcher must pass the SSO path through to the backend, otherwise the LB self-loops (301 → 301 → 301)
 6. Create a DNS A record for `okta.<fleet_domain>` pointing to the new IP
 
 ## First-time Deployment Notes
@@ -117,6 +117,20 @@ gcloud compute ssl-certificates delete fleet-lb-cert-new \
 ```
 
 This is a one-time migration step. Future `terraform apply` runs will not require it.
+
+### URL map host_rule ordering
+
+GCP URL maps evaluate `host_rules` in declaration order — first match wins, NOT longest-prefix. The okta subdomain's host_rule must therefore come before the `*` host_rule that matches the main Fleet domain; otherwise `okta.<fleet_domain>/api/fleet/conditional_access/idp/sso` matches the `*` rule first, hits the redirect path_rule on the default path_matcher, and 301-loops onto itself.
+
+The Terraform google provider currently treats `host_rule` as an unordered set on read, so reordering blocks in `.tf` files alone is not enough to update an already-applied URL map. If the live `gcloud compute url-maps describe <name>` shows the `*` host_rule above the okta host_rule, reorder it manually:
+
+```sh
+gcloud compute url-maps export <name> --global --project=<project-id> --destination=urlmap.yaml
+# Edit urlmap.yaml: move the okta host_rule entry above the `*` entry under hostRules.
+gcloud compute url-maps import <name> --global --project=<project-id> --source=urlmap.yaml --quiet
+```
+
+Verify with `curl -sI` from a device with a valid client cert: the response should be a `200`/`302` to the Fleet IdP, not a `301 cloud_redirect` to the same URL.
 
 ## Provider Requirements
 
