@@ -12,26 +12,27 @@ This script is designed for self-hosted Fleet deployments provisioned via `fleet
 
 ## Quick Start
 
-Copy the script into your environment directory and run it from there. The script defaults to `$PWD`, so it will find your Terraform state and config automatically.
+The script does not need to live in your environment directory. It defaults to `$PWD` for Terraform state and config, so just `cd` into your environment directory and run the script from there. Alternatively, use `--env-dir` to point at the environment directory from anywhere.
 
-1. **Copy the script to your environment directory:**
+1. **Run from inside the environment directory:**
    ```bash
-   cp tools/rds-db-restore/db-restore.sh fleet-terraform/example/
    cd fleet-terraform/example
+   AWS_PROFILE=<profile> /path/to/db-restore.sh --list
    ```
-2. **List available restore points:**
+   Or use `--env-dir` to target it from anywhere:
    ```bash
-   AWS_PROFILE=<profile> ./db-restore.sh --list
+   AWS_PROFILE=<profile> /path/to/db-restore.sh --list \
+     --env-dir /path/to/fleet-terraform/example
    ```
-3. **Dry-run a point-in-time restore:**
+2. **Dry-run a point-in-time restore:**
    ```bash
-   AWS_PROFILE=<profile> ./db-restore.sh \
+   AWS_PROFILE=<profile> /path/to/db-restore.sh \
      --restore-time 2026-05-05T11:00:00Z \
      --dry-run
    ```
-4. **Execute the restore:**
+3. **Execute the restore:**
    ```bash
-   AWS_PROFILE=<profile> ./db-restore.sh \
+   AWS_PROFILE=<profile> /path/to/db-restore.sh \
      --restore-time 2026-05-05T11:00:00Z \
      --confirm
    ```
