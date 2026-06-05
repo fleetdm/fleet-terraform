@@ -166,6 +166,10 @@ module "vpc" {
   vpc_flow_log_tags                         = var.vpc.vpc_flow_log_tags
   enable_dns_hostnames                      = var.vpc.enable_dns_hostnames
   enable_dns_support                        = var.vpc.enable_dns_support
+
+  manage_default_network_acl  = var.vpc.manage_default_network_acl
+  default_network_acl_ingress = var.vpc.default_network_acl_ingress
+  default_network_acl_egress  = var.vpc.default_network_acl_egress
 }
 
 module "byo-vpc" {

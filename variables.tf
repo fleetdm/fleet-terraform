@@ -36,6 +36,42 @@ variable "vpc" {
       extra_kms_policies = []
     })
     vpc_flow_log_tags = optional(map(string), {})
+
+    manage_default_network_acl = optional(bool, true)
+    default_network_acl_ingress = optional(list(map(string)), [
+      {
+        rule_no    = 100
+        action     = "allow"
+        from_port  = 0
+        to_port    = 0
+        protocol   = "-1"
+        cidr_block = "0.0.0.0/0"
+      },
+      {
+        rule_no         = 101
+        action          = "allow"
+        from_port       = 0
+        to_port         = 0
+        protocol        = "-1"
+        ipv6_cidr_block = "::/0"
+    }])
+    default_network_acl_egress = optional(list(map(string)), [
+      {
+        rule_no    = 100
+        action     = "allow"
+        from_port  = 0
+        to_port    = 0
+        protocol   = "-1"
+        cidr_block = "0.0.0.0/0"
+      },
+      {
+        rule_no         = 101
+        action          = "allow"
+        from_port       = 0
+        to_port         = 0
+        protocol        = "-1"
+        ipv6_cidr_block = "::/0"
+    }])
   })
   default = {
     name                = "fleet"
@@ -69,6 +105,42 @@ variable "vpc" {
       extra_kms_policies = []
     }
     vpc_flow_log_tags = {}
+
+    manage_default_network_acl = true
+    default_network_acl_ingress = [
+      {
+        rule_no    = 100
+        action     = "allow"
+        from_port  = 0
+        to_port    = 0
+        protocol   = "-1"
+        cidr_block = "0.0.0.0/0"
+      },
+      {
+        rule_no         = 101
+        action          = "allow"
+        from_port       = 0
+        to_port         = 0
+        protocol        = "-1"
+        ipv6_cidr_block = "::/0"
+    }]
+    default_network_acl_egress = [
+      {
+        rule_no    = 100
+        action     = "allow"
+        from_port  = 0
+        to_port    = 0
+        protocol   = "-1"
+        cidr_block = "0.0.0.0/0"
+      },
+      {
+        rule_no         = 101
+        action          = "allow"
+        from_port       = 0
+        to_port         = 0
+        protocol        = "-1"
+        ipv6_cidr_block = "::/0"
+    }]
   }
   validation {
     condition = (
