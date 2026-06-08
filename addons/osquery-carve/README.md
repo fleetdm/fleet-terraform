@@ -16,17 +16,7 @@ When bringing your own KMS key, it is your responsibility to ensure that key pol
 
 ## S3 Bucket Policy: Deny Non-HTTPS
 
-Set `attach_deny_insecure_transport_policy = true` to attach a bucket policy that denies any requests made over plain HTTP:
-
-```hcl
-module "osquery-carve" {
-  source = "github.com/fleetdm/fleet-terraform/addons/osquery-carve?depth=1&ref=<tag>"
-  osquery_carve_s3_bucket = {
-    name                                  = "fleet-osquery-carve"
-    attach_deny_insecure_transport_policy = true
-  }
-}
-```
+This module automatically attaches a bucket policy that denies any requests made over plain HTTP. No configuration is required.
 
 ## Requirements
 
@@ -70,7 +60,7 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| <a name="input_osquery_carve_s3_bucket"></a> [osquery\_carve\_s3\_bucket](#input\_osquery\_carve\_s3\_bucket) | Configuration for the osquery carve S3 bucket, including optional customer-managed KMS settings. | <pre>object({<br/>    name         = optional(string, "fleet-osquery-results-archive")<br/>    expires_days                   = optional(number, 1)<br/>    attach_deny_insecure_transport_policy = optional(bool, false)<br/>    kms = optional(object({<br/>      kms_key_arn    = optional(string, null)<br/>      create_kms_key = optional(bool, false)<br/>      kms_alias      = optional(string, "osquery-carve")<br/>      kms_base_policy = optional(list(object({<br/>        sid    = string<br/>        effect = string<br/>        principals = object({<br/>          type        = string<br/>          identifiers = list(string)<br/>        })<br/>        actions   = list(string)<br/>        resources = list(string)<br/>        conditions = optional(list(object({<br/>          test     = string<br/>          variable = string<br/>          values   = list(string)<br/>        })), [])<br/>      })), null)<br/>      extra_kms_policies = optional(list(any), [])<br/>      fleet_role_name    = optional(string, null)<br/>      }), {<br/>      kms_key_arn        = null<br/>      create_kms_key     = false<br/>      kms_alias          = "osquery-carve"<br/>      kms_base_policy    = null<br/>      extra_kms_policies = []<br/>      fleet_role_name    = null<br/>    })<br/>  })</pre> | <pre>{<br/>  "attach_deny_insecure_transport_policy": false,<br/>  "expires_days": 1,<br/>  "kms": {<br/>    "create_kms_key": false,<br/>    "extra_kms_policies": [],<br/>    "fleet_role_name": null,<br/>    "kms_alias": "osquery-carve",<br/>    "kms_base_policy": null,<br/>    "kms_key_arn": null<br/>  },<br/>  "name": "fleet-osquery-results-archive"<br/>}</pre> | no |
+| <a name="input_osquery_carve_s3_bucket"></a> [osquery\_carve\_s3\_bucket](#input\_osquery\_carve\_s3\_bucket) | Configuration for the osquery carve S3 bucket, including optional customer-managed KMS settings. | <pre>object({<br/>    name         = optional(string, "fleet-osquery-results-archive")<br/>    expires_days = optional(number, 1)<br/>    kms = optional(object({<br/>      kms_key_arn    = optional(string, null)<br/>      create_kms_key = optional(bool, false)<br/>      kms_alias      = optional(string, "osquery-carve")<br/>      kms_base_policy = optional(list(object({<br/>        sid    = string<br/>        effect = string<br/>        principals = object({<br/>          type        = string<br/>          identifiers = list(string)<br/>        })<br/>        actions   = list(string)<br/>        resources = list(string)<br/>        conditions = optional(list(object({<br/>          test     = string<br/>          variable = string<br/>          values   = list(string)<br/>        })), [])<br/>      })), null)<br/>      extra_kms_policies = optional(list(any), [])<br/>      fleet_role_name    = optional(string, null)<br/>      }), {<br/>      kms_key_arn        = null<br/>      create_kms_key     = false<br/>      kms_alias          = "osquery-carve"<br/>      kms_base_policy    = null<br/>      extra_kms_policies = []<br/>      fleet_role_name    = null<br/>    })<br/>  })</pre> | <pre>{<br/>  "expires_days": 1,<br/>  "kms": {<br/>    "create_kms_key": false,<br/>    "extra_kms_policies": [],<br/>    "fleet_role_name": null,<br/>    "kms_alias": "osquery-carve",<br/>    "kms_base_policy": null,<br/>    "kms_key_arn": null<br/>  },<br/>  "name": "fleet-osquery-results-archive"<br/>}</pre> | no |
 
 ## Outputs
 

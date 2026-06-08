@@ -9,15 +9,7 @@ This addon configures AWS Kinesis Firehose to send Fleet's osquery logs to Snowf
 
 ## S3 Bucket Policy: Deny Non-HTTPS
 
-Set `attach_deny_insecure_transport_policy = true` to attach a bucket policy to the failure S3 bucket that denies any requests made over plain HTTP:
-
-```hcl
-module "snowflake-logging" {
-  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-snowflake?depth=1&ref=<tag>"
-  attach_deny_insecure_transport_policy = true
-  # ... other configuration ...
-}
-```
+This module automatically attaches a bucket policy to the failure S3 bucket that denies any requests made over plain HTTP. No configuration is required.
 
 ## How to use
 
@@ -159,7 +151,6 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| <a name="input_attach_deny_insecure_transport_policy"></a> [attach\_deny\_insecure\_transport\_policy](#input\_attach\_deny\_insecure\_transport\_policy) | When true, attach a bucket policy to the S3 bucket that denies non-SSL requests. | `bool` | `false` | no |
 | <a name="input_compression_format"></a> [compression\_format](#input\_compression\_format) | Compression format for the Firehose delivery stream | `string` | `"UNCOMPRESSED"` | no |
 | <a name="input_iam_policy_name"></a> [iam\_policy\_name](#input\_iam\_policy\_name) | n/a | `string` | `"snowflake-firehose-policy"` | no |
 | <a name="input_log_destinations"></a> [log\_destinations](#input\_log\_destinations) | A map of configurations for Snowflake Firehose delivery streams. | <pre>map(object({<br/>    name                   = string<br/>    database               = string<br/>    schema                 = string<br/>    table                  = string<br/>    buffering_size         = number<br/>    buffering_interval     = number<br/>    s3_buffering_size      = number<br/>    s3_buffering_interval  = number<br/>    s3_error_output_prefix = optional(string, null)<br/>    data_loading_option    = optional(string, "JSON_MAPPING")<br/>    content_column_name    = optional(string, null)<br/>    metadata_column_name   = optional(string, null)<br/>  }))</pre> | <pre>{<br/>  "audit": {<br/>    "buffering_interval": 60,<br/>    "buffering_size": 2,<br/>    "database": "fleet",<br/>    "name": "fleet-audit-snowflake",<br/>    "s3_buffering_interval": 400,<br/>    "s3_buffering_size": 10,<br/>    "schema": "fleet_schema",<br/>    "table": "fleet_audit"<br/>  },<br/>  "results": {<br/>    "buffering_interval": 60,<br/>    "buffering_size": 2,<br/>    "database": "fleet",<br/>    "name": "fleet-osquery-results-snowflake",<br/>    "s3_buffering_interval": 400,<br/>    "s3_buffering_size": 10,<br/>    "schema": "fleet_schema",<br/>    "table": "osquery_results"<br/>  },<br/>  "status": {<br/>    "buffering_interval": 60,<br/>    "buffering_size": 2,<br/>    "database": "fleet",<br/>    "name": "fleet-osquery-status-snowflake",<br/>    "s3_buffering_interval": 400,<br/>    "s3_buffering_size": 10,<br/>    "schema": "fleet_schema",<br/>    "table": "osquery_status",<br/>    "user": "fleet"<br/>  }<br/>}</pre> | no |

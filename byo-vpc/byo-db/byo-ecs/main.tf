@@ -809,35 +809,25 @@ resource "aws_s3_bucket_public_access_block" "software_installers" {
   restrict_public_buckets = true
 }
 
-locals {
-  software_installers_needs_bucket_policy = var.fleet_config.software_installers.create_bucket == true && (
-    var.fleet_config.software_installers.attach_deny_insecure_transport_policy == true ||
-    var.fleet_config.software_installers.cloudfront_distribution_arn != null
-  )
-}
-
 data "aws_iam_policy_document" "software_installers_bucket_policy" {
-  count = local.software_installers_needs_bucket_policy ? 1 : 0
+  count = var.fleet_config.software_installers.create_bucket == true ? 1 : 0
 
-  dynamic "statement" {
-    for_each = var.fleet_config.software_installers.attach_deny_insecure_transport_policy == true ? [1] : []
-    content {
-      sid     = "DenyNonHTTPS"
-      effect  = "Deny"
-      actions = ["s3:*"]
-      resources = [
-        aws_s3_bucket.software_installers[0].arn,
-        "${aws_s3_bucket.software_installers[0].arn}/*",
-      ]
-      principals {
-        type        = "*"
-        identifiers = ["*"]
-      }
-      condition {
-        test     = "Bool"
-        variable = "aws:SecureTransport"
-        values   = ["false"]
-      }
+  statement {
+    sid     = "DenyNonHTTPS"
+    effect  = "Deny"
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.software_installers[0].arn,
+      "${aws_s3_bucket.software_installers[0].arn}/*",
+    ]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
     }
   }
 
@@ -864,7 +854,7 @@ data "aws_iam_policy_document" "software_installers_bucket_policy" {
 }
 
 resource "aws_s3_bucket_policy" "software_installers" {
-  count  = local.software_installers_needs_bucket_policy ? 1 : 0
+  count  = var.fleet_config.software_installers.create_bucket == true ? 1 : 0
   bucket = aws_s3_bucket.software_installers[0].id
   policy = data.aws_iam_policy_document.software_installers_bucket_policy[0].json
 }

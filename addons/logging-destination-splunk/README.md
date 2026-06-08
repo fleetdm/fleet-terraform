@@ -9,15 +9,7 @@ This addon configures AWS Kinesis Firehose to send Fleet's osquery logs to Splun
 
 ## S3 Bucket Policy: Deny Non-HTTPS
 
-Set `attach_deny_insecure_transport_policy = true` to attach a bucket policy to the failure S3 bucket that denies any requests made over plain HTTP:
-
-```hcl
-module "splunk-logging" {
-  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-splunk?depth=1&ref=<tag>"
-  attach_deny_insecure_transport_policy = true
-  # ... other configuration ...
-}
-```
+This module automatically attaches a bucket policy to the failure S3 bucket that denies any requests made over plain HTTP. No configuration is required.
 
 ## How to use
 
@@ -139,7 +131,6 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| <a name="input_attach_deny_insecure_transport_policy"></a> [attach\_deny\_insecure\_transport\_policy](#input\_attach\_deny\_insecure\_transport\_policy) | When true, attach a bucket policy to the S3 bucket that denies non-SSL requests. | `bool` | `false` | no |
 | <a name="input_compression_format"></a> [compression\_format](#input\_compression\_format) | Compression format for the Firehose delivery stream | `string` | `"UNCOMPRESSED"` | no |
 | <a name="input_iam_policy_name"></a> [iam\_policy\_name](#input\_iam\_policy\_name) | n/a | `string` | `"splunk-firehose-policy"` | no |
 | <a name="input_log_destinations"></a> [log\_destinations](#input\_log\_destinations) | A map of configurations for Splunk Firehose delivery streams. | <pre>map(object({<br/>    # hec endpoint/token are logically optional but validated to enforce <br/>    name                        = string<br/>    hec_endpoint                = optional(string)<br/>    hec_token                   = optional(string)<br/>    hec_acknowledgement_timeout = optional(number, 600)<br/>    hec_endpoint_type           = optional(string, "Raw")<br/>    s3_buffering_size           = optional(number, 2)<br/>    s3_buffering_interval       = optional(number, 400)<br/>    s3_error_output_prefix      = optional(string, null)<br/><br/>  }))</pre> | <pre>{<br/>  "audit": {<br/>    "hec_acknowledgement_timeout": 600,<br/>    "hec_endpoint_type": "Raw",<br/>    "name": "fleet-audit-splunk",<br/>    "s3_buffering_interval": 400,<br/>    "s3_buffering_size": 10,<br/>    "s3_error_output_prefix": "audit/"<br/>  },<br/>  "results": {<br/>    "hec_acknowledgement_timeout": 600,<br/>    "hec_endpoint_type": "Raw",<br/>    "name": "fleet-osquery-results-splunk",<br/>    "s3_buffering_interval": 400,<br/>    "s3_buffering_size": 10,<br/>    "s3_error_output_prefix": "results/"<br/>  },<br/>  "status": {<br/>    "hec_acknowledgement_timeout": 600,<br/>    "hec_endpoint_type": "Raw",<br/>    "name": "fleet-osquery-status-splunk",<br/>    "s3_buffering_interval": 400,<br/>    "s3_buffering_size": 10,<br/>    "s3_error_output_prefix": "status/"<br/>  }<br/>}</pre> | no |

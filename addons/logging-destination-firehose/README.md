@@ -3,15 +3,7 @@ This addon provides a Kinesis Firehose logging destination for Fleet.
 
 ## S3 Bucket Policy: Deny Non-HTTPS
 
-Set `attach_deny_insecure_transport_policy = true` to attach a bucket policy to each S3 bucket (osquery-results, osquery-status, audit) that denies any requests made over plain HTTP:
-
-```hcl
-module "firehose-logging" {
-  source = "github.com/fleetdm/fleet-terraform/addons/logging-destination-firehose?depth=1&ref=<tag>"
-  attach_deny_insecure_transport_policy = true
-  # ... other configuration ...
-}
-```
+This module automatically attaches a bucket policy to each S3 bucket (osquery-results, osquery-status, audit) that denies any requests made over plain HTTP. No configuration is required.
 
 ## Requirements
 
@@ -73,7 +65,6 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| <a name="input_attach_deny_insecure_transport_policy"></a> [attach\_deny\_insecure\_transport\_policy](#input\_attach\_deny\_insecure\_transport\_policy) | When true, attach a bucket policy to each S3 bucket that denies non-SSL requests. | `bool` | `false` | no |
 | <a name="input_audit_s3_bucket"></a> [audit\_s3\_bucket](#input\_audit\_s3\_bucket) | n/a | <pre>object({<br/>    name         = optional(string, "fleet-audit-archive")<br/>    expires_days = optional(number, 1)<br/>  })</pre> | <pre>{<br/>  "expires_days": 1,<br/>  "name": "fleet-audit-archive"<br/>}</pre> | no |
 | <a name="input_compression_format"></a> [compression\_format](#input\_compression\_format) | n/a | `string` | `"UNCOMPRESSED"` | no |
 | <a name="input_osquery_results_s3_bucket"></a> [osquery\_results\_s3\_bucket](#input\_osquery\_results\_s3\_bucket) | n/a | <pre>object({<br/>    name         = optional(string, "fleet-osquery-results-archive")<br/>    expires_days = optional(number, 1)<br/>  })</pre> | <pre>{<br/>  "expires_days": 1,<br/>  "name": "fleet-osquery-results-archive"<br/>}</pre> | no |

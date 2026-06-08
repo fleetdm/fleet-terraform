@@ -38,7 +38,6 @@ resource "aws_s3_bucket_public_access_block" "splunk-failure" {
 }
 
 data "aws_iam_policy_document" "deny_insecure_transport" {
-  count = var.attach_deny_insecure_transport_policy == true ? 1 : 0
 
   statement {
     sid     = "DenyNonHTTPS"
@@ -61,9 +60,8 @@ data "aws_iam_policy_document" "deny_insecure_transport" {
 }
 
 resource "aws_s3_bucket_policy" "deny_insecure_transport" {
-  count  = var.attach_deny_insecure_transport_policy == true ? 1 : 0
   bucket = aws_s3_bucket.splunk-failure.id
-  policy = data.aws_iam_policy_document.deny_insecure_transport[0].json
+  policy = data.aws_iam_policy_document.deny_insecure_transport.json
 }
 
 data "aws_iam_policy_document" "firehose_policy" {

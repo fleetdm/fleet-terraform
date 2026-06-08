@@ -36,12 +36,6 @@ variable "audit_s3_bucket" {
   }
 }
 
-variable "attach_deny_insecure_transport_policy" {
-  type        = bool
-  default     = false
-  description = "When true, attach a bucket policy to each S3 bucket that denies non-SSL requests."
-}
-
 variable "compression_format" {
   default = "UNCOMPRESSED"
 }

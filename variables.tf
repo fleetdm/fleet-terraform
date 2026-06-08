@@ -772,7 +772,6 @@ variable "fleet_config" {
       kms_alias                             = optional(string, "fleet-software-installers")
       extra_kms_policies                    = optional(list(any), [])
       tags                                  = optional(map(string), {})
-      attach_deny_insecure_transport_policy = optional(bool, false)
       }), {
       create_bucket                         = true
       bucket_name                           = null
@@ -787,7 +786,6 @@ variable "fleet_config" {
       kms_alias                             = "fleet-software-installers"
       extra_kms_policies                    = []
       tags                                  = {}
-      attach_deny_insecure_transport_policy = false
     })
   })
   default = {
@@ -903,7 +901,6 @@ variable "fleet_config" {
       kms_alias                             = "fleet-software-installers"
       extra_kms_policies                    = []
       tags                                  = {}
-      attach_deny_insecure_transport_policy = false
     }
   }
   validation {

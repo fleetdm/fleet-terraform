@@ -55,12 +55,6 @@ variable "log_destinations" {
   }
 }
 
-variable "attach_deny_insecure_transport_policy" {
-  type        = bool
-  default     = false
-  description = "When true, attach a bucket policy to the S3 bucket that denies non-SSL requests."
-}
-
 variable "compression_format" {
   default     = "UNCOMPRESSED"
   description = "Compression format for the Firehose delivery stream"

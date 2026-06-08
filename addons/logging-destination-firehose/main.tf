@@ -43,7 +43,6 @@ resource "aws_s3_bucket_public_access_block" "osquery-results" {
 }
 
 data "aws_iam_policy_document" "deny_insecure_transport_osquery_results" {
-  count = var.attach_deny_insecure_transport_policy == true ? 1 : 0
 
   statement {
     sid     = "DenyNonHTTPS"
@@ -66,9 +65,9 @@ data "aws_iam_policy_document" "deny_insecure_transport_osquery_results" {
 }
 
 resource "aws_s3_bucket_policy" "deny_insecure_transport_osquery_results" {
-  count  = var.attach_deny_insecure_transport_policy == true ? 1 : 0
+
   bucket = aws_s3_bucket.osquery-results.id
-  policy = data.aws_iam_policy_document.deny_insecure_transport_osquery_results[0].json
+  policy = data.aws_iam_policy_document.deny_insecure_transport_osquery_results.json
 }
 
 // Customer keys are not supported in our Fleet Terraforms at the moment. We will evaluate the
@@ -113,7 +112,6 @@ resource "aws_s3_bucket_public_access_block" "osquery-status" {
 }
 
 data "aws_iam_policy_document" "deny_insecure_transport_osquery_status" {
-  count = var.attach_deny_insecure_transport_policy == true ? 1 : 0
 
   statement {
     sid     = "DenyNonHTTPS"
@@ -136,9 +134,9 @@ data "aws_iam_policy_document" "deny_insecure_transport_osquery_status" {
 }
 
 resource "aws_s3_bucket_policy" "deny_insecure_transport_osquery_status" {
-  count  = var.attach_deny_insecure_transport_policy == true ? 1 : 0
+
   bucket = aws_s3_bucket.osquery-status.id
-  policy = data.aws_iam_policy_document.deny_insecure_transport_osquery_status[0].json
+  policy = data.aws_iam_policy_document.deny_insecure_transport_osquery_status.json
 }
 
 // Customer keys are not supported in our Fleet Terraforms at the moment. We will evaluate the
@@ -183,7 +181,6 @@ resource "aws_s3_bucket_public_access_block" "audit" {
 }
 
 data "aws_iam_policy_document" "deny_insecure_transport_audit" {
-  count = var.attach_deny_insecure_transport_policy == true ? 1 : 0
 
   statement {
     sid     = "DenyNonHTTPS"
@@ -206,9 +203,9 @@ data "aws_iam_policy_document" "deny_insecure_transport_audit" {
 }
 
 resource "aws_s3_bucket_policy" "deny_insecure_transport_audit" {
-  count  = var.attach_deny_insecure_transport_policy == true ? 1 : 0
+
   bucket = aws_s3_bucket.audit.id
-  policy = data.aws_iam_policy_document.deny_insecure_transport_audit[0].json
+  policy = data.aws_iam_policy_document.deny_insecure_transport_audit.json
 }
 
 data "aws_iam_policy_document" "osquery_results_policy_doc" {
