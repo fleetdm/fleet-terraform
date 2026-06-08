@@ -7,11 +7,23 @@ This addon configures AWS Kinesis Firehose to send Fleet's osquery logs to Snowf
 3. IAM roles and policies for the Firehose streams to access the S3 bucket
 4. An IAM policy for Fleet to access the Firehose streams
 
+## S3 Bucket Policy: Deny Non-HTTPS
+
+Set `attach_deny_insecure_transport_policy = true` to attach a bucket policy to the failure S3 bucket that denies any requests made over plain HTTP:
+
+```hcl
+module "snowflake-logging" {
+  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-snowflake?depth=1&ref=<tag>"
+  attach_deny_insecure_transport_policy = true
+  # ... other configuration ...
+}
+```
+
 ## How to use
 
 ```hcl
 module "snowflake-logging" {
-  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-snowflake?depth=1&ref=tf-mod-addon-logging-destination-snowflake-v1.0.3"
+  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-snowflake?depth=1&ref=tf-mod-addon-logging-destination-snowflake-v1.1.0"
 
   s3_bucket_config = {
     name_prefix  = "fleet-snowflake-failure"
@@ -78,7 +90,7 @@ Then you can use the module's outputs in your Fleet configuration:
 
 ```hcl
 module "fleet" {
-  source = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.27.0"
+  source = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.30.0"
   certificate_arn = module.acm.acm_certificate_arn
 
   vpc = {
@@ -134,8 +146,10 @@ No modules.
 | [aws_kinesis_firehose_delivery_stream.snowflake](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kinesis_firehose_delivery_stream) | resource |
 | [aws_s3_bucket.snowflake-failure](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket) | resource |
 | [aws_s3_bucket_lifecycle_configuration.snowflake-failure](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_lifecycle_configuration) | resource |
+| [aws_s3_bucket_policy.deny_insecure_transport](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_policy) | resource |
 | [aws_s3_bucket_public_access_block.snowflake-failure](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_public_access_block) | resource |
 | [aws_s3_bucket_server_side_encryption_configuration.snowflake-failure](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_server_side_encryption_configuration) | resource |
+| [aws_iam_policy_document.deny_insecure_transport](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.firehose-logging](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.firehose_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.osquery_firehose_assume_role](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
@@ -145,6 +159,7 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
+| <a name="input_attach_deny_insecure_transport_policy"></a> [attach\_deny\_insecure\_transport\_policy](#input\_attach\_deny\_insecure\_transport\_policy) | When true, attach a bucket policy to the S3 bucket that denies non-SSL requests. | `bool` | `false` | no |
 | <a name="input_compression_format"></a> [compression\_format](#input\_compression\_format) | Compression format for the Firehose delivery stream | `string` | `"UNCOMPRESSED"` | no |
 | <a name="input_iam_policy_name"></a> [iam\_policy\_name](#input\_iam\_policy\_name) | n/a | `string` | `"snowflake-firehose-policy"` | no |
 | <a name="input_log_destinations"></a> [log\_destinations](#input\_log\_destinations) | A map of configurations for Snowflake Firehose delivery streams. | <pre>map(object({<br/>    name                   = string<br/>    database               = string<br/>    schema                 = string<br/>    table                  = string<br/>    buffering_size         = number<br/>    buffering_interval     = number<br/>    s3_buffering_size      = number<br/>    s3_buffering_interval  = number<br/>    s3_error_output_prefix = optional(string, null)<br/>    data_loading_option    = optional(string, "JSON_MAPPING")<br/>    content_column_name    = optional(string, null)<br/>    metadata_column_name   = optional(string, null)<br/>  }))</pre> | <pre>{<br/>  "audit": {<br/>    "buffering_interval": 60,<br/>    "buffering_size": 2,<br/>    "database": "fleet",<br/>    "name": "fleet-audit-snowflake",<br/>    "s3_buffering_interval": 400,<br/>    "s3_buffering_size": 10,<br/>    "schema": "fleet_schema",<br/>    "table": "fleet_audit"<br/>  },<br/>  "results": {<br/>    "buffering_interval": 60,<br/>    "buffering_size": 2,<br/>    "database": "fleet",<br/>    "name": "fleet-osquery-results-snowflake",<br/>    "s3_buffering_interval": 400,<br/>    "s3_buffering_size": 10,<br/>    "schema": "fleet_schema",<br/>    "table": "osquery_results"<br/>  },<br/>  "status": {<br/>    "buffering_interval": 60,<br/>    "buffering_size": 2,<br/>    "database": "fleet",<br/>    "name": "fleet-osquery-status-snowflake",<br/>    "s3_buffering_interval": 400,<br/>    "s3_buffering_size": 10,<br/>    "schema": "fleet_schema",<br/>    "table": "osquery_status",<br/>    "user": "fleet"<br/>  }<br/>}</pre> | no |
