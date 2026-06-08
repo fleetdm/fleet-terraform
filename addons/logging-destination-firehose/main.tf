@@ -42,6 +42,34 @@ resource "aws_s3_bucket_public_access_block" "osquery-results" {
   restrict_public_buckets = true
 }
 
+data "aws_iam_policy_document" "deny_insecure_transport_osquery_results" {
+
+  statement {
+    sid     = "DenyNonHTTPS"
+    effect  = "Deny"
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.osquery-results.arn,
+      "${aws_s3_bucket.osquery-results.arn}/*",
+    ]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "deny_insecure_transport_osquery_results" {
+
+  bucket = aws_s3_bucket.osquery-results.id
+  policy = data.aws_iam_policy_document.deny_insecure_transport_osquery_results.json
+}
+
 // Customer keys are not supported in our Fleet Terraforms at the moment. We will evaluate the
 // possibility of providing this capability in the future.
 // No versioning on this bucket is by design.
@@ -83,6 +111,34 @@ resource "aws_s3_bucket_public_access_block" "osquery-status" {
   restrict_public_buckets = true
 }
 
+data "aws_iam_policy_document" "deny_insecure_transport_osquery_status" {
+
+  statement {
+    sid     = "DenyNonHTTPS"
+    effect  = "Deny"
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.osquery-status.arn,
+      "${aws_s3_bucket.osquery-status.arn}/*",
+    ]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "deny_insecure_transport_osquery_status" {
+
+  bucket = aws_s3_bucket.osquery-status.id
+  policy = data.aws_iam_policy_document.deny_insecure_transport_osquery_status.json
+}
+
 // Customer keys are not supported in our Fleet Terraforms at the moment. We will evaluate the
 // possibility of providing this capability in the future.
 // No versioning on this bucket is by design.
@@ -122,6 +178,34 @@ resource "aws_s3_bucket_public_access_block" "audit" {
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
+}
+
+data "aws_iam_policy_document" "deny_insecure_transport_audit" {
+
+  statement {
+    sid     = "DenyNonHTTPS"
+    effect  = "Deny"
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.audit.arn,
+      "${aws_s3_bucket.audit.arn}/*",
+    ]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "deny_insecure_transport_audit" {
+
+  bucket = aws_s3_bucket.audit.id
+  policy = data.aws_iam_policy_document.deny_insecure_transport_audit.json
 }
 
 data "aws_iam_policy_document" "osquery_results_policy_doc" {

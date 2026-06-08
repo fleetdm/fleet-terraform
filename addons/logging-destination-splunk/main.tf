@@ -37,6 +37,33 @@ resource "aws_s3_bucket_public_access_block" "splunk-failure" {
   restrict_public_buckets = true
 }
 
+data "aws_iam_policy_document" "deny_insecure_transport" {
+
+  statement {
+    sid     = "DenyNonHTTPS"
+    effect  = "Deny"
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.splunk-failure.arn,
+      "${aws_s3_bucket.splunk-failure.arn}/*",
+    ]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "deny_insecure_transport" {
+  bucket = aws_s3_bucket.splunk-failure.id
+  policy = data.aws_iam_policy_document.deny_insecure_transport.json
+}
+
 data "aws_iam_policy_document" "firehose_policy" {
   statement {
     effect = "Allow"

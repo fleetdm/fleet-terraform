@@ -7,11 +7,15 @@ This addon configures AWS Kinesis Firehose to send Fleet's osquery logs to Splun
 3. IAM roles and policies for the Firehose streams to access the S3 bucket
 4. An IAM policy for Fleet to access the Firehose streams
 
+## S3 Bucket Policy: Deny Non-HTTPS
+
+This module automatically attaches a bucket policy to the failure S3 bucket that denies any requests made over plain HTTP. No configuration is required.
+
 ## How to use
 
 ```hcl
 module "splunk-logging" {
-  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-splunk?depth=1&ref=tf-mod-addon-logging-destination-splunk-v1.0.1"
+  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-splunk?depth=1&ref=tf-mod-addon-logging-destination-splunk-v1.1.0"
 
   s3_bucket_config = {
     name_prefix  = "fleet-splunk-failure"
@@ -58,7 +62,7 @@ Then you can use the module's outputs in your Fleet configuration:
 
 ```hcl
 module "fleet" {
-  source = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.27.0"
+  source = "github.com/fleetdm/fleet-terraform?depth=1&ref=tf-mod-root-v1.30.0"
   certificate_arn = module.acm.acm_certificate_arn
 
   vpc = {
@@ -114,8 +118,10 @@ No modules.
 | [aws_kinesis_firehose_delivery_stream.splunk](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kinesis_firehose_delivery_stream) | resource |
 | [aws_s3_bucket.splunk-failure](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket) | resource |
 | [aws_s3_bucket_lifecycle_configuration.splunk-failure](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_lifecycle_configuration) | resource |
+| [aws_s3_bucket_policy.deny_insecure_transport](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_policy) | resource |
 | [aws_s3_bucket_public_access_block.splunk-failure](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_public_access_block) | resource |
 | [aws_s3_bucket_server_side_encryption_configuration.splunk-failure](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_server_side_encryption_configuration) | resource |
+| [aws_iam_policy_document.deny_insecure_transport](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.firehose-logging](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.firehose_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.osquery_firehose_assume_role](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |

@@ -205,6 +205,33 @@ resource "aws_s3_bucket_public_access_block" "main" {
   restrict_public_buckets = true
 }
 
+data "aws_iam_policy_document" "deny_insecure_transport" {
+
+  statement {
+    sid     = "DenyNonHTTPS"
+    effect  = "Deny"
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.main.arn,
+      "${aws_s3_bucket.main.arn}/*",
+    ]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "deny_insecure_transport" {
+  bucket = aws_s3_bucket.main.id
+  policy = data.aws_iam_policy_document.deny_insecure_transport.json
+}
+
 data "aws_iam_policy_document" "main" {
   statement {
     actions = [
