@@ -1,7 +1,8 @@
 variable "osquery_carve_s3_bucket" {
   type = object({
     name         = optional(string, "fleet-osquery-results-archive")
-    expires_days = optional(number, 1)
+    expires_days                   = optional(number, 1)
+    attach_deny_insecure_transport_policy = optional(bool, false)
     kms = optional(object({
       kms_key_arn    = optional(string, null)
       create_kms_key = optional(bool, false)
@@ -34,8 +35,9 @@ variable "osquery_carve_s3_bucket" {
   })
   description = "Configuration for the osquery carve S3 bucket, including optional customer-managed KMS settings."
   default = {
-    name         = "fleet-osquery-results-archive"
-    expires_days = 1
+    name                           = "fleet-osquery-results-archive"
+    expires_days                   = 1
+    attach_deny_insecure_transport_policy = false
     kms = {
       kms_key_arn        = null
       create_kms_key     = false

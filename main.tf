@@ -160,9 +160,10 @@ module "vpc" {
   create_flow_log_cloudwatch_log_group      = var.vpc.create_flow_log_cloudwatch_log_group
   create_flow_log_cloudwatch_iam_role       = var.vpc.create_flow_log_cloudwatch_iam_role
   flow_log_max_aggregation_interval         = var.vpc.flow_log_max_aggregation_interval
-  flow_log_cloudwatch_log_group_name_prefix = var.vpc.flow_log_cloudwatch_log_group_name_prefix
-  flow_log_cloudwatch_log_group_name_suffix = var.vpc.flow_log_cloudwatch_log_group_name_suffix
-  flow_log_cloudwatch_log_group_kms_key_id  = local.vpc_flow_log_cloudwatch_log_group_kms_key_arn
+  flow_log_cloudwatch_log_group_name_prefix        = var.vpc.flow_log_cloudwatch_log_group_name_prefix
+  flow_log_cloudwatch_log_group_name_suffix        = var.vpc.flow_log_cloudwatch_log_group_name_suffix
+  flow_log_cloudwatch_log_group_retention_in_days  = var.vpc.flow_log_cloudwatch_log_group_retention_in_days
+  flow_log_cloudwatch_log_group_kms_key_id         = local.vpc_flow_log_cloudwatch_log_group_kms_key_arn
   vpc_flow_log_tags                         = var.vpc.vpc_flow_log_tags
   enable_dns_hostnames                      = var.vpc.enable_dns_hostnames
   enable_dns_support                        = var.vpc.enable_dns_support

@@ -1,27 +1,5 @@
-data "aws_iam_policy_document" "software_installers_bucket" {
-  statement {
-    actions   = ["s3:GetObject"]
-    resources = ["${data.aws_s3_bucket.software_installers.arn}/*"]
-    effect    = "Allow"
-    principals {
-      type        = "Service"
-      identifiers = ["cloudfront.amazonaws.com"]
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "AWS:SourceArn"
-      values   = [module.cloudfront_software_installers.cloudfront_distribution_arn]
-    }
-  }
-}
-
 data "aws_s3_bucket" "software_installers" {
   bucket = var.s3_bucket
-}
-
-resource "aws_s3_bucket_policy" "software_installers" {
-  bucket = data.aws_s3_bucket.software_installers.bucket
-  policy = data.aws_iam_policy_document.software_installers_bucket.json
 }
 
 data "aws_iam_policy_document" "software_installers_secret" {

@@ -808,3 +808,53 @@ resource "aws_s3_bucket_public_access_block" "software_installers" {
   ignore_public_acls      = true
   restrict_public_buckets = true
 }
+
+data "aws_iam_policy_document" "software_installers_bucket_policy" {
+  count = var.fleet_config.software_installers.create_bucket == true && var.fleet_config.software_installers.attach_deny_insecure_transport_policy == true ? 1 : 0
+
+  statement {
+    sid     = "DenyNonHTTPS"
+    effect  = "Deny"
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.software_installers[0].arn,
+      "${aws_s3_bucket.software_installers[0].arn}/*",
+    ]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.fleet_config.software_installers.cloudfront_distribution_arn != null ? [1] : []
+    content {
+      sid     = "AllowCloudFrontServicePrincipalReadOnly"
+      effect  = "Allow"
+      actions = ["s3:GetObject"]
+      resources = [
+        "${aws_s3_bucket.software_installers[0].arn}/*",
+      ]
+      principals {
+        type        = "Service"
+        identifiers = ["cloudfront.amazonaws.com"]
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "AWS:SourceArn"
+        values   = [var.fleet_config.software_installers.cloudfront_distribution_arn]
+      }
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "software_installers" {
+  count  = var.fleet_config.software_installers.create_bucket == true && var.fleet_config.software_installers.attach_deny_insecure_transport_policy == true ? 1 : 0
+  bucket = aws_s3_bucket.software_installers[0].id
+  policy = data.aws_iam_policy_document.software_installers_bucket_policy[0].json
+}
