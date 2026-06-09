@@ -51,7 +51,7 @@ data "aws_route53_zone" "main" {
 }
 
 module "firehose-logging" {
-  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-firehose?depth=1&ref=tf-mod-addon-logging-destination-firehose-v1.2.6"
+  source = "github.com/fleetdm/fleet-terraform//addons/logging-destination-firehose?depth=1&ref=tf-mod-addon-logging-destination-firehose-v1.3.0"
   osquery_results_s3_bucket = {
     name = "${random_pet.main.id}-results"
   }
@@ -92,7 +92,7 @@ module "vpc" {
 }
 
 module "byo-vpc" {
-  source = "github.com/fleetdm/fleet-terraform//byo-vpc?depth=1&ref=tf-mod-byo-vpc-v1.30.0"
+  source = "github.com/fleetdm/fleet-terraform//byo-vpc?depth=1&ref=tf-mod-byo-vpc-v1.31.0"
   vpc_config = {
     vpc_id = module.vpc.vpc_id
     networking = {

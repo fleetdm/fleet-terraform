@@ -213,7 +213,7 @@ Edit `.header.md`, run `terraform init`, then run `terraform-docs markdown . > R
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.39.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 6.37.0 |
 
 ## Modules
 
