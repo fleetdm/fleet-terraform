@@ -46,8 +46,8 @@ resource "aws_ecs_task_definition" "osquery_perf" {
         essential   = true
         ulimits = [
           {
-            softLimit = 9999,
-            hardLimit = 9999,
+            softLimit = 65535,
+            hardLimit = 65535,
             name      = "nofile"
           }
         ]
