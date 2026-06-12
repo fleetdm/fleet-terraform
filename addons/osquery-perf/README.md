@@ -14,7 +14,7 @@ Below is an example implementation of the module:
 
 ```
 module "osquery_perf" {
-  source                     = "github.com/fleetdm/fleet-terraform//addons/osquery-perf?ref=tf-mod-addon-osquery-perf-v1.2.1"
+  source                     = "github.com/fleetdm/fleet-terraform//addons/osquery-perf?ref=tf-mod-addon-osquery-perf-v1.2.2"
   customer_prefix            = "fleet"
   ecs_cluster                = module.main.byo-vpc.byo-db.byo-ecs.service.cluster
   subnets                    = module.main.byo-vpc.byo-db.byo-ecs.service.network_configuration[0].subnets
@@ -41,7 +41,7 @@ No requirements.
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.50.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | n/a |
 
 ## Modules
 
