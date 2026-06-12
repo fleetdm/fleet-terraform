@@ -121,6 +121,7 @@ variable "fleet_config" {
   description = "Configuration for the Fleet application deployment."
   type = object({
     installers_bucket_name = string
+    carves_bucket_name     = string
     image_tag              = string
     fleet_cpu              = string
     fleet_memory           = string
@@ -139,6 +140,7 @@ variable "fleet_config" {
   default = {
     image_tag              = "fleetdm/fleet:v4.86.1"
     installers_bucket_name = "" # Bucket names must be globally unique
+    carves_bucket_name     = "" # Bucket names must be globally unique
     fleet_cpu              = "1000m"
     fleet_memory           = "4096Mi"
     debug_logging          = false
