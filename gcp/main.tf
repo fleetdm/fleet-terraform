@@ -43,10 +43,30 @@ module "project_factory" {
     "monitoring.googleapis.com",
     "memorystore.googleapis.com",
     "serviceconsumermanagement.googleapis.com",
-    "networkconnectivity.googleapis.com"
+    "networkconnectivity.googleapis.com",
+    "pubsub.googleapis.com",
+    "bigquery.googleapis.com"
   ]
 
   labels = var.labels
+}
+
+module "fleet_pubsub" {
+  source         = "../addons/gcp/fleet-pubsub"
+  project_id     = module.project_factory.project_id
+  fleet_sa_email = module.fleet.fleet_service_account_email
+}
+
+module "pubsub_to_bigquery" {
+  count  = var.pubsub_to_bigquery_image != null ? 1 : 0
+  source = "../addons/gcp/pubsub-to-bigquery"
+
+  project_id        = module.project_factory.project_id
+  region            = var.region
+  image             = var.pubsub_to_bigquery_image
+  result_topic_name = module.fleet_pubsub.result_topic_name
+  status_topic_name = module.fleet_pubsub.status_topic_name
+  audit_topic_name  = module.fleet_pubsub.audit_topic_name
 }
 
 module "fleet" {
@@ -55,7 +75,12 @@ module "fleet" {
   dns_record_name = var.dns_record_name
   dns_zone_name   = var.dns_zone_name
   vpc_config      = var.vpc_config
-  fleet_config    = var.fleet_config
+  fleet_config    = merge(var.fleet_config, {
+    extra_env_vars = merge(
+      try(var.fleet_config.extra_env_vars, {}),
+      module.fleet_pubsub.fleet_env_vars
+    )
+  })
   cache_config    = var.cache_config
   database_config = var.database_config
   region          = var.region
