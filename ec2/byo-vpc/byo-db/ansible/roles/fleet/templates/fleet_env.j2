@@ -1,0 +1,3 @@
+{% for item in fleet_env_map | dictsort %}
+{{ item.0 }}={{ item.1 | tojson }}
+{% endfor %}
