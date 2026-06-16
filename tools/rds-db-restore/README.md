@@ -4,7 +4,7 @@
 
 This script is designed for self-hosted Fleet deployments provisioned via `fleet-terraform`.
 
-> **Note:** Fleet built and tested `db-restore.sh` against the [`fleet-terraform/example`](https://github.com/fleetdm/fleet-terraform/tree/main/example) (Standard) deployment layout. If your Fleet deployment is not based on `fleet-terraform/example`, contact Fleet customer support before running this script.
+> **Note:** Fleet built and tested `db-restore.sh` against the [`fleet-terraform/example`](https://github.com/fleetdm/fleet-terraform/tree/main/example) (Standard) deployment layout. If your Fleet deployment is not based on `fleet-terraform/example`, this script will not support your restore.
 
 ## Prerequisites
 
