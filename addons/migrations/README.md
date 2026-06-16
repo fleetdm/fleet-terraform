@@ -31,6 +31,10 @@ module "fleet_migration" {
   # assume_role_arn          = "arn:aws:iam::123456789012:role/MyMigrationRole"
   # assume_role_session_name = "TerraformFleetMigration"
 
+  # Optional: Maximum time in seconds to wait for the migration task (default 600).
+  # Increase to 1800+ for large production databases with heavy schema migrations.
+  # timeout_seconds          = 600
+
   # Ensure this module depends on the resource that creates/updates the task definition revision
   # For example:
   # depends_on = [aws_ecs_task_definition.fleet_app]
@@ -65,8 +69,8 @@ No requirements.
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.17.0 |
-| <a name="provider_null"></a> [null](#provider\_null) | 3.2.4 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | n/a |
+| <a name="provider_null"></a> [null](#provider\_null) | n/a |
 
 ## Modules
 
@@ -94,6 +98,7 @@ No modules.
 | <a name="input_subnets"></a> [subnets](#input\_subnets) | n/a | `list(string)` | n/a | yes |
 | <a name="input_task_definition"></a> [task\_definition](#input\_task\_definition) | n/a | `string` | n/a | yes |
 | <a name="input_task_definition_revision"></a> [task\_definition\_revision](#input\_task\_definition\_revision) | n/a | `number` | n/a | yes |
+| <a name="input_timeout_seconds"></a> [timeout\_seconds](#input\_timeout\_seconds) | Maximum time in seconds to wait for the migration ECS task to complete. Default 600 (10 min). Increase to 1800+ for large production databases. | `number` | `600` | no |
 | <a name="input_vuln_service"></a> [vuln\_service](#input\_vuln\_service) | n/a | `string` | `""` | no |
 
 ## Outputs

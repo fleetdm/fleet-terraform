@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+export AWS_PAGER=""
 
 function scale_services(){
 	UP_DOWN="${1:?}"
@@ -81,8 +82,27 @@ fi
 # Call aws ecs run-task
 TASK_ARN="$(aws ecs run-task --region "${REGION:?}" --cluster "${ECS_CLUSTER:?}" --task-definition "${TASK_DEFINITION:?}":"${TASK_DEFINITION_REVISION:?}" --launch-type FARGATE --network-configuration "awsvpcConfiguration={subnets="${SUBNETS:?}",securityGroups="${SECURITY_GROUPS:?}"}" --query 'tasks[].taskArn' --overrides '{"containerOverrides": [{"name": "fleet", "command": ["fleet", "prepare", "db"]}]}' --output text | rev | cut -d'/' -f1 | rev)"
 
-# Wait for completion
-aws ecs wait tasks-stopped --region "${REGION:?}" --cluster="${ECS_CLUSTER:?}" --tasks="${TASK_ARN:?}"
+# Wait for completion with configurable timeout
+ELAPSED=0
+while [ "$ELAPSED" -lt "${TIMEOUT_SECONDS:-600}" ]; do
+    sleep 30
+    ELAPSED=$((ELAPSED + 30))
+    TASK_STATUS=$(aws ecs describe-tasks --region "${REGION:?}" --cluster "${ECS_CLUSTER:?}" --tasks "${TASK_ARN:?}" --query "tasks[0].lastStatus" --output text)
+    if [ "$TASK_STATUS" = "STOPPED" ]; then
+        break
+    fi
+    echo "Migration task status: ${TASK_STATUS} (elapsed: ${ELAPSED}s / ${TIMEOUT_SECONDS:-600}s)" >&2
+done
+
+if [ "$TASK_STATUS" != "STOPPED" ]; then
+    echo "ERROR: Migration task timed out after ${TIMEOUT_SECONDS:-600} seconds." >&2
+    echo "Task ARN: ${TASK_ARN}" >&2
+    echo "Task Status: ${TASK_STATUS}" >&2
+    echo "Check the task manually:" >&2
+    echo "  aws ecs describe-tasks --region ${REGION} --cluster ${ECS_CLUSTER} --tasks ${TASK_ARN}" >&2
+    echo "If the task completed successfully, re-running terraform apply will detect this and continue." >&2
+    exit 1
+fi
 
 scale_services up "${ECS_SERVICE:?}" true "${DESIRED_COUNT}"
 
