@@ -80,6 +80,98 @@ variable "log_monitoring" {
   default = {}
 }
 
+variable "alert_thresholds" {
+  description = "CloudWatch alarm threshold overrides. Each alarm type is optional; omitted fields use the defaults below."
+  type = object({
+    rds_cpu = optional(object({
+      threshold          = number
+      period             = number
+      evaluation_periods = number
+      }), {
+      threshold          = 80
+      period             = 300
+      evaluation_periods = 1
+    })
+    redis_cpu = optional(object({
+      threshold          = number
+      period             = number
+      evaluation_periods = number
+      }), {
+      threshold          = 70
+      period             = 300
+      evaluation_periods = 1
+    })
+    redis_cpu_engine = optional(object({
+      threshold          = number
+      period             = number
+      evaluation_periods = number
+      }), {
+      threshold          = 25
+      period             = 300
+      evaluation_periods = 1
+    })
+    redis_memory = optional(object({
+      threshold          = number
+      period             = number
+      evaluation_periods = number
+      }), {
+      threshold          = 80
+      period             = 300
+      evaluation_periods = 1
+    })
+    acm_cert_expiry = optional(object({
+      threshold          = number
+      period             = number
+      evaluation_periods = number
+      }), {
+      threshold          = 30
+      period             = 86400
+      evaluation_periods = 1
+    })
+    alb_healthyhosts = optional(object({
+      threshold          = number
+      period             = number
+      evaluation_periods = number
+      }), {
+      threshold          = 1
+      period             = 60
+      evaluation_periods = 1
+    })
+  })
+  default = {
+    rds_cpu = {
+      threshold          = 80
+      period             = 300
+      evaluation_periods = 1
+    }
+    redis_cpu = {
+      threshold          = 70
+      period             = 300
+      evaluation_periods = 1
+    }
+    redis_cpu_engine = {
+      threshold          = 25
+      period             = 300
+      evaluation_periods = 1
+    }
+    redis_memory = {
+      threshold          = 80
+      period             = 300
+      evaluation_periods = 1
+    }
+    acm_cert_expiry = {
+      threshold          = 30
+      period             = 86400
+      evaluation_periods = 1
+    }
+    alb_healthyhosts = {
+      threshold          = 1
+      period             = 60
+      evaluation_periods = 1
+    }
+  }
+}
+
 variable "cron_monitoring" {
   type = object({
     mysql_host                        = string

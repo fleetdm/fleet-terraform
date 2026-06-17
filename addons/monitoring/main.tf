@@ -3,12 +3,12 @@ resource "aws_cloudwatch_metric_alarm" "cpu_utilization_too_high" {
   for_each            = toset(var.mysql_cluster_members)
   alarm_name          = "rds_cpu_utilization_too_high-${var.customer_prefix}-${each.key}"
   comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = "1"
+  evaluation_periods  = tostring(var.alert_thresholds.rds_cpu.evaluation_periods)
   metric_name         = "CPUUtilization"
   namespace           = "AWS/RDS"
-  period              = "300"
+  period              = tostring(var.alert_thresholds.rds_cpu.period)
   statistic           = "Average"
-  threshold           = 80
+  threshold           = var.alert_thresholds.rds_cpu.threshold
   alarm_description   = "Average database CPU utilization over last 5 minutes too high"
   alarm_actions       = lookup(var.sns_topic_arns_map, "rds_cpu_utilization_too_high", lookup(var.sns_topic_arns_map, "rds_cpu_untilizaton_too_high", var.default_sns_topic_arns))
   ok_actions          = lookup(var.sns_topic_arns_map, "rds_cpu_utilization_too_high", lookup(var.sns_topic_arns_map, "rds_cpu_untilizaton_too_high", var.default_sns_topic_arns))
@@ -154,12 +154,12 @@ resource "aws_cloudwatch_metric_alarm" "alb_healthyhosts" {
   for_each            = local.alb_map
   alarm_name          = "backend-healthyhosts-${var.customer_prefix}-${each.value.name}"
   comparison_operator = "LessThanThreshold"
-  evaluation_periods  = "1"
+  evaluation_periods  = tostring(var.alert_thresholds.alb_healthyhosts.evaluation_periods)
   metric_name         = "HealthyHostCount"
   namespace           = "AWS/ApplicationELB"
-  period              = "60"
+  period              = tostring(var.alert_thresholds.alb_healthyhosts.period)
   statistic           = "Minimum"
-  threshold           = each.value.min_containers
+  threshold           = max(each.value.min_containers, var.alert_thresholds.alb_healthyhosts.threshold)
   alarm_description   = "This alarm indicates the number of Healthy Fleet hosts is lower than expected. Please investigate the load balancer \"${each.value.name}\" or the target group \"${each.value.target_group_name}\" and the fleet backend service \"${each.value.ecs_service_name}\""
   actions_enabled     = "true"
   alarm_actions       = lookup(var.sns_topic_arns_map, "alb_healthyhosts", lookup(var.sns_topic_arns_map, "alb_helthyhosts", var.default_sns_topic_arns))
@@ -240,15 +240,15 @@ resource "aws_cloudwatch_metric_alarm" "redis_cpu" {
   alarm_name          = "redis-cpu-utilization-${each.key}-${var.customer_prefix}"
   alarm_description   = "Redis cluster CPU utilization node ${each.key}"
   comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = "1"
+  evaluation_periods  = tostring(var.alert_thresholds.redis_cpu.evaluation_periods)
   metric_name         = "CPUUtilization"
   namespace           = "AWS/ElastiCache"
-  period              = "300"
+  period              = tostring(var.alert_thresholds.redis_cpu.period)
   statistic           = "Average"
   alarm_actions       = lookup(var.sns_topic_arns_map, "redis_cpu_utilization", var.default_sns_topic_arns)
   ok_actions          = lookup(var.sns_topic_arns_map, "redis_cpu_utilization", var.default_sns_topic_arns)
 
-  threshold = "70"
+  threshold = tostring(var.alert_thresholds.redis_cpu.threshold)
 
   dimensions = {
     CacheClusterId = each.key
@@ -261,15 +261,15 @@ resource "aws_cloudwatch_metric_alarm" "redis_cpu_engine_utilization" {
   alarm_name          = "redis-cpu-engine-utilization-${each.key}-${var.customer_prefix}"
   alarm_description   = "Redis cluster CPU Engine utilization node ${each.key}"
   comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = "1"
+  evaluation_periods  = tostring(var.alert_thresholds.redis_cpu_engine.evaluation_periods)
   metric_name         = "EngineCPUUtilization"
   namespace           = "AWS/ElastiCache"
-  period              = "300"
+  period              = tostring(var.alert_thresholds.redis_cpu_engine.period)
   statistic           = "Average"
   alarm_actions       = lookup(var.sns_topic_arns_map, "redis_cpu_engine_utilization", var.default_sns_topic_arns)
   ok_actions          = lookup(var.sns_topic_arns_map, "redis_cpu_engine_utilization", var.default_sns_topic_arns)
 
-  threshold = "25"
+  threshold = tostring(var.alert_thresholds.redis_cpu_engine.threshold)
 
   dimensions = {
     CacheClusterId = each.key
@@ -282,15 +282,15 @@ resource "aws_cloudwatch_metric_alarm" "redis-database-memory-percentage" {
   alarm_name          = "redis-database-memory-percentage-${each.key}-${var.customer_prefix}"
   alarm_description   = "Percentage of the memory available for the cluster that is in use. This is calculated using used_memory/maxmemory."
   comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = "1"
+  evaluation_periods  = tostring(var.alert_thresholds.redis_memory.evaluation_periods)
   metric_name         = "DatabaseMemoryUsagePercentage"
   namespace           = "AWS/ElastiCache"
-  period              = "300"
+  period              = tostring(var.alert_thresholds.redis_memory.period)
   statistic           = "Average"
   alarm_actions       = lookup(var.sns_topic_arns_map, "redis_database_memory_percentage", var.default_sns_topic_arns)
   ok_actions          = lookup(var.sns_topic_arns_map, "redis_database_memory_percentage", var.default_sns_topic_arns)
 
-  threshold = "80"
+  threshold = tostring(var.alert_thresholds.redis_memory.threshold)
 
   dimensions = {
     CacheClusterId = each.key
@@ -372,9 +372,9 @@ resource "aws_cloudwatch_metric_alarm" "acm_certificate_expired" {
   count               = var.acm_certificate_arn == null ? 0 : 1
   alarm_name          = "acm-cert-expiry-${var.customer_prefix}"
   comparison_operator = "LessThanThreshold"
-  evaluation_periods  = "1"
-  period              = "86400" // 1 day in seconds
-  threshold           = 30      // days
+  evaluation_periods  = tostring(var.alert_thresholds.acm_cert_expiry.evaluation_periods)
+  period              = tostring(var.alert_thresholds.acm_cert_expiry.period)
+  threshold           = var.alert_thresholds.acm_cert_expiry.threshold
   statistic           = "Average"
   namespace           = "AWS/CertificateManager"
   metric_name         = "DaysToExpiry"
