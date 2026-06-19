@@ -146,6 +146,36 @@ module "monitoring" {
 }
 ```
 
+# Configurable Alert Thresholds
+
+All CloudWatch alarm thresholds, periods, and evaluation periods can be overridden via the `alert_thresholds` object. Each alarm type is optional — omit any field to use the module default.
+
+| Field | Alarm | Default threshold | Default period | Default evaluation periods |
+|---|---|---|---|---|
+| `rds_cpu` | RDS CPU Utilization | 80 | 300s | 1 |
+| `redis_cpu` | Redis CPU Utilization | 70 | 300s | 1 |
+| `redis_cpu_engine` | Redis Engine CPU Utilization | 25 | 300s | 1 |
+| `redis_memory` | Redis Database Memory % | 80 | 300s | 1 |
+| `acm_cert_expiry` | ACM Certificate Expiry | 30 days | 86400s | 1 |
+| `alb_healthyhosts` | ALB Healthy Host Count | 1 | 60s | 1 |
+
+Example — raise the RDS CPU threshold and require 3 consecutive 5-minute periods before firing (15 minutes total):
+
+```hcl
+module "monitoring" {
+  # ...
+  alert_thresholds = {
+    rds_cpu = {
+      threshold          = 90
+      period             = 300
+      evaluation_periods = 3
+    }
+  }
+}
+```
+
+Anomaly detection alarms (`redis_current_connections`, `redis_replication_lag`, `target_response_time`) are not included — they use CloudWatch anomaly detection bands and do not have a simple threshold/period/evaluation\_periods structure.
+
 # SNS topic ARNs map
 
 Valid targets for `sns_topic_arns_map`:
@@ -196,14 +226,14 @@ Deprecated (typo) aliases are still accepted for backwards compatibility:
 ## Requirements
 
 | Name | Version |
-|------|---------|
+| ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.12.0 |
 | <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 6.37.0 |
 
 ## Providers
 
 | Name | Version |
-|------|---------|
+| ---- | ------- |
 | <a name="provider_archive"></a> [archive](#provider\_archive) | 2.7.1 |
 | <a name="provider_aws"></a> [aws](#provider\_aws) | 6.39.0 |
 | <a name="provider_null"></a> [null](#provider\_null) | 3.2.4 |
@@ -215,7 +245,7 @@ No modules.
 ## Resources
 
 | Name | Type |
-|------|------|
+| ---- | ---- |
 | [aws_cloudwatch_event_rule.cron_monitoring_lambda](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_event_rule) | resource |
 | [aws_cloudwatch_event_target.cron_monitoring_lambda](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_event_target) | resource |
 | [aws_cloudwatch_log_group.cron_monitoring_lambda](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
@@ -255,9 +285,10 @@ No modules.
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
+| ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_acm_certificate_arn"></a> [acm\_certificate\_arn](#input\_acm\_certificate\_arn) | n/a | `string` | `null` | no |
 | <a name="input_albs"></a> [albs](#input\_albs) | n/a | <pre>list(object({<br/>    name                    = string<br/>    arn_suffix              = string<br/>    target_group_name       = string<br/>    target_group_arn_suffix = string<br/>    min_containers          = optional(string, 1)<br/>    ecs_service_name        = string<br/>    alert_thresholds = optional(<br/>      object({<br/>        HTTPCode_ELB_5XX_Count = object({<br/>          period    = number<br/>          threshold = number<br/>        })<br/>        HTTPCode_Target_5XX_Count = object({<br/>          period    = number<br/>          threshold = number<br/>        })<br/>      }),<br/>      {<br/>        HTTPCode_ELB_5XX_Count = {<br/>          period    = 120<br/>          threshold = 0<br/>        },<br/>        HTTPCode_Target_5XX_Count = {<br/>          period    = 120<br/>          threshold = 0<br/>        }<br/>      }<br/>    )<br/>  }))</pre> | `[]` | no |
+| <a name="input_alert_thresholds"></a> [alert\_thresholds](#input\_alert\_thresholds) | CloudWatch alarm threshold overrides. Each alarm type is optional; omitted fields use the defaults below. | <pre>object({<br/>    rds_cpu = optional(object({<br/>      threshold          = number<br/>      period             = number<br/>      evaluation_periods = number<br/>      }), {<br/>      threshold          = 80<br/>      period             = 300<br/>      evaluation_periods = 1<br/>    })<br/>    redis_cpu = optional(object({<br/>      threshold          = number<br/>      period             = number<br/>      evaluation_periods = number<br/>      }), {<br/>      threshold          = 70<br/>      period             = 300<br/>      evaluation_periods = 1<br/>    })<br/>    redis_cpu_engine = optional(object({<br/>      threshold          = number<br/>      period             = number<br/>      evaluation_periods = number<br/>      }), {<br/>      threshold          = 25<br/>      period             = 300<br/>      evaluation_periods = 1<br/>    })<br/>    redis_memory = optional(object({<br/>      threshold          = number<br/>      period             = number<br/>      evaluation_periods = number<br/>      }), {<br/>      threshold          = 80<br/>      period             = 300<br/>      evaluation_periods = 1<br/>    })<br/>    acm_cert_expiry = optional(object({<br/>      threshold          = number<br/>      period             = number<br/>      evaluation_periods = number<br/>      }), {<br/>      threshold          = 30<br/>      period             = 86400<br/>      evaluation_periods = 1<br/>    })<br/>    alb_healthyhosts = optional(object({<br/>      threshold          = number<br/>      period             = number<br/>      evaluation_periods = number<br/>      }), {<br/>      threshold          = 1<br/>      period             = 60<br/>      evaluation_periods = 1<br/>    })<br/>  })</pre> | <pre>{<br/>  "acm_cert_expiry": {<br/>    "evaluation_periods": 1,<br/>    "period": 86400,<br/>    "threshold": 30<br/>  },<br/>  "alb_healthyhosts": {<br/>    "evaluation_periods": 1,<br/>    "period": 60,<br/>    "threshold": 1<br/>  },<br/>  "rds_cpu": {<br/>    "evaluation_periods": 1,<br/>    "period": 300,<br/>    "threshold": 80<br/>  },<br/>  "redis_cpu": {<br/>    "evaluation_periods": 1,<br/>    "period": 300,<br/>    "threshold": 70<br/>  },<br/>  "redis_cpu_engine": {<br/>    "evaluation_periods": 1,<br/>    "period": 300,<br/>    "threshold": 25<br/>  },<br/>  "redis_memory": {<br/>    "evaluation_periods": 1,<br/>    "period": 300,<br/>    "threshold": 80<br/>  }<br/>}</pre> | no |
 | <a name="input_cron_monitoring"></a> [cron\_monitoring](#input\_cron\_monitoring) | n/a | <pre>object({<br/>    mysql_host                        = string<br/>    mysql_database                    = string<br/>    mysql_user                        = string<br/>    mysql_password_secret_name        = string<br/>    mysql_password_secret_kms_key_arn = optional(string, null)<br/>    mysql_tls_config                  = optional(string, "true")<br/>    vpc_id                            = string<br/>    subnet_ids                        = list(string)<br/>    rds_security_group_id             = string<br/>    delay_tolerance                   = string<br/>    run_interval                      = string<br/>    log_retention_in_days             = optional(number, 7)<br/>    ignore_list                       = optional(list(string), [])<br/>    lambda_kms = optional(object({<br/>      cmk_enabled = optional(bool, false)<br/>      kms_key_arn = optional(string, null)<br/>      kms_alias   = optional(string, "fleet-cron-monitoring")<br/>      kms_base_policy = optional(list(object({<br/>        sid    = string<br/>        effect = string<br/>        principals = object({<br/>          type        = string<br/>          identifiers = list(string)<br/>        })<br/>        actions   = list(string)<br/>        resources = list(string)<br/>        conditions = optional(list(object({<br/>          test     = string<br/>          variable = string<br/>          values   = list(string)<br/>        })), [])<br/>      })), null)<br/>      extra_kms_policies = optional(list(any), [])<br/>      }), {<br/>      cmk_enabled        = false<br/>      kms_key_arn        = null<br/>      kms_alias          = "fleet-cron-monitoring"<br/>      kms_base_policy    = null<br/>      extra_kms_policies = []<br/>    })<br/>  })</pre> | `null` | no |
 | <a name="input_customer_prefix"></a> [customer\_prefix](#input\_customer\_prefix) | n/a | `string` | `"fleet"` | no |
 | <a name="input_default_sns_topic_arns"></a> [default\_sns\_topic\_arns](#input\_default\_sns\_topic\_arns) | n/a | `list(string)` | `[]` | no |
@@ -270,6 +301,6 @@ No modules.
 ## Outputs
 
 | Name | Description |
-|------|-------------|
+| ---- | ----------- |
 | <a name="output_cron_monitoring_lambda_arn"></a> [cron\_monitoring\_lambda\_arn](#output\_cron\_monitoring\_lambda\_arn) | n/a |
 | <a name="output_cron_monitoring_lambda_role_arn"></a> [cron\_monitoring\_lambda\_role\_arn](#output\_cron\_monitoring\_lambda\_role\_arn) | n/a |
