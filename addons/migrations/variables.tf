@@ -58,3 +58,9 @@ variable "assume_role_session_name" {
   default     = ""
 }
 
+variable "timeout_seconds" {
+  description = "Maximum time in seconds to wait for the migration ECS task to complete. Default 600 (10 min). Increase to 1800+ for large production databases."
+  type        = number
+  default     = 600
+}
+
