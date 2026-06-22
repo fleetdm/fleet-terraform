@@ -167,7 +167,7 @@ module "byo-vpc" {
 }
 
 module "migrations" {
-  source                   = "github.com/fleetdm/fleet-terraform/addons/migrations?depth=1&ref=tf-mod-addon-migrations-v2.2.2"
+  source                   = "github.com/fleetdm/fleet-terraform/addons/migrations?depth=1&ref=tf-mod-addon-migrations-v2.3.0"
   ecs_cluster              = module.byo-vpc.byo-db.byo-ecs.service.cluster
   task_definition          = module.byo-vpc.byo-db.byo-ecs.task_definition.family
   task_definition_revision = module.byo-vpc.byo-db.byo-ecs.task_definition.revision
