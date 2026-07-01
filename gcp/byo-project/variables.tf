@@ -88,6 +88,24 @@ variable "vpc_config" {
   }
 
 }
+variable "server_tls_policy" {
+  description = "Self-link of a ServerTLSPolicy to attach to the Fleet HTTPS proxy for mTLS. Set to the okta-conditional-access addon's server_tls_policy output to enable Okta conditional access."
+  type        = string
+  default     = null
+}
+
+variable "backend_custom_request_headers" {
+  description = "Custom request headers to add to the default Fleet backend service. Used to forward client cert info (e.g. X-Client-Cert-Serial) when mTLS is enabled."
+  type        = list(string)
+  default     = []
+}
+
+variable "okta_subdomain" {
+  description = "Fully-qualified domain name for the Okta mTLS subdomain (e.g. 'okta.fleet.example.com'). When set, provisions a dedicated global IP, managed SSL cert, HTTPS proxy with the server_tls_policy attached, forwarding rule, DNS A record, and URL map redirect rule for the Okta SSO path."
+  type        = string
+  default     = null
+}
+
 variable "fleet_config" {
   type = object({
     installers_bucket_name = string
