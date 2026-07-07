@@ -1,56 +1,123 @@
-// Customer keys are not supported in our Fleet Terraforms at the moment. We will evaluate the
-// possibility of providing this capability in the future. 
-// No versioning on this bucket is by design.
-// Bucket logging is not supported in our Fleet Terraforms at the moment. It can be enabled by the
-// organizations deploying Fleet, and we will evaluate the possibility of providing this capability
-// in the future.
-
 data "aws_region" "current" {}
+data "aws_partition" "current" {}
+data "aws_caller_identity" "current" {}
 
-resource "aws_s3_bucket" "osquery-results" { #tfsec:ignore:aws-s3-encryption-customer-key:exp:2022-07-01  #tfsec:ignore:aws-s3-enable-versioning #tfsec:ignore:aws-s3-enable-bucket-logging:exp:2022-06-15
-  bucket        = var.osquery_results_s3_bucket.name
-  force_destroy = true
-}
-
-resource "aws_s3_bucket_lifecycle_configuration" "osquery-results" {
-  bucket = aws_s3_bucket.osquery-results.bucket
-  rule {
-    filter {}
-    status = "Enabled"
-    id     = "expire"
-    expiration {
-      days = var.osquery_results_s3_bucket.expires_days
-    }
+locals {
+  # Resolve per-destination bucket names: use explicit bucket_name if set,
+  # otherwise fall back to the default pattern.
+  resolved_bucket_names = {
+    for key, cfg in var.log_destinations : key => (
+      cfg.bucket_name != null ? cfg.bucket_name : "${var.s3_bucket_name}-${key}"
+    )
   }
-}
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "osquery-results" {
-  bucket = aws_s3_bucket.osquery-results.bucket
-  rule {
-    blocked_encryption_types = ["NONE"]
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "aws:kms"
-    }
+  # Resolve per-destination lifecycle expiration: use explicit value if set,
+  # otherwise fall back to the global default.
+  resolved_lifecycle_days = {
+    for key, cfg in var.log_destinations : key => (
+      cfg.lifecycle_expires_days != null ? cfg.lifecycle_expires_days : var.s3_lifecycle_expires_days
+    )
   }
+
+  # Set of bucket keys that have lifecycle expiration enabled.
+  lifecycle_bucket_keys = toset([
+    for key, days in local.resolved_lifecycle_days : local.bucket_key_for[key] if days > 0
+  ])
+
+  # Per-bucket-key lifecycle days (max of all destinations sharing that bucket).
+  lifecycle_days_by_bucket = {
+    for bk in local.lifecycle_bucket_keys : bk => max([
+      for key, days in local.resolved_lifecycle_days : days if local.bucket_key_for[key] == bk
+    ]...)
+  }
+  # In legacy mode (default), each log type gets its own bucket.
+  # In consolidated mode, all share one bucket.
+  bucket_count = var.consolidate_to_single_bucket ? 1 : length(var.log_destinations)
+
+  # Bucket names: use resolved names (explicit or default pattern)
+  bucket_names = var.consolidate_to_single_bucket ? {
+    _all = var.s3_bucket_name
+  } : local.resolved_bucket_names
+
+  # Map each log destination key to its bucket key
+  # In consolidated mode, all map to "_all"
+  bucket_key_for = {
+    for key in keys(var.log_destinations) : key => (var.consolidate_to_single_bucket ? "_all" : key)
+  }
+
+  # Unique set of bucket keys to iterate over
+  bucket_keys = toset(values(local.bucket_key_for))
+
+  # Bucket name lookup by bucket key
+  bucket_name_by_key = {
+    for bk in local.bucket_keys : bk => local.bucket_names[bk]
+  }
+
+  # KMS key ARN to use
+  kms_key_arn = var.server_side_encryption_enabled ? (
+    length(var.kms_key_arn) > 0 ? var.kms_key_arn : aws_kms_key.firehose_key[0].arn
+  ) : ""
 }
 
-resource "aws_s3_bucket_public_access_block" "osquery-results" {
-  bucket                  = aws_s3_bucket.osquery-results.id
+# ── S3 Buckets ────────────────────────────────────────────────────────────────
+
+resource "aws_s3_bucket" "destination" {
+  for_each = local.bucket_keys #tfsec:ignore:aws-s3-enable-versioning #tfsec:ignore:aws-s3-enable-bucket-logging:exp:2022-06-15
+
+  bucket        = local.bucket_name_by_key[each.key]
+  force_destroy = var.s3_force_destroy
+}
+
+resource "aws_s3_bucket_public_access_block" "destination" {
+  for_each = local.bucket_keys
+
+  bucket                  = aws_s3_bucket.destination[each.key].id
   block_public_acls       = true
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
 }
 
-data "aws_iam_policy_document" "deny_insecure_transport_osquery_results" {
+resource "aws_s3_bucket_server_side_encryption_configuration" "destination" {
+  for_each = var.server_side_encryption_enabled ? local.bucket_keys : toset([])
+
+  bucket = aws_s3_bucket.destination[each.key].id
+  rule {
+    blocked_encryption_types = ["NONE"]
+    bucket_key_enabled       = true
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = local.kms_key_arn
+    }
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "destination" {
+  for_each = local.lifecycle_bucket_keys
+
+  bucket = aws_s3_bucket.destination[each.key].bucket
+  rule {
+    filter {}
+    status = "Enabled"
+    id     = "expire"
+    expiration {
+      days = local.lifecycle_days_by_bucket[each.key]
+    }
+  }
+}
+
+# ── Deny Insecure Transport Bucket Policies ──────────────────────────────────
+
+data "aws_iam_policy_document" "deny_insecure_transport" {
+  for_each = local.bucket_keys
 
   statement {
     sid     = "DenyNonHTTPS"
     effect  = "Deny"
     actions = ["s3:*"]
     resources = [
-      aws_s3_bucket.osquery-results.arn,
-      "${aws_s3_bucket.osquery-results.arn}/*",
+      aws_s3_bucket.destination[each.key].arn,
+      "${aws_s3_bucket.destination[each.key].arn}/*",
     ]
     principals {
       type        = "*"
@@ -64,238 +131,32 @@ data "aws_iam_policy_document" "deny_insecure_transport_osquery_results" {
   }
 }
 
-resource "aws_s3_bucket_policy" "deny_insecure_transport_osquery_results" {
+resource "aws_s3_bucket_policy" "deny_insecure_transport" {
+  for_each = local.bucket_keys
 
-  bucket = aws_s3_bucket.osquery-results.id
-  policy = data.aws_iam_policy_document.deny_insecure_transport_osquery_results.json
+  bucket = aws_s3_bucket.destination[each.key].id
+  policy = data.aws_iam_policy_document.deny_insecure_transport[each.key].json
 }
 
-// Customer keys are not supported in our Fleet Terraforms at the moment. We will evaluate the
-// possibility of providing this capability in the future.
-// No versioning on this bucket is by design.
-// Bucket logging is not supported in our Fleet Terraforms at the moment. It can be enabled by the
-// organizations deploying Fleet, and we will evaluate the possibility of providing this capability
-// in the future.
-resource "aws_s3_bucket" "osquery-status" { #tfsec:ignore:aws-s3-encryption-customer-key:exp:2022-07-01 #tfsec:ignore:aws-s3-enable-versioning #tfsec:ignore:aws-s3-enable-bucket-logging:exp:2022-06-15
-  bucket        = var.osquery_status_s3_bucket.name
-  force_destroy = true
+# ── KMS Key ──────────────────────────────────────────────────────────────────
+
+resource "aws_kms_key" "firehose_key" {
+  count       = var.server_side_encryption_enabled && length(var.kms_key_arn) == 0 ? 1 : 0
+  description = "KMS key for encrypting Firehose data."
 }
 
-resource "aws_s3_bucket_lifecycle_configuration" "osquery-status" {
-  bucket = aws_s3_bucket.osquery-status.bucket
-  rule {
-    filter {}
-    status = "Enabled"
-    id     = "expire"
-    expiration {
-      days = var.osquery_status_s3_bucket.expires_days
-    }
-  }
+# ── Firehose IAM Roles & Policies ────────────────────────────────────────────
+
+# One role per bucket (shared by all streams writing to that bucket)
+resource "aws_iam_role" "firehose" {
+  for_each = local.bucket_keys
+
+  assume_role_policy = data.aws_iam_policy_document.firehose_assume_role[each.key].json
 }
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "osquery-status" {
-  bucket = aws_s3_bucket.osquery-status.bucket
-  rule {
-    blocked_encryption_types = ["NONE"]
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "aws:kms"
-    }
-  }
-}
+data "aws_iam_policy_document" "firehose_assume_role" {
+  for_each = local.bucket_keys
 
-resource "aws_s3_bucket_public_access_block" "osquery-status" {
-  bucket                  = aws_s3_bucket.osquery-status.id
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-data "aws_iam_policy_document" "deny_insecure_transport_osquery_status" {
-
-  statement {
-    sid     = "DenyNonHTTPS"
-    effect  = "Deny"
-    actions = ["s3:*"]
-    resources = [
-      aws_s3_bucket.osquery-status.arn,
-      "${aws_s3_bucket.osquery-status.arn}/*",
-    ]
-    principals {
-      type        = "*"
-      identifiers = ["*"]
-    }
-    condition {
-      test     = "Bool"
-      variable = "aws:SecureTransport"
-      values   = ["false"]
-    }
-  }
-}
-
-resource "aws_s3_bucket_policy" "deny_insecure_transport_osquery_status" {
-
-  bucket = aws_s3_bucket.osquery-status.id
-  policy = data.aws_iam_policy_document.deny_insecure_transport_osquery_status.json
-}
-
-// Customer keys are not supported in our Fleet Terraforms at the moment. We will evaluate the
-// possibility of providing this capability in the future.
-// No versioning on this bucket is by design.
-// Bucket logging is not supported in our Fleet Terraforms at the moment. It can be enabled by the
-// organizations deploying Fleet, and we will evaluate the possibility of providing this capability
-// in the future.
-resource "aws_s3_bucket" "audit" { #tfsec:ignore:aws-s3-encryption-customer-key:exp:2022-07-01 #tfsec:ignore:aws-s3-enable-versioning #tfsec:ignore:aws-s3-enable-bucket-logging:exp:2022-06-15
-  bucket        = var.audit_s3_bucket.name
-  force_destroy = true
-}
-
-resource "aws_s3_bucket_lifecycle_configuration" "audit" {
-  bucket = aws_s3_bucket.audit.bucket
-  rule {
-    filter {}
-    status = "Enabled"
-    id     = "expire"
-    expiration {
-      days = var.audit_s3_bucket.expires_days
-    }
-  }
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "audit" {
-  bucket = aws_s3_bucket.audit.bucket
-  rule {
-    blocked_encryption_types = ["NONE"]
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "aws:kms"
-    }
-  }
-}
-
-resource "aws_s3_bucket_public_access_block" "audit" {
-  bucket                  = aws_s3_bucket.audit.id
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-data "aws_iam_policy_document" "deny_insecure_transport_audit" {
-
-  statement {
-    sid     = "DenyNonHTTPS"
-    effect  = "Deny"
-    actions = ["s3:*"]
-    resources = [
-      aws_s3_bucket.audit.arn,
-      "${aws_s3_bucket.audit.arn}/*",
-    ]
-    principals {
-      type        = "*"
-      identifiers = ["*"]
-    }
-    condition {
-      test     = "Bool"
-      variable = "aws:SecureTransport"
-      values   = ["false"]
-    }
-  }
-}
-
-resource "aws_s3_bucket_policy" "deny_insecure_transport_audit" {
-
-  bucket = aws_s3_bucket.audit.id
-  policy = data.aws_iam_policy_document.deny_insecure_transport_audit.json
-}
-
-data "aws_iam_policy_document" "osquery_results_policy_doc" {
-  statement {
-    effect = "Allow"
-    actions = [
-      "s3:AbortMultipartUpload",
-      "s3:GetBucketLocation",
-      "s3:ListBucket",
-      "s3:ListBucketMultipartUploads",
-      "s3:PutObject"
-    ]
-    // This bucket is single-purpose and using a wildcard is not problematic
-    resources = [aws_s3_bucket.osquery-results.arn, "${aws_s3_bucket.osquery-results.arn}/*"] #tfsec:ignore:aws-iam-no-policy-wildcards
-  }
-}
-
-data "aws_iam_policy_document" "osquery_status_policy_doc" {
-  statement {
-    effect = "Allow"
-    actions = [
-      "s3:AbortMultipartUpload",
-      "s3:GetBucketLocation",
-      "s3:ListBucket",
-      "s3:ListBucketMultipartUploads",
-      "s3:PutObject"
-    ]
-    // This bucket is single-purpose and using a wildcard is not problematic
-    resources = [aws_s3_bucket.osquery-status.arn, "${aws_s3_bucket.osquery-status.arn}/*"] #tfsec:ignore:aws-iam-no-policy-wildcards
-  }
-}
-
-data "aws_iam_policy_document" "audit_policy_doc" {
-  statement {
-    effect = "Allow"
-    actions = [
-      "s3:AbortMultipartUpload",
-      "s3:GetBucketLocation",
-      "s3:ListBucket",
-      "s3:ListBucketMultipartUploads",
-      "s3:PutObject"
-    ]
-    // This bucket is single-purpose and using a wildcard is not problematic
-    resources = [aws_s3_bucket.audit.arn, "${aws_s3_bucket.audit.arn}/*"] #tfsec:ignore:aws-iam-no-policy-wildcards
-  }
-}
-
-resource "aws_iam_policy" "firehose-results" {
-  name   = var.prefix == "" ? "osquery_results_firehose_policy" : "${var.prefix}_osquery_results_firehose_policy"
-  policy = data.aws_iam_policy_document.osquery_results_policy_doc.json
-}
-
-resource "aws_iam_policy" "firehose-status" {
-  name   = var.prefix == "" ? "osquery_status_firehose_policy" : "${var.prefix}_osquery_status_firehose_policy"
-  policy = data.aws_iam_policy_document.osquery_status_policy_doc.json
-}
-
-resource "aws_iam_policy" "firehose-audit" {
-  name   = var.prefix == "" ? "audit_firehose_policy" : "${var.prefix}_audit_firehose_policy"
-  policy = data.aws_iam_policy_document.audit_policy_doc.json
-}
-
-resource "aws_iam_role" "firehose-results" {
-  assume_role_policy = data.aws_iam_policy_document.osquery_firehose_assume_role.json
-}
-
-resource "aws_iam_role" "firehose-status" {
-  assume_role_policy = data.aws_iam_policy_document.osquery_firehose_assume_role.json
-}
-
-resource "aws_iam_role" "firehose-audit" {
-  assume_role_policy = data.aws_iam_policy_document.osquery_firehose_assume_role.json
-}
-
-resource "aws_iam_role_policy_attachment" "firehose-results" {
-  policy_arn = aws_iam_policy.firehose-results.arn
-  role       = aws_iam_role.firehose-results.name
-}
-
-resource "aws_iam_role_policy_attachment" "firehose-status" {
-  policy_arn = aws_iam_policy.firehose-status.arn
-  role       = aws_iam_role.firehose-status.name
-}
-
-resource "aws_iam_role_policy_attachment" "firehose-audit" {
-  policy_arn = aws_iam_policy.firehose-audit.arn
-  role       = aws_iam_role.firehose-audit.name
-}
-
-data "aws_iam_policy_document" "osquery_firehose_assume_role" {
   statement {
     effect  = "Allow"
     actions = ["sts:AssumeRole"]
@@ -306,40 +167,98 @@ data "aws_iam_policy_document" "osquery_firehose_assume_role" {
   }
 }
 
-resource "aws_kinesis_firehose_delivery_stream" "osquery_results" {
-  name        = var.osquery_results_s3_bucket.name
-  destination = "extended_s3"
+data "aws_iam_policy_document" "firehose_policy" {
+  for_each = local.bucket_keys
 
-  extended_s3_configuration {
-    compression_format = var.compression_format
-    role_arn           = aws_iam_role.firehose-results.arn
-    bucket_arn         = aws_s3_bucket.osquery-results.arn
+  statement {
+    effect = "Allow"
+    actions = [
+      "s3:AbortMultipartUpload",
+      "s3:GetBucketLocation",
+      "s3:GetObject",
+      "s3:ListBucket",
+      "s3:ListBucketMultipartUploads",
+      "s3:PutObject",
+      "s3:PutObjectAcl",
+    ]
+    resources = [
+      aws_s3_bucket.destination[each.key].arn,
+      "${aws_s3_bucket.destination[each.key].arn}/*",
+    ]
+  }
+
+  statement {
+    effect  = "Allow"
+    actions = ["logs:PutLogEvents"]
+    resources = [
+      for dest_key, bk in local.bucket_key_for : bk == each.key ? "arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/kinesisfirehose/${var.log_destinations[dest_key].name}:*" : null
+      if bk == each.key
+    ]
+  }
+
+  dynamic "statement" {
+    for_each = var.server_side_encryption_enabled ? [1] : []
+
+    content {
+      effect = "Allow"
+      actions = [
+        "kms:Decrypt",
+        "kms:GenerateDataKey",
+      ]
+      resources = [local.kms_key_arn]
+    }
   }
 }
 
-resource "aws_kinesis_firehose_delivery_stream" "osquery_status" {
-  name        = var.osquery_status_s3_bucket.name
+resource "aws_iam_policy" "firehose" {
+  for_each = local.bucket_keys
+
+  name   = var.prefix == "" ? "firehose_logging_${each.key}" : "${var.prefix}_firehose_logging_${each.key}"
+  policy = data.aws_iam_policy_document.firehose_policy[each.key].json
+}
+
+resource "aws_iam_role_policy_attachment" "firehose" {
+  for_each = local.bucket_keys
+
+  policy_arn = aws_iam_policy.firehose[each.key].arn
+  role       = aws_iam_role.firehose[each.key].name
+}
+
+# ── Firehose Delivery Streams ────────────────────────────────────────────────
+
+resource "aws_kinesis_firehose_delivery_stream" "fleet_log_destinations" {
+  for_each    = var.log_destinations
+  name        = each.value.name
   destination = "extended_s3"
 
+  dynamic "server_side_encryption" {
+    for_each = var.server_side_encryption_enabled ? [1] : []
+    content {
+      enabled  = var.server_side_encryption_enabled
+      key_arn  = local.kms_key_arn
+      key_type = "CUSTOMER_MANAGED_CMK"
+    }
+  }
+
   extended_s3_configuration {
-    compression_format = var.compression_format
-    role_arn           = aws_iam_role.firehose-status.arn
-    bucket_arn         = aws_s3_bucket.osquery-status.arn
+    bucket_arn          = aws_s3_bucket.destination[local.bucket_key_for[each.key]].arn
+    role_arn            = aws_iam_role.firehose[local.bucket_key_for[each.key]].arn
+    prefix              = each.value.prefix
+    error_output_prefix = each.value.error_output_prefix
+    buffering_size      = each.value.buffering_size
+    buffering_interval  = each.value.buffering_interval
+    compression_format  = each.value.compression_format
   }
 }
 
-resource "aws_kinesis_firehose_delivery_stream" "audit" {
-  name        = var.audit_s3_bucket.name
-  destination = "extended_s3"
+# ── Fleet IAM Policy ─────────────────────────────────────────────────────────
 
-  extended_s3_configuration {
-    compression_format = var.compression_format
-    role_arn           = aws_iam_role.firehose-audit.arn
-    bucket_arn         = aws_s3_bucket.audit.arn
-  }
+resource "aws_iam_policy" "firehose-logging" {
+  description = "An IAM policy for fleet to log to Firehose destinations"
+  policy      = data.aws_iam_policy_document.firehose_logging.json
 }
 
-data "aws_iam_policy_document" "firehose-logging" {
+data "aws_iam_policy_document" "firehose_logging" {
   statement {
     actions = [
       "firehose:DescribeDeliveryStream",
@@ -347,14 +266,20 @@ data "aws_iam_policy_document" "firehose-logging" {
       "firehose:PutRecordBatch",
     ]
     resources = [
-      aws_kinesis_firehose_delivery_stream.osquery_results.arn,
-      aws_kinesis_firehose_delivery_stream.osquery_status.arn,
-      aws_kinesis_firehose_delivery_stream.audit.arn,
+      for stream in aws_kinesis_firehose_delivery_stream.fleet_log_destinations : stream.arn
     ]
   }
-}
 
-resource "aws_iam_policy" "firehose-logging" {
-  description = "An IAM policy for fleet to log to Firehose destinations"
-  policy      = data.aws_iam_policy_document.firehose-logging.json
+  dynamic "statement" {
+    for_each = var.server_side_encryption_enabled ? [1] : []
+
+    content {
+      effect = "Allow"
+      actions = [
+        "kms:Decrypt",
+        "kms:GenerateDataKey",
+      ]
+      resources = [local.kms_key_arn]
+    }
+  }
 }

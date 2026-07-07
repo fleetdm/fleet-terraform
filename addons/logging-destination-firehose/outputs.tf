@@ -1,8 +1,8 @@
 output "fleet_extra_environment_variables" {
   value = {
-    FLEET_FIREHOSE_STATUS_STREAM    = aws_kinesis_firehose_delivery_stream.osquery_status.name
-    FLEET_FIREHOSE_RESULT_STREAM    = aws_kinesis_firehose_delivery_stream.osquery_results.name
-    FLEET_FIREHOSE_AUDIT_STREAM     = aws_kinesis_firehose_delivery_stream.audit.name
+    FLEET_FIREHOSE_STATUS_STREAM    = aws_kinesis_firehose_delivery_stream.fleet_log_destinations[var.fleet_firehose_status_stream_key].name
+    FLEET_FIREHOSE_RESULT_STREAM    = aws_kinesis_firehose_delivery_stream.fleet_log_destinations[var.fleet_firehose_result_stream_key].name
+    FLEET_FIREHOSE_AUDIT_STREAM     = aws_kinesis_firehose_delivery_stream.fleet_log_destinations[var.fleet_firehose_audit_stream_key].name
     FLEET_FIREHOSE_REGION           = data.aws_region.current.region
     FLEET_OSQUERY_STATUS_LOG_PLUGIN = "firehose"
     FLEET_OSQUERY_RESULT_LOG_PLUGIN = "firehose"
@@ -17,23 +17,16 @@ output "fleet_extra_iam_policies" {
   ]
 }
 
-output "fleet_s3_firehose_osquery_results_config" {
+output "fleet_s3_firehose_config" {
   value = {
-    bucket_name = aws_s3_bucket.osquery-results.bucket
+    for bk in local.bucket_keys : bk => {
+      bucket_name = aws_s3_bucket.destination[bk].bucket
+    }
   }
-  description = "S3 bucket details - osquery-results"
+  description = "S3 bucket details for Firehose delivery, keyed by bucket key."
 }
 
-output "fleet_s3_firehose_osquery_status_config" {
-  value = {
-    bucket_name = aws_s3_bucket.osquery-status.bucket
-  }
-  description = "S3 bucket details - osquery-status"
-}
-
-output "fleet_s3_firehose_audit_config" {
-  value = {
-    bucket_name = aws_s3_bucket.audit.bucket
-  }
-  description = "S3 bucket details - audit"
+output "log_destinations" {
+  description = "Map of Firehose delivery stream names."
+  value       = { for key, stream in aws_kinesis_firehose_delivery_stream.fleet_log_destinations : key => stream.name }
 }
