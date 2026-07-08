@@ -37,3 +37,13 @@ output "fleet_s3_firehose_audit_config" {
   }
   description = "S3 bucket details - audit"
 }
+
+output "kms_key_arn" {
+  description = "ARN of the KMS key used for Firehose SSE and S3 encryption. Null when no CMK feature is enabled."
+  value       = local.kms_key_in_use ? local.kms_key_arn : null
+}
+
+output "kms_key_alias" {
+  description = "Alias of the auto-created KMS key (e.g. \"alias/fleet-firehose\"). Null when the module does not create the key."
+  value       = local.create_kms_key ? "alias/${local.kms_alias_name}" : null
+}
