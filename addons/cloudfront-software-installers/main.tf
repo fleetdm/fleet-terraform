@@ -1,3 +1,12 @@
+locals {
+  keypairs = var.keypairs != null ? var.keypairs : {
+    current = {
+      public_key  = var.public_key
+      private_key = var.private_key
+    }
+  }
+}
+
 data "aws_s3_bucket" "software_installers" {
   bucket = var.s3_bucket
 }
@@ -15,16 +24,22 @@ resource "aws_iam_policy" "software_installers_secret" {
 }
 
 resource "aws_cloudfront_public_key" "software_installers" {
-  count       = var.key_group_id == null ? 1 : 0
-  comment     = "${var.customer} software installers public key"
-  encoded_key = var.public_key
-  name        = "${var.customer}-software-installers"
+  for_each = var.key_group_id == null ? local.keypairs : {}
+
+  comment     = each.key == "current" ? "${var.customer} software installers public key" : "${var.customer} software installers public key ${each.key}"
+  encoded_key = each.value.public_key
+  name        = each.key == "current" ? "${var.customer}-software-installers" : "${var.customer}-software-installers-${each.key}"
+}
+
+moved {
+  from = aws_cloudfront_public_key.software_installers[0]
+  to   = aws_cloudfront_public_key.software_installers["current"]
 }
 
 resource "aws_cloudfront_key_group" "software_installers" {
   count   = var.key_group_id == null ? 1 : 0
   comment = "${var.customer} software installers key group"
-  items   = [aws_cloudfront_public_key.software_installers[0].id]
+  items   = values(aws_cloudfront_public_key.software_installers)[*].id
   name    = "${var.customer}-software-installers-group"
 }
 
@@ -35,10 +50,10 @@ resource "aws_secretsmanager_secret" "software_installers" {
 resource "aws_secretsmanager_secret_version" "software_installers" {
   secret_id = aws_secretsmanager_secret.software_installers.id
   secret_string = jsonencode({
-    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PRIVATE_KEY   = var.private_key
-    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PUBLIC_KEY    = var.public_key
+    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PRIVATE_KEY   = local.keypairs[var.active_keypair_name].private_key
+    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PUBLIC_KEY    = local.keypairs[var.active_keypair_name].public_key
     FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL                       = "https://${module.cloudfront_software_installers.cloudfront_distribution_domain_name}"
-    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PUBLIC_KEY_ID = var.public_key_id == null ? aws_cloudfront_public_key.software_installers[0].id : var.public_key_id
+    FLEET_S3_SOFTWARE_INSTALLERS_CLOUDFRONT_URL_SIGNING_PUBLIC_KEY_ID = var.public_key_id == null ? aws_cloudfront_public_key.software_installers[var.active_keypair_name].id : var.public_key_id
   })
 }
 
