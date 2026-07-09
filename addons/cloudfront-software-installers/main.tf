@@ -5,6 +5,8 @@ locals {
       private_key = var.private_key
     }
   }
+
+  keypair_names = var.keypairs != null ? keys(var.keypairs) : ["current"]
 }
 
 data "aws_s3_bucket" "software_installers" {
@@ -24,10 +26,10 @@ resource "aws_iam_policy" "software_installers_secret" {
 }
 
 resource "aws_cloudfront_public_key" "software_installers" {
-  for_each = var.key_group_id == null ? local.keypairs : {}
+  for_each = var.key_group_id == null ? toset(nonsensitive(local.keypair_names)) : toset([])
 
   comment     = each.key == "current" ? "${var.customer} software installers public key" : "${var.customer} software installers public key ${each.key}"
-  encoded_key = each.value.public_key
+  encoded_key = local.keypairs[each.key].public_key
   name        = each.key == "current" ? "${var.customer}-software-installers" : "${var.customer}-software-installers-${each.key}"
 }
 
