@@ -23,7 +23,7 @@ locals {
       effect = "Allow"
       principals = {
         type        = "Service"
-        identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
+        identifiers = ["logs.${data.aws_region.current.region}.amazonaws.com"]
       }
       actions = [
         "kms:Encrypt*",
@@ -143,30 +143,30 @@ module "vpc" {
   name = var.vpc.name
   cidr = var.vpc.cidr
 
-  azs                                       = var.vpc.azs
-  private_subnets                           = var.vpc.private_subnets
-  public_subnets                            = var.vpc.public_subnets
-  database_subnets                          = var.vpc.database_subnets
-  elasticache_subnets                       = var.vpc.elasticache_subnets
-  create_database_subnet_group              = var.vpc.create_database_subnet_group
-  create_database_subnet_route_table        = var.vpc.create_database_subnet_route_table
-  create_elasticache_subnet_group           = var.vpc.create_elasticache_subnet_group
-  create_elasticache_subnet_route_table     = var.vpc.create_elasticache_subnet_route_table
-  enable_vpn_gateway                        = var.vpc.enable_vpn_gateway
-  one_nat_gateway_per_az                    = var.vpc.one_nat_gateway_per_az
-  single_nat_gateway                        = var.vpc.single_nat_gateway
-  enable_nat_gateway                        = var.vpc.enable_nat_gateway
-  enable_flow_log                           = var.vpc.enable_flow_log
-  create_flow_log_cloudwatch_log_group      = var.vpc.create_flow_log_cloudwatch_log_group
-  create_flow_log_cloudwatch_iam_role       = var.vpc.create_flow_log_cloudwatch_iam_role
-  flow_log_max_aggregation_interval         = var.vpc.flow_log_max_aggregation_interval
-  flow_log_cloudwatch_log_group_name_prefix        = var.vpc.flow_log_cloudwatch_log_group_name_prefix
-  flow_log_cloudwatch_log_group_name_suffix        = var.vpc.flow_log_cloudwatch_log_group_name_suffix
-  flow_log_cloudwatch_log_group_retention_in_days  = var.vpc.flow_log_cloudwatch_log_group_retention_in_days
-  flow_log_cloudwatch_log_group_kms_key_id         = local.vpc_flow_log_cloudwatch_log_group_kms_key_arn
-  vpc_flow_log_tags                         = var.vpc.vpc_flow_log_tags
-  enable_dns_hostnames                      = var.vpc.enable_dns_hostnames
-  enable_dns_support                        = var.vpc.enable_dns_support
+  azs                                             = var.vpc.azs
+  private_subnets                                 = var.vpc.private_subnets
+  public_subnets                                  = var.vpc.public_subnets
+  database_subnets                                = var.vpc.database_subnets
+  elasticache_subnets                             = var.vpc.elasticache_subnets
+  create_database_subnet_group                    = var.vpc.create_database_subnet_group
+  create_database_subnet_route_table              = var.vpc.create_database_subnet_route_table
+  create_elasticache_subnet_group                 = var.vpc.create_elasticache_subnet_group
+  create_elasticache_subnet_route_table           = var.vpc.create_elasticache_subnet_route_table
+  enable_vpn_gateway                              = var.vpc.enable_vpn_gateway
+  one_nat_gateway_per_az                          = var.vpc.one_nat_gateway_per_az
+  single_nat_gateway                              = var.vpc.single_nat_gateway
+  enable_nat_gateway                              = var.vpc.enable_nat_gateway
+  enable_flow_log                                 = var.vpc.enable_flow_log
+  create_flow_log_cloudwatch_log_group            = var.vpc.create_flow_log_cloudwatch_log_group
+  create_flow_log_cloudwatch_iam_role             = var.vpc.create_flow_log_cloudwatch_iam_role
+  flow_log_max_aggregation_interval               = var.vpc.flow_log_max_aggregation_interval
+  flow_log_cloudwatch_log_group_name_prefix       = var.vpc.flow_log_cloudwatch_log_group_name_prefix
+  flow_log_cloudwatch_log_group_name_suffix       = var.vpc.flow_log_cloudwatch_log_group_name_suffix
+  flow_log_cloudwatch_log_group_retention_in_days = var.vpc.flow_log_cloudwatch_log_group_retention_in_days
+  flow_log_cloudwatch_log_group_kms_key_id        = local.vpc_flow_log_cloudwatch_log_group_kms_key_arn
+  vpc_flow_log_tags                               = var.vpc.vpc_flow_log_tags
+  enable_dns_hostnames                            = var.vpc.enable_dns_hostnames
+  enable_dns_support                              = var.vpc.enable_dns_support
 
   manage_default_network_acl  = var.vpc.manage_default_network_acl
   default_network_acl_ingress = var.vpc.default_network_acl_ingress
@@ -182,9 +182,13 @@ module "byo-vpc" {
       subnets = module.vpc.private_subnets
     }
   }
-  rds_config = merge(var.rds_config, {
-    subnets = module.vpc.database_subnets
-  })
+  rds_configs = {
+    for config_name, config in(var.rds_configs != null ? var.rds_configs : { current = var.rds_config }) :
+    config_name => merge(config, {
+      subnets = module.vpc.database_subnets
+    })
+  }
+  active_rds_config_name = var.active_rds_config_name
   redis_config = merge(var.redis_config, {
     subnets                       = module.vpc.elasticache_subnets
     allowed_cidrs                 = module.vpc.private_subnets_cidr_blocks
