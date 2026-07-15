@@ -89,22 +89,22 @@ No requirements.
 ## Providers
 
 | Name | Version |
-|------|---------|
-| <a name="provider_archive"></a> [archive](#provider\_archive) | 2.7.1 |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.40.0 |
+| ---- | ------- |
+| <a name="provider_archive"></a> [archive](#provider\_archive) | 2.8.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.54.0 |
 | <a name="provider_terraform"></a> [terraform](#provider\_terraform) | n/a |
 
 ## Modules
 
 | Name | Source | Version |
-|------|--------|---------|
+| ---- | ------ | ------- |
 | <a name="module_athena-s3-bucket"></a> [athena-s3-bucket](#module\_athena-s3-bucket) | terraform-aws-modules/s3-bucket/aws | 5.12.0 |
 | <a name="module_s3_bucket_for_logs"></a> [s3\_bucket\_for\_logs](#module\_s3\_bucket\_for\_logs) | terraform-aws-modules/s3-bucket/aws | 5.12.0 |
 
 ## Resources
 
 | Name | Type |
-|------|------|
+| ---- | ---- |
 | [aws_athena_database.logs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/athena_database) | resource |
 | [aws_athena_workgroup.logs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/athena_workgroup) | resource |
 | [aws_cloudwatch_event_rule.sweep_reencrypt](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_event_rule) | resource |
@@ -144,7 +144,7 @@ No requirements.
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
+| ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_alt_path_prefix"></a> [alt\_path\_prefix](#input\_alt\_path\_prefix) | Used if the prefix inside of the s3 bucket doesn't match the name of the bucket prefix | `string` | `null` | no |
 | <a name="input_enable_athena"></a> [enable\_athena](#input\_enable\_athena) | n/a | `bool` | `true` | no |
 | <a name="input_enable_reencrypt_sweep"></a> [enable\_reencrypt\_sweep](#input\_enable\_reencrypt\_sweep) | Enable the sweep and re-encrypt Lambda functions, EventBridge schedule, S3 bucket notification, and associated IAM roles. | `bool` | `false` | no |
@@ -155,6 +155,7 @@ No requirements.
 | <a name="input_kms_base_policy"></a> [kms\_base\_policy](#input\_kms\_base\_policy) | Optional base KMS key-policy statements to apply to module-created CMKs before module-required service access statements are merged in. If null, the module defaults to the historical root `kms:*` statement. | <pre>list(object({<br/>    sid    = string<br/>    effect = string<br/>    principals = object({<br/>      type        = string<br/>      identifiers = list(string)<br/>    })<br/>    actions   = list(string)<br/>    resources = list(string)<br/>    conditions = optional(list(object({<br/>      test     = string<br/>      variable = string<br/>      values   = list(string)<br/>    })), [])<br/>  }))</pre> | `null` | no |
 | <a name="input_lambda_log_retention_in_days"></a> [lambda\_log\_retention\_in\_days](#input\_lambda\_log\_retention\_in\_days) | CloudWatch log retention in days for the re-encrypt and sweep Lambda functions | `number` | `365` | no |
 | <a name="input_prefix"></a> [prefix](#input\_prefix) | n/a | `string` | `"fleet"` | no |
+| <a name="input_s3_bucket_tags"></a> [s3\_bucket\_tags](#input\_s3\_bucket\_tags) | Additional tags to apply to all S3 buckets created by this module. | `map(string)` | `{}` | no |
 | <a name="input_s3_expiration_days"></a> [s3\_expiration\_days](#input\_s3\_expiration\_days) | n/a | `number` | `90` | no |
 | <a name="input_s3_newer_noncurrent_versions"></a> [s3\_newer\_noncurrent\_versions](#input\_s3\_newer\_noncurrent\_versions) | n/a | `number` | `5` | no |
 | <a name="input_s3_noncurrent_version_expiration_days"></a> [s3\_noncurrent\_version\_expiration\_days](#input\_s3\_noncurrent\_version\_expiration\_days) | n/a | `number` | `30` | no |
@@ -163,5 +164,5 @@ No requirements.
 ## Outputs
 
 | Name | Description |
-|------|-------------|
+| ---- | ----------- |
 | <a name="output_log_s3_bucket_id"></a> [log\_s3\_bucket\_id](#output\_log\_s3\_bucket\_id) | S3 bucket used by ALB access logging (SSE-S3 on write, re-encrypted to SSE-KMS by Lambda) |

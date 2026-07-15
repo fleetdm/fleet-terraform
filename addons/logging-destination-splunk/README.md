@@ -100,8 +100,8 @@ No requirements.
 ## Providers
 
 | Name | Version |
-|------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.41.0 |
+| ---- | ------- |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | n/a |
 
 ## Modules
 
@@ -110,7 +110,7 @@ No modules.
 ## Resources
 
 | Name | Type |
-|------|------|
+| ---- | ---- |
 | [aws_iam_policy.firehose](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
 | [aws_iam_policy.firehose-logging](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
 | [aws_iam_role.firehose](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
@@ -130,16 +130,17 @@ No modules.
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
+| ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_compression_format"></a> [compression\_format](#input\_compression\_format) | Compression format for the Firehose delivery stream | `string` | `"UNCOMPRESSED"` | no |
 | <a name="input_iam_policy_name"></a> [iam\_policy\_name](#input\_iam\_policy\_name) | n/a | `string` | `"splunk-firehose-policy"` | no |
 | <a name="input_log_destinations"></a> [log\_destinations](#input\_log\_destinations) | A map of configurations for Splunk Firehose delivery streams. | <pre>map(object({<br/>    # hec endpoint/token are logically optional but validated to enforce <br/>    name                        = string<br/>    hec_endpoint                = optional(string)<br/>    hec_token                   = optional(string)<br/>    hec_acknowledgement_timeout = optional(number, 600)<br/>    hec_endpoint_type           = optional(string, "Raw")<br/>    s3_buffering_size           = optional(number, 2)<br/>    s3_buffering_interval       = optional(number, 400)<br/>    s3_error_output_prefix      = optional(string, null)<br/><br/>  }))</pre> | <pre>{<br/>  "audit": {<br/>    "hec_acknowledgement_timeout": 600,<br/>    "hec_endpoint_type": "Raw",<br/>    "name": "fleet-audit-splunk",<br/>    "s3_buffering_interval": 400,<br/>    "s3_buffering_size": 10,<br/>    "s3_error_output_prefix": "audit/"<br/>  },<br/>  "results": {<br/>    "hec_acknowledgement_timeout": 600,<br/>    "hec_endpoint_type": "Raw",<br/>    "name": "fleet-osquery-results-splunk",<br/>    "s3_buffering_interval": 400,<br/>    "s3_buffering_size": 10,<br/>    "s3_error_output_prefix": "results/"<br/>  },<br/>  "status": {<br/>    "hec_acknowledgement_timeout": 600,<br/>    "hec_endpoint_type": "Raw",<br/>    "name": "fleet-osquery-status-splunk",<br/>    "s3_buffering_interval": 400,<br/>    "s3_buffering_size": 10,<br/>    "s3_error_output_prefix": "status/"<br/>  }<br/>}</pre> | no |
 | <a name="input_s3_bucket_config"></a> [s3\_bucket\_config](#input\_s3\_bucket\_config) | Configuration for the S3 bucket used to store failed Splunk delivery attempts | <pre>object({<br/>    name_prefix  = optional(string, "fleet-splunk-failure")<br/>    expires_days = optional(number, 1)<br/>  })</pre> | <pre>{<br/>  "expires_days": 1,<br/>  "name_prefix": "fleet-splunk-failure"<br/>}</pre> | no |
+| <a name="input_s3_bucket_tags"></a> [s3\_bucket\_tags](#input\_s3\_bucket\_tags) | Additional tags to apply to the S3 failure bucket. | `map(string)` | `{}` | no |
 
 ## Outputs
 
 | Name | Description |
-|------|-------------|
+| ---- | ----------- |
 | <a name="output_fleet_extra_environment_variables"></a> [fleet\_extra\_environment\_variables](#output\_fleet\_extra\_environment\_variables) | Environment variables to configure Fleet to use Splunk logging via Firehose |
 | <a name="output_fleet_extra_iam_policies"></a> [fleet\_extra\_iam\_policies](#output\_fleet\_extra\_iam\_policies) | IAM policies required for Fleet to log to Splunk via Firehose |
 | <a name="output_fleet_s3_splunk_failure_config"></a> [fleet\_s3\_splunk\_failure\_config](#output\_fleet\_s3\_splunk\_failure\_config) | S3 bucket details - splunk-failure |
