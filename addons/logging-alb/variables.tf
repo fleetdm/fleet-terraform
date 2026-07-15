@@ -86,3 +86,9 @@ variable "extra_s3_athena_policies" {
   type    = list(any)
   default = []
 }
+
+variable "s3_bucket_tags" {
+  description = "Additional tags to apply to all S3 buckets created by this module."
+  type        = map(string)
+  default     = {}
+}

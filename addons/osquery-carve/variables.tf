@@ -2,6 +2,7 @@ variable "osquery_carve_s3_bucket" {
   type = object({
     name         = optional(string, "fleet-osquery-results-archive")
     expires_days = optional(number, 1)
+    tags         = optional(map(string), {})
     kms = optional(object({
       kms_key_arn    = optional(string, null)
       create_kms_key = optional(bool, false)
@@ -36,6 +37,7 @@ variable "osquery_carve_s3_bucket" {
   default = {
     name         = "fleet-osquery-results-archive"
     expires_days = 1
+    tags         = {}
     kms = {
       kms_key_arn        = null
       create_kms_key     = false
