@@ -70,3 +70,9 @@ variable "datadog_api_key" {
   description = "Datadog API key for authentication"
   sensitive   = true
 }
+
+variable "s3_bucket_tags" {
+  description = "Additional tags to apply to the S3 failure bucket."
+  type        = map(string)
+  default     = {}
+}

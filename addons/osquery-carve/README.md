@@ -21,15 +21,15 @@ This module automatically attaches a bucket policy that denies any requests made
 ## Requirements
 
 | Name | Version |
-|------|---------|
+| ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.12.0 |
 | <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 6.37.0 |
 
 ## Providers
 
 | Name | Version |
-|------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.41.0 |
+| ---- | ------- |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.39.0 |
 
 ## Modules
 
@@ -38,7 +38,7 @@ No modules.
 ## Resources
 
 | Name | Type |
-|------|------|
+| ---- | ---- |
 | [aws_iam_policy.main](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
 | [aws_kms_alias.osquery_carve](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kms_alias) | resource |
 | [aws_kms_key.osquery_carve](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kms_key) | resource |
@@ -59,12 +59,12 @@ No modules.
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
-| <a name="input_osquery_carve_s3_bucket"></a> [osquery\_carve\_s3\_bucket](#input\_osquery\_carve\_s3\_bucket) | Configuration for the osquery carve S3 bucket, including optional customer-managed KMS settings. | <pre>object({<br/>    name         = optional(string, "fleet-osquery-results-archive")<br/>    expires_days = optional(number, 1)<br/>    kms = optional(object({<br/>      kms_key_arn    = optional(string, null)<br/>      create_kms_key = optional(bool, false)<br/>      kms_alias      = optional(string, "osquery-carve")<br/>      kms_base_policy = optional(list(object({<br/>        sid    = string<br/>        effect = string<br/>        principals = object({<br/>          type        = string<br/>          identifiers = list(string)<br/>        })<br/>        actions   = list(string)<br/>        resources = list(string)<br/>        conditions = optional(list(object({<br/>          test     = string<br/>          variable = string<br/>          values   = list(string)<br/>        })), [])<br/>      })), null)<br/>      extra_kms_policies = optional(list(any), [])<br/>      fleet_role_name    = optional(string, null)<br/>      }), {<br/>      kms_key_arn        = null<br/>      create_kms_key     = false<br/>      kms_alias          = "osquery-carve"<br/>      kms_base_policy    = null<br/>      extra_kms_policies = []<br/>      fleet_role_name    = null<br/>    })<br/>  })</pre> | <pre>{<br/>  "expires_days": 1,<br/>  "kms": {<br/>    "create_kms_key": false,<br/>    "extra_kms_policies": [],<br/>    "fleet_role_name": null,<br/>    "kms_alias": "osquery-carve",<br/>    "kms_base_policy": null,<br/>    "kms_key_arn": null<br/>  },<br/>  "name": "fleet-osquery-results-archive"<br/>}</pre> | no |
+| ---- | ----------- | ---- | ------- | :------: |
+| <a name="input_osquery_carve_s3_bucket"></a> [osquery\_carve\_s3\_bucket](#input\_osquery\_carve\_s3\_bucket) | Configuration for the osquery carve S3 bucket, including optional customer-managed KMS settings. | <pre>object({<br/>    name         = optional(string, "fleet-osquery-results-archive")<br/>    expires_days = optional(number, 1)<br/>    tags         = optional(map(string), {})<br/>    kms = optional(object({<br/>      kms_key_arn    = optional(string, null)<br/>      create_kms_key = optional(bool, false)<br/>      kms_alias      = optional(string, "osquery-carve")<br/>      kms_base_policy = optional(list(object({<br/>        sid    = string<br/>        effect = string<br/>        principals = object({<br/>          type        = string<br/>          identifiers = list(string)<br/>        })<br/>        actions   = list(string)<br/>        resources = list(string)<br/>        conditions = optional(list(object({<br/>          test     = string<br/>          variable = string<br/>          values   = list(string)<br/>        })), [])<br/>      })), null)<br/>      extra_kms_policies = optional(list(any), [])<br/>      fleet_role_name    = optional(string, null)<br/>      }), {<br/>      kms_key_arn        = null<br/>      create_kms_key     = false<br/>      kms_alias          = "osquery-carve"<br/>      kms_base_policy    = null<br/>      extra_kms_policies = []<br/>      fleet_role_name    = null<br/>    })<br/>  })</pre> | <pre>{<br/>  "expires_days": 1,<br/>  "kms": {<br/>    "create_kms_key": false,<br/>    "extra_kms_policies": [],<br/>    "fleet_role_name": null,<br/>    "kms_alias": "osquery-carve",<br/>    "kms_base_policy": null,<br/>    "kms_key_arn": null<br/>  },<br/>  "name": "fleet-osquery-results-archive",<br/>  "tags": {}<br/>}</pre> | no |
 
 ## Outputs
 
 | Name | Description |
-|------|-------------|
+| ---- | ----------- |
 | <a name="output_fleet_extra_environment_variables"></a> [fleet\_extra\_environment\_variables](#output\_fleet\_extra\_environment\_variables) | n/a |
 | <a name="output_fleet_extra_iam_policies"></a> [fleet\_extra\_iam\_policies](#output\_fleet\_extra\_iam\_policies) | IAM policies required for Fleet to access the osquery carve S3 bucket. |

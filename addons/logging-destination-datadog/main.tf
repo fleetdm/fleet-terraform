@@ -2,6 +2,7 @@ data "aws_region" "current" {}
 
 resource "aws_s3_bucket" "datadog-failure" { #tfsec:ignore:aws-s3-encryption-customer-key:exp:2022-07-01  #tfsec:ignore:aws-s3-enable-versioning #tfsec:ignore:aws-s3-enable-bucket-logging:exp:2022-06-15
   bucket_prefix = var.s3_bucket_config.name_prefix
+  tags          = var.s3_bucket_tags
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "datadog-failure" {

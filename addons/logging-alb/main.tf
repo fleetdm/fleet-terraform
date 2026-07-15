@@ -260,6 +260,8 @@ module "s3_bucket_for_logs" {
 
   bucket = local.landing_bucket_name
 
+  tags = var.s3_bucket_tags
+
   # Allow deletion of non-empty bucket
   force_destroy = true
 
@@ -645,6 +647,8 @@ module "athena-s3-bucket" {
   version = "5.12.0"
 
   bucket = "${var.prefix}-alb-logs-athena"
+
+  tags = var.s3_bucket_tags
 
   # Allow deletion of non-empty bucket
   force_destroy = true

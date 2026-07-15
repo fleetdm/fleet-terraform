@@ -71,3 +71,9 @@ variable "compression_format" {
   default     = "UNCOMPRESSED"
   description = "Compression format for the Firehose delivery stream"
 }
+
+variable "s3_bucket_tags" {
+  description = "Additional tags to apply to the S3 failure bucket."
+  type        = map(string)
+  default     = {}
+}

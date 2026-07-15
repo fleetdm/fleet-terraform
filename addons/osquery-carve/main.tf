@@ -82,6 +82,7 @@ data "aws_iam_role" "osquery_carve_fleet" {
 
 resource "aws_s3_bucket" "main" { #tfsec:ignore:aws-s3-encryption-customer-key:exp:2028-07-01  #tfsec:ignore:aws-s3-enable-versioning #tfsec:ignore:aws-s3-enable-bucket-logging:exp:2028-07-01
   bucket = var.osquery_carve_s3_bucket.name
+  tags   = var.osquery_carve_s3_bucket.tags
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "main" {
