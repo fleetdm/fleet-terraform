@@ -72,6 +72,10 @@ jobs:
         uses: hashicorp/setup-terraform@633666f66e0061ca3b725c73b2ec20cd13a8fdd1 # v2.0.3
         with:
           terraform_version: 1.12.0
+      - name: Check formatting ${{ matrix.terraform_dir }}
+        working-directory: ${{ matrix.terraform_dir }}
+        run: terraform fmt -check
+
       # If we want to test more of these, consider using a matrix.  With a matrix of directories, all terraform modules could be fully tested and potentially in parallel.
       - name: Validate ${{ matrix.terraform_dir }}  module (covers all submodules)
         working-directory: ${{ matrix.terraform_dir }}
@@ -80,7 +84,43 @@ jobs:
           # and fail direct `terraform validate` unless alias configs are present.
           # Generate a temporary provider file for any discovered aws.<alias> references.
           AWS_ALIASES="$(grep -RhoE 'provider[[:space:]]*=[[:space:]]*aws\.[A-Za-z0-9_]+' -- *.tf 2>/dev/null | sed -E 's/.*aws\.([A-Za-z0-9_]+)/\1/' | sort -u || true)"
-          if [[ -n "${AWS_ALIASES}" ]]; then
+          AWS_CONFIGURED_ALIASES="$(awk '
+            function brace_delta(line, copy, opens, closes) {
+              copy = line
+              opens = gsub(/\{/, "", copy)
+              copy = line
+              closes = gsub(/\}/, "", copy)
+              return opens - closes
+            }
+
+            /^[[:space:]]*provider[[:space:]]+"aws"[[:space:]]*\{/ {
+              in_aws_provider = 1
+              depth = 0
+            }
+
+            in_aws_provider {
+              if ($0 ~ /^[[:space:]]*alias[[:space:]]*=[[:space:]]*"[A-Za-z0-9_]+"/) {
+                alias = $0
+                sub(/^[^"]*"/, "", alias)
+                sub(/".*$/, "", alias)
+                print alias
+              }
+
+              depth += brace_delta($0)
+              if (depth == 0) {
+                in_aws_provider = 0
+              }
+            }
+          ' *.tf | sort -u)"
+          AWS_MISSING_ALIASES="$(
+            for alias in ${AWS_ALIASES}; do
+              if ! grep -qx "${alias}" <<< "${AWS_CONFIGURED_ALIASES}"; then
+                echo "${alias}"
+              fi
+            done
+          )"
+
+          if [[ -n "${AWS_MISSING_ALIASES}" ]]; then
             # Terraform ignores dot-prefixed files, so this must not start with "."
             AUTO_PROVIDER_FILE="tfvalidate.providers.auto.tf"
             {
@@ -89,7 +129,7 @@ jobs:
               echo
             } > "${AUTO_PROVIDER_FILE}"
 
-            for alias in ${AWS_ALIASES}; do
+            for alias in ${AWS_MISSING_ALIASES}; do
               {
                 echo 'provider "aws" {'
                 echo "  alias  = \"${alias}\""
@@ -99,7 +139,7 @@ jobs:
               } >> "${AUTO_PROVIDER_FILE}"
             done
 
-            echo "Generated ${AUTO_PROVIDER_FILE} for aliases: ${AWS_ALIASES}"
+            echo "Generated ${AUTO_PROVIDER_FILE} for missing aliases: ${AWS_MISSING_ALIASES}"
           fi
 
           terraform init -backend=false
