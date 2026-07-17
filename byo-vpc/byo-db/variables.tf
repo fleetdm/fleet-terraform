@@ -326,33 +326,33 @@ variable "fleet_config" {
       name = "fleetdm-execution-role"
     })
     software_installers = optional(object({
-      create_bucket                         = optional(bool, true)
-      bucket_name                           = optional(string, null)
-      bucket_prefix                         = optional(string, "fleet-software-installers-")
-      s3_object_prefix                      = optional(string, "")
-      cloudfront_distribution_arn           = optional(string, null)
-      enable_bucket_versioning              = optional(bool, false)
-      expire_noncurrent_versions            = optional(bool, true)
-      noncurrent_version_expiration_days    = optional(number, 30)
-      create_kms_key                        = optional(bool, false)
-      kms_key_arn                           = optional(string, null)
-      kms_alias                             = optional(string, "fleet-software-installers")
-      extra_kms_policies                    = optional(list(any), [])
-      tags                                  = optional(map(string), {})
+      create_bucket                      = optional(bool, true)
+      bucket_name                        = optional(string, null)
+      bucket_prefix                      = optional(string, "fleet-software-installers-")
+      s3_object_prefix                   = optional(string, "")
+      cloudfront_distribution_arn        = optional(string, null)
+      enable_bucket_versioning           = optional(bool, false)
+      expire_noncurrent_versions         = optional(bool, true)
+      noncurrent_version_expiration_days = optional(number, 30)
+      create_kms_key                     = optional(bool, false)
+      kms_key_arn                        = optional(string, null)
+      kms_alias                          = optional(string, "fleet-software-installers")
+      extra_kms_policies                 = optional(list(any), [])
+      tags                               = optional(map(string), {})
       }), {
-      create_bucket                         = true
-      bucket_name                           = null
-      bucket_prefix                         = "fleet-software-installers-"
-      s3_object_prefix                      = ""
-      cloudfront_distribution_arn           = null
-      enable_bucket_versioning              = false
-      expire_noncurrent_versions            = true
-      noncurrent_version_expiration_days    = 30
-      create_kms_key                        = false
-      kms_key_arn                           = null
-      kms_alias                             = "fleet-software-installers"
-      extra_kms_policies                    = []
-      tags                                  = {}
+      create_bucket                      = true
+      bucket_name                        = null
+      bucket_prefix                      = "fleet-software-installers-"
+      s3_object_prefix                   = ""
+      cloudfront_distribution_arn        = null
+      enable_bucket_versioning           = false
+      expire_noncurrent_versions         = true
+      noncurrent_version_expiration_days = 30
+      create_kms_key                     = false
+      kms_key_arn                        = null
+      kms_alias                          = "fleet-software-installers"
+      extra_kms_policies                 = []
+      tags                               = {}
     })
   })
   default = {
@@ -454,19 +454,19 @@ variable "fleet_config" {
       }
     }
     software_installers = {
-      create_bucket                         = true
-      bucket_name                           = null
-      bucket_prefix                         = "fleet-software-installers-"
-      s3_object_prefix                      = ""
-      cloudfront_distribution_arn           = null
-      enable_bucket_versioning              = false
-      expire_noncurrent_versions            = true
-      noncurrent_version_expiration_days    = 30
-      create_kms_key                        = false
-      kms_key_arn                           = null
-      kms_alias                             = "fleet-software-installers"
-      extra_kms_policies                    = []
-      tags                                  = {}
+      create_bucket                      = true
+      bucket_name                        = null
+      bucket_prefix                      = "fleet-software-installers-"
+      s3_object_prefix                   = ""
+      cloudfront_distribution_arn        = null
+      enable_bucket_versioning           = false
+      expire_noncurrent_versions         = true
+      noncurrent_version_expiration_days = 30
+      create_kms_key                     = false
+      kms_key_arn                        = null
+      kms_alias                          = "fleet-software-installers"
+      extra_kms_policies                 = []
+      tags                               = {}
     }
   }
   description = "The configuration object for Fleet itself. Fields that default to null will have their respective resources created if not specified. For published KMS blocks, legacy `enabled` is deprecated and still accepted; prefer `cmk_enabled`."
