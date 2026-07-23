@@ -60,7 +60,7 @@ locals {
       effect = "Allow"
       principals = {
         type        = "Service"
-        identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
+        identifiers = ["logs.${data.aws_region.current.region}.amazonaws.com"]
       }
       actions = [
         "kms:Encrypt*",
@@ -252,7 +252,7 @@ resource "aws_ecs_task_definition" "backend" {
             logDriver = "awslogs"
             options = {
               awslogs-group         = var.fleet_config.awslogs.create == true ? aws_cloudwatch_log_group.main[0].name : var.fleet_config.awslogs.name
-              awslogs-region        = var.fleet_config.awslogs.create == true ? data.aws_region.current.id : var.fleet_config.awslogs.region
+              awslogs-region        = var.fleet_config.awslogs.create == true ? data.aws_region.current.region : var.fleet_config.awslogs.region
               awslogs-stream-prefix = var.fleet_config.awslogs.prefix
             }
           }

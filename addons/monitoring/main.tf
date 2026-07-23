@@ -64,7 +64,7 @@ locals {
       effect = "Allow"
       principals = {
         type        = "Service"
-        identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
+        identifiers = ["logs.${data.aws_region.current.region}.amazonaws.com"]
       }
       actions = [
         "kms:Encrypt*",
@@ -93,7 +93,7 @@ locals {
           test     = "StringLike"
           variable = "kms:EncryptionContext:aws:lambda:FunctionArn"
           values = [
-            "arn:${data.aws_partition.current.partition}:lambda:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:function:${local.cron_monitoring_lambda_function_name}"
+            "arn:${data.aws_partition.current.partition}:lambda:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:function:${local.cron_monitoring_lambda_function_name}"
           ]
         }
       ]

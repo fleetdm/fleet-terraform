@@ -124,7 +124,7 @@ locals {
       effect = "Allow"
       principals = {
         type        = "Service"
-        identifiers = ["logs.${data.aws_region.current.id}.amazonaws.com"]
+        identifiers = ["logs.${data.aws_region.current.region}.amazonaws.com"]
       }
       actions = [
         "kms:Encrypt*",

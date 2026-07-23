@@ -191,31 +191,181 @@ variable "rds_config" {
     serverless_max_capacity      = 10
     restore_to_point_in_time     = {}
   }
-  description = "The config for the terraform-aws-modules/rds-aurora/aws module"
+  description = "The config for the terraform-aws-modules/rds-aurora/aws module. Deprecated: use rds_configs instead."
   nullable    = false
   validation {
-    condition     = var.rds_config.backtrack_window == null || (var.rds_config.backtrack_window >= 0 && var.rds_config.backtrack_window <= 259200)
+    condition     = var.rds_configs != null || var.rds_config.backtrack_window == null || (var.rds_config.backtrack_window >= 0 && var.rds_config.backtrack_window <= 259200)
     error_message = "rds_config.backtrack_window must be null or between 0 and 259200 seconds."
   }
   validation {
-    condition     = var.rds_config.observability.database_insights_mode == null || contains(["standard", "advanced"], var.rds_config.observability.database_insights_mode)
+    condition     = var.rds_configs != null || var.rds_config.observability.database_insights_mode == null || contains(["standard", "advanced"], var.rds_config.observability.database_insights_mode)
     error_message = "rds_config.observability.database_insights_mode must be null, \"standard\", or \"advanced\"."
   }
   validation {
-    condition     = var.rds_config.observability.database_insights_mode != "advanced" || var.rds_config.observability.performance_insights_enabled == true
+    condition     = var.rds_configs != null || var.rds_config.observability.database_insights_mode != "advanced" || var.rds_config.observability.performance_insights_enabled == true
     error_message = "rds_config.observability.performance_insights_enabled must be true when database_insights_mode is \"advanced\"."
   }
   validation {
-    condition     = var.rds_config.observability.database_insights_mode != "advanced" || var.rds_config.monitoring_interval > 0
+    condition     = var.rds_configs != null || var.rds_config.observability.database_insights_mode != "advanced" || var.rds_config.monitoring_interval > 0
     error_message = "rds_config.monitoring_interval must be greater than 0 when database_insights_mode is \"advanced\"."
   }
   validation {
-    condition     = var.rds_config.observability.database_insights_mode != "advanced" || var.rds_config.observability.retention_period == null || var.rds_config.observability.retention_period >= 465
+    condition     = var.rds_configs != null || var.rds_config.observability.database_insights_mode != "advanced" || var.rds_config.observability.retention_period == null || var.rds_config.observability.retention_period >= 465
     error_message = "rds_config.observability.retention_period must be at least 465 when database_insights_mode is \"advanced\"."
   }
   validation {
-    condition     = var.rds_config.observability.performance_insights_enabled == true || (var.rds_config.observability.database_insights_mode == null && var.rds_config.observability.kms.cmk_enabled == false && var.rds_config.observability.kms.kms_key_arn == null)
+    condition     = var.rds_configs != null || var.rds_config.observability.performance_insights_enabled == true || (var.rds_config.observability.database_insights_mode == null && var.rds_config.observability.kms.cmk_enabled == false && var.rds_config.observability.kms.kms_key_arn == null)
     error_message = "When performance_insights_enabled is false, database_insights_mode must be null and observability KMS must be disabled."
+  }
+}
+
+variable "rds_configs" {
+  description = "Map of named Aurora cluster configurations for blue-green cutovers. When set, rds_config is ignored."
+  type = map(object({
+    name                            = optional(string, "fleet")
+    engine_version                  = optional(string, "8.0.mysql_aurora.3.07.1")
+    instance_class                  = optional(string, "db.t4g.large")
+    subnets                         = optional(list(string), [])
+    allowed_security_groups         = optional(list(string), [])
+    allowed_cidr_blocks             = optional(list(string), [])
+    apply_immediately               = optional(bool, true)
+    monitoring_interval             = optional(number, 10)
+    backtrack_window                = optional(number, null)
+    db_parameter_group_name         = optional(string)
+    db_parameters                   = optional(map(string), {})
+    db_cluster_parameter_group_name = optional(string)
+    db_cluster_parameters           = optional(map(string), {})
+    enabled_cloudwatch_logs_exports = optional(list(string), [])
+    final_snapshot_identifier       = optional(string, null)
+    password_secret_kms = optional(object({
+      cmk_enabled        = optional(bool, false)
+      kms_key_arn        = optional(string, null)
+      kms_alias          = optional(string, "fleet-rds-password-secret")
+      extra_kms_policies = optional(list(any), [])
+      }), {
+      cmk_enabled        = false
+      kms_key_arn        = null
+      kms_alias          = "fleet-rds-password-secret"
+      extra_kms_policies = []
+    })
+    storage_kms = optional(object({
+      cmk_enabled        = optional(bool, false)
+      kms_key_arn        = optional(string, null)
+      kms_alias          = optional(string, "fleet-rds-storage")
+      extra_kms_policies = optional(list(any), [])
+      }), {
+      cmk_enabled        = false
+      kms_key_arn        = null
+      kms_alias          = "fleet-rds-storage"
+      extra_kms_policies = []
+    })
+    observability = optional(object({
+      performance_insights_enabled = optional(bool, true)
+      retention_period             = optional(number, null)
+      database_insights_mode       = optional(string, null)
+      kms = optional(object({
+        cmk_enabled        = optional(bool, false)
+        kms_key_arn        = optional(string, null)
+        kms_alias          = optional(string, "fleet-rds-performance-insights")
+        extra_kms_policies = optional(list(any), [])
+        }), {
+        cmk_enabled        = false
+        kms_key_arn        = null
+        kms_alias          = "fleet-rds-performance-insights"
+        extra_kms_policies = []
+      })
+      }), {
+      performance_insights_enabled = true
+      retention_period             = null
+      database_insights_mode       = null
+      kms = {
+        cmk_enabled        = false
+        kms_key_arn        = null
+        kms_alias          = "fleet-rds-performance-insights"
+        extra_kms_policies = []
+      }
+    })
+    cloudwatch_log_group = optional(object({
+      retention_in_days = optional(number, null)
+      skip_destroy      = optional(bool, false)
+      kms = optional(object({
+        cmk_enabled        = optional(bool, false)
+        kms_key_arn        = optional(string, null)
+        kms_alias          = optional(string, "fleet-rds-logs")
+        extra_kms_policies = optional(list(any), [])
+        }), {
+        cmk_enabled        = false
+        kms_key_arn        = null
+        kms_alias          = "fleet-rds-logs"
+        extra_kms_policies = []
+      })
+      }), {
+      retention_in_days = null
+      skip_destroy      = false
+      kms = {
+        cmk_enabled        = false
+        kms_key_arn        = null
+        kms_alias          = "fleet-rds-logs"
+        extra_kms_policies = []
+      }
+    })
+    master_username              = optional(string, "fleet")
+    database_name                = optional(string, "fleet")
+    snapshot_identifier          = optional(string)
+    cluster_tags                 = optional(map(string), {})
+    preferred_maintenance_window = optional(string, "thu:23:00-fri:00:00")
+    skip_final_snapshot          = optional(bool, true)
+    backup_retention_period      = optional(number, 7)
+    replicas                     = optional(number, 2)
+    serverless                   = optional(bool, false)
+    serverless_min_capacity      = optional(number, 2)
+    serverless_max_capacity      = optional(number, 10)
+    restore_to_point_in_time     = optional(map(string), {})
+  }))
+  default = null
+
+  validation {
+    condition     = var.rds_configs == null || length(var.rds_configs) > 0
+    error_message = "rds_configs must contain at least one cluster configuration when set."
+  }
+  validation {
+    condition     = var.rds_configs == null || length(distinct([for config in values(var.rds_configs) : config.name])) == length(var.rds_configs)
+    error_message = "Each rds_configs entry must use a unique name."
+  }
+  validation {
+    condition     = var.rds_configs == null || alltrue([for config in values(var.rds_configs) : config.backtrack_window == null || (config.backtrack_window >= 0 && config.backtrack_window <= 259200)])
+    error_message = "Each rds_configs backtrack_window must be null or between 0 and 259200 seconds."
+  }
+  validation {
+    condition     = var.rds_configs == null || alltrue([for config in values(var.rds_configs) : config.observability.database_insights_mode == null || contains(["standard", "advanced"], config.observability.database_insights_mode)])
+    error_message = "Each rds_configs observability.database_insights_mode must be null, \"standard\", or \"advanced\"."
+  }
+  validation {
+    condition     = var.rds_configs == null || alltrue([for config in values(var.rds_configs) : config.observability.database_insights_mode != "advanced" || config.observability.performance_insights_enabled == true])
+    error_message = "Each rds_configs observability.performance_insights_enabled must be true when database_insights_mode is \"advanced\"."
+  }
+  validation {
+    condition     = var.rds_configs == null || alltrue([for config in values(var.rds_configs) : config.observability.database_insights_mode != "advanced" || config.monitoring_interval > 0])
+    error_message = "Each rds_configs monitoring_interval must be greater than 0 when database_insights_mode is \"advanced\"."
+  }
+  validation {
+    condition     = var.rds_configs == null || alltrue([for config in values(var.rds_configs) : config.observability.database_insights_mode != "advanced" || config.observability.retention_period == null || config.observability.retention_period >= 465])
+    error_message = "Each rds_configs observability.retention_period must be at least 465 when database_insights_mode is \"advanced\"."
+  }
+  validation {
+    condition     = var.rds_configs == null || alltrue([for config in values(var.rds_configs) : config.observability.performance_insights_enabled == true || (config.observability.database_insights_mode == null && config.observability.kms.cmk_enabled == false && config.observability.kms.kms_key_arn == null)])
+    error_message = "When performance_insights_enabled is false, database_insights_mode must be null and observability KMS must be disabled for that rds_configs entry."
+  }
+}
+
+variable "active_rds_config_name" {
+  description = "Name of the rds_configs entry used by Fleet. Defaults to the synthetic current entry when using legacy rds_config."
+  type        = string
+  default     = "current"
+
+  validation {
+    condition     = var.rds_configs == null ? var.active_rds_config_name == "current" : contains(keys(var.rds_configs), var.active_rds_config_name)
+    error_message = "active_rds_config_name must be current when using rds_config, or a key present in rds_configs."
   }
 }
 
@@ -597,33 +747,33 @@ variable "fleet_config" {
       name = "fleetdm-execution-role"
     })
     software_installers = optional(object({
-      create_bucket                         = optional(bool, true)
-      bucket_name                           = optional(string, null)
-      bucket_prefix                         = optional(string, "fleet-software-installers-")
-      s3_object_prefix                      = optional(string, "")
-      cloudfront_distribution_arn           = optional(string, null)
-      enable_bucket_versioning              = optional(bool, false)
-      expire_noncurrent_versions            = optional(bool, true)
-      noncurrent_version_expiration_days    = optional(number, 30)
-      create_kms_key                        = optional(bool, false)
-      kms_key_arn                           = optional(string, null)
-      kms_alias                             = optional(string, "fleet-software-installers")
-      extra_kms_policies                    = optional(list(any), [])
-      tags                                  = optional(map(string), {})
+      create_bucket                      = optional(bool, true)
+      bucket_name                        = optional(string, null)
+      bucket_prefix                      = optional(string, "fleet-software-installers-")
+      s3_object_prefix                   = optional(string, "")
+      cloudfront_distribution_arn        = optional(string, null)
+      enable_bucket_versioning           = optional(bool, false)
+      expire_noncurrent_versions         = optional(bool, true)
+      noncurrent_version_expiration_days = optional(number, 30)
+      create_kms_key                     = optional(bool, false)
+      kms_key_arn                        = optional(string, null)
+      kms_alias                          = optional(string, "fleet-software-installers")
+      extra_kms_policies                 = optional(list(any), [])
+      tags                               = optional(map(string), {})
       }), {
-      create_bucket                         = true
-      bucket_name                           = null
-      bucket_prefix                         = "fleet-software-installers-"
-      s3_object_prefix                      = ""
-      cloudfront_distribution_arn           = null
-      enable_bucket_versioning              = false
-      expire_noncurrent_versions            = true
-      noncurrent_version_expiration_days    = 30
-      create_kms_key                        = false
-      kms_key_arn                           = null
-      kms_alias                             = "fleet-software-installers"
-      extra_kms_policies                    = []
-      tags                                  = {}
+      create_bucket                      = true
+      bucket_name                        = null
+      bucket_prefix                      = "fleet-software-installers-"
+      s3_object_prefix                   = ""
+      cloudfront_distribution_arn        = null
+      enable_bucket_versioning           = false
+      expire_noncurrent_versions         = true
+      noncurrent_version_expiration_days = 30
+      create_kms_key                     = false
+      kms_key_arn                        = null
+      kms_alias                          = "fleet-software-installers"
+      extra_kms_policies                 = []
+      tags                               = {}
     })
   })
   default = {
@@ -726,19 +876,19 @@ variable "fleet_config" {
       }
     }
     software_installers = {
-      create_bucket                         = true
-      bucket_name                           = null
-      bucket_prefix                         = "fleet-software-installers-"
-      s3_object_prefix                      = ""
-      cloudfront_distribution_arn           = null
-      enable_bucket_versioning              = false
-      expire_noncurrent_versions            = true
-      noncurrent_version_expiration_days    = 30
-      create_kms_key                        = false
-      kms_key_arn                           = null
-      kms_alias                             = "fleet-software-installers"
-      extra_kms_policies                    = []
-      tags                                  = {}
+      create_bucket                      = true
+      bucket_name                        = null
+      bucket_prefix                      = "fleet-software-installers-"
+      s3_object_prefix                   = ""
+      cloudfront_distribution_arn        = null
+      enable_bucket_versioning           = false
+      expire_noncurrent_versions         = true
+      noncurrent_version_expiration_days = 30
+      create_kms_key                     = false
+      kms_key_arn                        = null
+      kms_alias                          = "fleet-software-installers"
+      extra_kms_policies                 = []
+      tags                               = {}
     }
   }
   validation {
