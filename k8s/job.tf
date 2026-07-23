@@ -103,7 +103,7 @@ resource "kubernetes_job" "migration" {
           dynamic "env" {
             for_each = local.database.tls.enabled ? [
               { name = "FLEET_MYSQL_TLS_CA", value = "/secrets/mysql/${local.database.tls.ca_cert_key}" },
-              { name = "FLEET_MYSQL_TLS_CERT", value = "/secrets/mysql/${local.database.tls.cert_secret_key}" },
+              { name = "FLEET_MYSQL_TLS_CERT", value = "/secrets/mysql/${local.database.tls.cert_key}" },
               { name = "FLEET_MYSQL_TLS_KEY", value = "/secrets/mysql/${local.database.tls.key_key}" },
               { name = "FLEET_MYSQL_TLS_CONFIG", value = local.database.tls.config },
               { name = "FLEET_MYSQL_TLS_SERVER_NAME", value = local.database.tls.server_name }
@@ -223,7 +223,7 @@ resource "kubernetes_job" "migration" {
           for_each = local.database.tls.enabled ? [
             {
               name        = "mysql-tls",
-              secret_name = local.database.tls.secret_name
+              secret_name = local.database.secret_name
             }
           ] : []
 
