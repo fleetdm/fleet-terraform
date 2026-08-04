@@ -10,6 +10,8 @@ module "private-service-access" {
   project_id      = var.project_id
   vpc_network     = module.vpc.network_name
   deletion_policy = "ABANDON"
+
+  depends_on = [module.vpc]
 }
 
 module "mysql" {
@@ -18,7 +20,7 @@ module "mysql" {
 
   name                 = var.database_config.name
   project_id           = var.project_id
-  deletion_protection  = var.database_config.deletion_protection
+  deletion_protection  = var.allow_destroy ? false : var.database_config.deletion_protection
   database_version     = var.database_config.database_version
   tier                 = var.database_config.tier
   region               = var.region

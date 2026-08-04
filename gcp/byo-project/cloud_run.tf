@@ -12,7 +12,11 @@ locals {
       version = "latest"
     },
     FLEET_SERVER_PRIVATE_KEY = {
-      secret  = google_secret_manager_secret.private_key.secret_id
+      secret  = local.fleet_private_key_secret_name
+      version = "latest"
+    },
+    FLEET_S3_SOFTWARE_INSTALLERS_SECRET_ACCESS_KEY = {
+      secret  = google_secret_manager_secret.hmac_secret.secret_id
       version = "latest"
     }
   })
@@ -25,21 +29,20 @@ locals {
     FLEET_MYSQL_DATABASE   = var.database_config.database_name
     FLEET_REDIS_ADDRESS    = "${module.memstore.host}:${module.memstore.port}"
     FLEET_REDIS_USE_TLS    = "false"
-    #FLEET_UPGRADES_ALLOW_MISSING_MIGRATIONS          = "1"
+    # FLEET_UPGRADES_ALLOW_MISSING_MIGRATIONS          = "1"
     FLEET_LOGGING_JSON                               = "true"
     FLEET_LOGGING_DEBUG                              = var.fleet_config.debug_logging
     FLEET_SERVER_TLS                                 = "false"
     FLEET_S3_SOFTWARE_INSTALLERS_BUCKET              = google_storage_bucket.software_installers.id
     FLEET_S3_SOFTWARE_INSTALLERS_ACCESS_KEY_ID       = google_storage_hmac_key.key.access_id
-    FLEET_S3_SOFTWARE_INSTALLERS_SECRET_ACCESS_KEY   = google_storage_hmac_key.key.secret
     FLEET_S3_SOFTWARE_INSTALLERS_ENDPOINT_URL        = "https://storage.googleapis.com"
     FLEET_S3_SOFTWARE_INSTALLERS_FORCE_S3_PATH_STYLE = "true"
     FLEET_S3_SOFTWARE_INSTALLERS_REGION              = var.region
   })
 
   fleet_vpc_network_id = module.vpc.network_id
-  # Use the direct construction for the subnet ID key as discussed
-  fleet_vpc_subnet_id = "fleet-subnet"
+  # Use the subnet name from vpc_config variable
+  fleet_vpc_subnet_id = var.vpc_config.subnets[0].subnet_name
 }
 
 module "fleet-service" {
@@ -121,9 +124,10 @@ module "fleet-service" {
 # --- Cloud Run Job (Migrations) ---
 resource "google_cloud_run_v2_job" "fleet_migration_job" {
 
-  name     = "fleet-migration"
-  location = var.region
-  project  = var.project_id
+  name                = "fleet-migration"
+  location            = var.region
+  project             = var.project_id
+  deletion_protection = false
 
   template {
     template {                                                    # Double template for jobs
@@ -207,15 +211,11 @@ resource "google_compute_region_network_endpoint_group" "neg" {
   name                  = "${var.prefix}-neg"
   region                = var.region
   project               = var.project_id
-  network_endpoint_type = "SERVERLESS" # This type works for Cloud Run v2 services
+  network_endpoint_type = "SERVERLESS"
   cloud_run {
     service = module.fleet-service.service_name
   }
   depends_on = [module.fleet-service]
-}
-
-data "google_project" "project" {
-  project_id = var.project_id
 }
 
 resource "google_cloud_run_v2_service_iam_member" "allow_lb_invoker" {
