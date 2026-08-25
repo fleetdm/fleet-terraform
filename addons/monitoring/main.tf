@@ -259,7 +259,6 @@ resource "aws_cloudwatch_metric_alarm" "elb_5xx_error_rate" {
   alarm_name          = "${var.customer_prefix}-elb-5xx-error-rate-${each.value.name}"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = tostring(each.value.alert_thresholds.elb_5xx_error_rate.evaluation_periods)
-  threshold_metric_id = "e1"
   threshold           = each.value.alert_thresholds.elb_5xx_error_rate.threshold_percent
   treat_missing_data  = "notBreaching"
   alarm_description   = "Percentage of requests receiving an ELB-generated 5XX response (HTTPCode_ELB_5XX_Count / RequestCount, with the denominator floored at 1) exceeded ${each.value.alert_thresholds.elb_5xx_error_rate.threshold_percent}% on load balancer \"${each.value.name}\". Either the lb cannot talk with the Fleet backend target or Fleet is returning an error."
@@ -311,7 +310,6 @@ resource "aws_cloudwatch_metric_alarm" "target_5xx_error_rate" {
   alarm_name          = "${var.customer_prefix}-target-5xx-error-rate-${each.value.name}"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = tostring(each.value.alert_thresholds.target_5xx_error_rate.evaluation_periods)
-  threshold_metric_id = "e1"
   threshold           = each.value.alert_thresholds.target_5xx_error_rate.threshold_percent
   treat_missing_data  = "notBreaching"
   alarm_description   = "Percentage of requests receiving a target-generated 5XX response (HTTPCode_Target_5XX_Count / RequestCount, with the denominator floored at 1) exceeded ${each.value.alert_thresholds.target_5xx_error_rate.threshold_percent}% on load balancer \"${each.value.name}\". The Fleet backend is returning errors."
