@@ -26,6 +26,28 @@ variable "albs" {
           period    = number
           threshold = number
         })
+        elb_5xx_error_rate = optional(object({
+          enabled            = optional(bool, true)
+          threshold_percent  = optional(number, 1.5)
+          period             = optional(number, 300)
+          evaluation_periods = optional(number, 2)
+          }), {
+          enabled            = true
+          threshold_percent  = 1.5
+          period             = 300
+          evaluation_periods = 2
+        })
+        target_5xx_error_rate = optional(object({
+          enabled            = optional(bool, true)
+          threshold_percent  = optional(number, 1.5)
+          period             = optional(number, 300)
+          evaluation_periods = optional(number, 2)
+          }), {
+          enabled            = true
+          threshold_percent  = 1.5
+          period             = 300
+          evaluation_periods = 2
+        })
       }),
       {
         HTTPCode_ELB_5XX_Count = {
