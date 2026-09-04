@@ -13,8 +13,19 @@ resource "aws_lb_trust_store" "this" {
 
 }
 
+locals {
+  # Canonical name per variables.tf/README; legacy "revocation_lists" kept as a
+  # compatibility alias for existing callers (trust_store is typed any, so both
+  # shapes are valid in the wild). Canonical wins if both are present.
+  trust_store_revocation_lists = try(
+    var.alb_config.trust_store.trust_store_revocation_lists,
+    var.alb_config.trust_store.revocation_lists,
+    {}
+  )
+}
+
 resource "aws_lb_trust_store_revocation" "this" {
-  for_each = var.alb_config.trust_store.create_trust_store_revocation && var.alb_config.trust_store.revocation_lists != null ? var.alb_config.trust_store.revocation_lists : {}
+  for_each = var.alb_config.trust_store.create_trust_store_revocation && local.trust_store_revocation_lists != null ? local.trust_store_revocation_lists : {}
 
   trust_store_arn               = aws_lb_trust_store.this.arn
   revocations_s3_bucket         = module.lb_trust_store_bucket.s3_bucket_id
@@ -125,12 +136,15 @@ module "okta_mtls_alb" {
   target_groups = {
     "tg-0" = {
       name              = var.alb_config.name
-      backend_protocol  = "HTTP"
-      backend_port      = 80
+      protocol          = var.alb_config.backend.protocol
+      port              = var.alb_config.backend.port
       target_type       = "ip"
       create_attachment = false
       health_check = {
-        path                = "/healthz"
+        path = "/healthz"
+        # Must match the TG protocol (AWS requires HTTPS HC for HTTPS TGs) —
+        # same merge-to-match as byo-db's fleet_target_group.
+        protocol            = var.alb_config.backend.protocol
         matcher             = "200"
         timeout             = 10
         interval            = 15
