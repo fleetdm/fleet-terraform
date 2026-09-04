@@ -46,6 +46,15 @@ variable "alb_config" {
     internal                   = optional(bool, false)
     enable_deletion_protection = optional(bool, false)
     subdomain_prefix           = optional(string, "okta")
+    # Backend protocol/port for tg-0. Defaults preserve current behavior (HTTP:80).
+    # Set protocol = "HTTPS" and port = 8080 when the Fleet backend terminates TLS.
+    backend = optional(object({
+      protocol = optional(string, "HTTP")
+      port     = optional(number, 80)
+      }), {
+      protocol = "HTTP"
+      port     = 80
+    })
     trust_store = optional(any, {
       ca_certificates_bundle_s3_key            = "ca.pem"
       ca_certificates_bundle_s3_object_version = null
