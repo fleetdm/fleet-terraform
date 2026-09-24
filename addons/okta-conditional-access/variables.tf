@@ -41,7 +41,7 @@ variable "alb_config" {
     https_listener_rules       = optional(any, [])
     https_overrides            = optional(any, {})
     xff_header_processing_mode = optional(string, null)
-    tls_policy                 = optional(string, "ELBSecurityPolicy-TLS13-1-2-2021-06")
+    tls_policy                 = optional(string, "ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09")
     idle_timeout               = optional(number, 60)
     internal                   = optional(bool, false)
     enable_deletion_protection = optional(bool, false)
