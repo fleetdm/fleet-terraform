@@ -2,6 +2,18 @@ variable "project_name" {
   default = "fleet"
 }
 
+variable "windows_mdm_wstep_identity_cert" {
+  description = "PEM-encoded certificate for Windows MDM WSTEP identity (FLEET_MDM_WINDOWS_WSTEP_IDENTITY_CERT_BYTES)"
+  type        = string
+  sensitive   = true
+}
+
+variable "windows_mdm_wstep_identity_key" {
+  description = "PEM-encoded private key for Windows MDM WSTEP identity (FLEET_MDM_WINDOWS_WSTEP_IDENTITY_KEY_BYTES)"
+  type        = string
+  sensitive   = true
+}
+
 variable "org_id" {
   description = "organization id"
 }
