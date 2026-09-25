@@ -25,7 +25,7 @@ locals {
   tmp_mount = { sourceVolume = "fleet-tmp", containerPath = "/tmp", readOnly = false }
   tmp_containers = var.fleet_config.readonly_root_filesystem ? [{
     name                   = "fleet-tmp-permissions"
-    image                  = var.fleet_config.tmp_permissions_image
+    image                  = var.fleet_config.image
     essential              = false
     user                   = "0"
     command                = ["chmod", "1777", "/tmp"]
