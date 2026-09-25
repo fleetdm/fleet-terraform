@@ -246,8 +246,9 @@ resource "aws_ecs_task_definition" "backend" {
               protocol      = "tcp"
             }
           ]
-          repositoryCredentials = local.repository_credentials
-          networkMode           = "awsvpc"
+          repositoryCredentials  = local.repository_credentials
+          networkMode            = "awsvpc"
+          readonlyRootFilesystem = var.fleet_config.readonly_root_filesystem
           logConfiguration = {
             logDriver = "awslogs"
             options = {
