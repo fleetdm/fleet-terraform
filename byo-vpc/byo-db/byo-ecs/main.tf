@@ -19,6 +19,32 @@ locals {
       credentialsParameter = var.fleet_config.repository_credentials
     }
   } : null
+
+  # A read only root also locks the image's /tmp, so it moves to a task volume. Fargate
+  # creates that root owned 0755 and the image runs as USER fleet, hence the chmod container.
+  tmp_mount = { sourceVolume = "fleet-tmp", containerPath = "/tmp", readOnly = false }
+  tmp_containers = var.fleet_config.readonly_root_filesystem ? [{
+    name                   = "fleet-tmp-permissions"
+    image                  = var.fleet_config.tmp_permissions_image
+    essential              = false
+    user                   = "0"
+    command                = ["chmod", "1777", "/tmp"]
+    readonlyRootFilesystem = true
+    mountPoints            = [local.tmp_mount]
+    logConfiguration       = local.log_configuration
+  }] : []
+  mount_points = concat(var.fleet_config.mount_points, var.fleet_config.readonly_root_filesystem ? [local.tmp_mount] : [])
+  depends_on   = concat(var.fleet_config.depends_on, [for c in local.tmp_containers : { containerName = c.name, condition = "SUCCESS" }])
+  volumes      = concat(var.fleet_config.volumes, var.fleet_config.readonly_root_filesystem ? [{ name = "fleet-tmp" }] : [])
+  log_configuration = {
+    logDriver = "awslogs"
+    options = {
+      awslogs-group         = var.fleet_config.awslogs.create == true ? aws_cloudwatch_log_group.main[0].name : var.fleet_config.awslogs.name
+      awslogs-region        = var.fleet_config.awslogs.create == true ? data.aws_region.current.region : var.fleet_config.awslogs.region
+      awslogs-stream-prefix = var.fleet_config.awslogs.prefix
+    }
+  }
+
   private_key_secret_is_module_managed = var.fleet_config.private_key_secret_arn == null
   private_key_secret_arn               = local.private_key_secret_is_module_managed ? aws_secretsmanager_secret.fleet_server_private_key[0].arn : var.fleet_config.private_key_secret_arn
   private_key_secret_cmk_enabled       = coalesce(var.fleet_config.private_key_secret_kms.cmk_enabled, var.fleet_config.private_key_secret_kms.enabled, false)
@@ -235,8 +261,8 @@ resource "aws_ecs_task_definition" "backend" {
           image       = var.fleet_config.image
           cpu         = var.fleet_config.cpu
           memory      = var.fleet_config.mem
-          mountPoints = var.fleet_config.mount_points
-          dependsOn   = var.fleet_config.depends_on
+          mountPoints = local.mount_points
+          dependsOn   = local.depends_on
           volumesFrom = []
           essential   = true
           portMappings = [
@@ -249,14 +275,7 @@ resource "aws_ecs_task_definition" "backend" {
           repositoryCredentials  = local.repository_credentials
           networkMode            = "awsvpc"
           readonlyRootFilesystem = var.fleet_config.readonly_root_filesystem
-          logConfiguration = {
-            logDriver = "awslogs"
-            options = {
-              awslogs-group         = var.fleet_config.awslogs.create == true ? aws_cloudwatch_log_group.main[0].name : var.fleet_config.awslogs.name
-              awslogs-region        = var.fleet_config.awslogs.create == true ? data.aws_region.current.region : var.fleet_config.awslogs.region
-              awslogs-stream-prefix = var.fleet_config.awslogs.prefix
-            }
-          }
+          logConfiguration       = local.log_configuration
           ulimits = [
             {
               name      = "nofile"
@@ -331,9 +350,9 @@ resource "aws_ecs_task_definition" "backend" {
           command = var.fleet_config.command
         } : {}
       )
-  ], var.fleet_config.sidecars))
+  ], local.tmp_containers, var.fleet_config.sidecars))
   dynamic "volume" {
-    for_each = var.fleet_config.volumes
+    for_each = local.volumes
     content {
       name      = volume.value.name
       host_path = lookup(volume.value, "host_path", null)

@@ -168,6 +168,7 @@ variable "fleet_config" {
     depends_on                   = optional(list(any), [])
     mount_points                 = optional(list(any), [])
     readonly_root_filesystem     = optional(bool, false)
+    tmp_permissions_image        = optional(string, "public.ecr.aws/docker/library/busybox:1.37.0")
     volumes                      = optional(list(any), [])
     extra_environment_variables  = optional(map(string), {})
     extra_iam_policies           = optional(list(string), [])
@@ -372,6 +373,7 @@ variable "fleet_config" {
     volumes                      = []
     mount_points                 = []
     readonly_root_filesystem     = false
+    tmp_permissions_image        = "public.ecr.aws/docker/library/busybox:1.37.0"
     extra_environment_variables  = {}
     extra_iam_policies           = []
     extra_execution_iam_policies = []
