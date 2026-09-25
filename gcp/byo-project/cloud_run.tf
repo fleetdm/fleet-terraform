@@ -191,16 +191,19 @@ resource "terracurl_request" "exec" {
     Content-Type  = "application/json",
   }
   response_codes = [200]
-  // no-op destroy
-  // we don't use terracurl_request data source as that will result in
-  // repeated job runs on every refresh
-  destroy_url            = "https://run.googleapis.com/v2/${google_cloud_run_v2_job.fleet_migration_job.id}"
-  destroy_method         = "GET"
-  destroy_response_codes = [200]
-  destroy_headers = {
-    Authorization = "Bearer ${data.google_client_config.default.access_token}"
-    Content-Type  = "application/json",
-  }
+  // Destroy is intentionally a no-op: we don't use the terracurl_request
+  // data source, as that would result in repeated job runs on every
+  // refresh. Issuing a real destroy request instead of skipping it doesn't
+  // work reliably anyway: the Authorization header above is a bearer token
+  // captured at create/update time, which is baked into resource state and
+  // will have expired (OAuth access tokens are short-lived, ~1 hour) by the
+  // time this resource is actually destroyed in most real usage. That stale
+  // token causes GCP to reject the destroy request, which the terracurl
+  // provider then reports as an opaque `retries exceeded: <nil>` error
+  // instead of a useful one (see
+  // https://github.com/devops-rob/terraform-provider-terracurl, the
+  // provider fails to record the failing response as the retry error).
+  destroy_skip = true
 }
 
 resource "google_compute_region_network_endpoint_group" "neg" {
