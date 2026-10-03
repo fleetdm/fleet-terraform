@@ -17,6 +17,29 @@ resource "aws_cloudwatch_metric_alarm" "cpu_utilization_too_high" {
   }
 }
 
+// Database load (average active sessions) relative to the instance's vCPU count.
+// Uses the native AWS/RDS DBLoadRelativeToNumVCPUs ratio, published only when
+// Performance Insights / Database Insights is enabled on the instance. A ratio of
+// 1 means AAS equals the vCPU count (e.g. 16 AAS on a 16 vCPU instance).
+resource "aws_cloudwatch_metric_alarm" "rds_aas_too_high" {
+  for_each            = toset(var.mysql_cluster_members)
+  alarm_name          = "rds_aas_too_high-${var.customer_prefix}-${each.key}"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = tostring(var.alert_thresholds.rds_aas.evaluation_periods)
+  metric_name         = "DBLoadRelativeToNumVCPUs"
+  namespace           = "AWS/RDS"
+  period              = tostring(var.alert_thresholds.rds_aas.period)
+  statistic           = "Average"
+  threshold           = var.alert_thresholds.rds_aas.threshold
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Average database load (average active sessions) per vCPU on ${each.key} exceeded ${var.alert_thresholds.rds_aas.threshold} (DBLoadRelativeToNumVCPUs, ${var.alert_thresholds.rds_aas.evaluation_periods} x ${var.alert_thresholds.rds_aas.period}s). Requires Performance Insights / Database Insights."
+  alarm_actions       = lookup(var.sns_topic_arns_map, "rds_aas_too_high", var.default_sns_topic_arns)
+  ok_actions          = lookup(var.sns_topic_arns_map, "rds_aas_too_high", var.default_sns_topic_arns)
+  dimensions = {
+    DBInstanceIdentifier = each.key
+  }
+}
+
 resource "aws_db_event_subscription" "default" {
   count     = length(var.mysql_cluster_members) == 0 || (contains(keys(var.sns_topic_arns_map), "rds_db_event_subscription") == false && length(var.default_sns_topic_arns) == 0) ? 0 : 1
   name      = "rds-event-sub-${var.customer_prefix}"
