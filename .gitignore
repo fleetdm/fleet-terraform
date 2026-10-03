@@ -1,5 +1,9 @@
+.DS_Store
 .external_modules
 .idea
 
 .terraform
 terraform.tfstate*
+terraform.tfvars
+*.key
+*.crt
