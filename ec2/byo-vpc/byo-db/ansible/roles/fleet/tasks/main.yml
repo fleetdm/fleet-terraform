@@ -1,0 +1,79 @@
+---
+- name: Ensure supporting packages are installed
+  ansible.builtin.package:
+    name:
+      - tar
+      - gzip
+    state: present
+
+- name: Ensure Fleet service user exists
+  ansible.builtin.user:
+    name: "{{ fleet_service_user }}"
+    system: true
+    shell: /sbin/nologin
+    create_home: false
+
+- name: Create Fleet directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ fleet_service_user }}"
+    group: "{{ fleet_service_user }}"
+    mode: "0755"
+  loop:
+    - /opt/fleet
+    - /etc/fleet
+
+- name: Download Fleet release archive
+  ansible.builtin.get_url:
+    url: "{{ fleet_download_url }}"
+    dest: "{{ fleet_archive_path }}"
+    mode: "0644"
+    force: true
+  register: fleet_archive
+
+- name: Extract Fleet binaries
+  ansible.builtin.unarchive:
+    src: "{{ fleet_archive_path }}"
+    dest: "{{ fleet_extract_dir }}"
+    remote_src: true
+    owner: "{{ fleet_service_user }}"
+    group: "{{ fleet_service_user }}"
+    mode: "0755"
+    extra_opts:
+      - --strip-components=1
+  when: fleet_archive is changed
+
+- name: Ensure Fleet binary is executable
+  ansible.builtin.file:
+    path: "{{ fleet_binary_path }}"
+    owner: "{{ fleet_service_user }}"
+    group: "{{ fleet_service_user }}"
+    mode: "0755"
+
+- name: Render Fleet environment file
+  ansible.builtin.template:
+    src: fleet_env.j2
+    dest: "{{ fleet_env_file }}"
+    owner: "root"
+    group: "root"
+    mode: "0600"
+  notify:
+    - Restart Fleet
+
+- name: Install Fleet systemd unit
+  ansible.builtin.template:
+    src: fleet.service.j2
+    dest: "/etc/systemd/system/{{ fleet_service_name }}.service"
+    owner: "root"
+    group: "root"
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart Fleet
+
+- name: Enable and start Fleet
+  ansible.builtin.systemd:
+    name: "{{ fleet_service_name }}"
+    enabled: true
+    state: started
