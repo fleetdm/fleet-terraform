@@ -81,6 +81,56 @@ This Terraform project automates the deployment of Fleet Device Management (Flee
 
     ```
 
+### Secret Manager env vars
+
+Use `fleet_config.extra_secret_env_vars` to inject additional Secret Manager-backed environment variables into the Fleet Cloud Run service and migration job. The module grants `roles/secretmanager.secretAccessor` for every secret you provide, but you must create and populate the secrets yourself. If `version` is omitted, it defaults to `latest`.
+
+```hcl
+fleet_config = {
+  extra_secret_env_vars = {
+    FLEET_MDM_WINDOWS_WSTEP_IDENTITY_CERT_BYTES = {
+      secret  = "mdm-wstep-identity-cert"
+      version = "latest"
+    }
+    FLEET_MDM_WINDOWS_WSTEP_IDENTITY_KEY_BYTES = {
+      secret = "mdm-wstep-identity-key"
+    }
+  }
+}
+```
+
+If you want to look up an existing secret, use a data source in configuration (not in `terraform.tfvars`) and merge it into `fleet_config`:
+
+```hcl
+data "google_secret_manager_secret" "mdm_wstep_cert" {
+  project   = module.project_factory.project_id
+  secret_id = "mdm-wstep-identity-cert"
+}
+
+data "google_secret_manager_secret" "mdm_wstep_key" {
+  project   = module.project_factory.project_id
+  secret_id = "mdm-wstep-identity-key"
+}
+
+locals {
+  extra_secret_env_vars = {
+    FLEET_MDM_WINDOWS_WSTEP_IDENTITY_CERT_BYTES = {
+      secret = data.google_secret_manager_secret.mdm_wstep_cert.secret_id
+    }
+    FLEET_MDM_WINDOWS_WSTEP_IDENTITY_KEY_BYTES = {
+      secret = data.google_secret_manager_secret.mdm_wstep_key.secret_id
+    }
+  }
+}
+
+module "fleet" {
+  # ...
+  fleet_config = merge(var.fleet_config, {
+    extra_secret_env_vars = local.extra_secret_env_vars
+  })
+}
+```
+
 **Key Variables to Set:**
 * `org_id`: Your GCP Organization ID.
 *   `billing_account_id`: Your GCP Billing Account ID.
