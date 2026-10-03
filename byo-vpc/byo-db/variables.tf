@@ -167,6 +167,7 @@ variable "fleet_config" {
     sidecars                     = optional(list(any), [])
     depends_on                   = optional(list(any), [])
     mount_points                 = optional(list(any), [])
+    readonly_root_filesystem     = optional(bool, false)
     volumes                      = optional(list(any), [])
     extra_environment_variables  = optional(map(string), {})
     extra_iam_policies           = optional(list(string), [])
@@ -370,6 +371,7 @@ variable "fleet_config" {
     depends_on                   = []
     volumes                      = []
     mount_points                 = []
+    readonly_root_filesystem     = false
     extra_environment_variables  = {}
     extra_iam_policies           = []
     extra_execution_iam_policies = []
