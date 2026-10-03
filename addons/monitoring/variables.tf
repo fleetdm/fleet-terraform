@@ -114,6 +114,15 @@ variable "alert_thresholds" {
       period             = 300
       evaluation_periods = 1
     })
+    rds_aas = optional(object({
+      threshold          = number
+      period             = number
+      evaluation_periods = number
+      }), {
+      threshold          = 1
+      period             = 300
+      evaluation_periods = 1
+    })
     redis_cpu = optional(object({
       threshold          = number
       period             = number
@@ -163,6 +172,11 @@ variable "alert_thresholds" {
   default = {
     rds_cpu = {
       threshold          = 80
+      period             = 300
+      evaluation_periods = 1
+    }
+    rds_aas = {
+      threshold          = 1
       period             = 300
       evaluation_periods = 1
     }
