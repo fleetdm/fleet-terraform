@@ -162,7 +162,7 @@ variable "fleet_config" {
     pid_mode                     = optional(string, null)
     command                      = optional(list(string), null)
     private_key_delivery_method  = optional(string, "ecs")
-    image                        = optional(string, "fleetdm/fleet:v4.89.1")
+    image                        = optional(string, "fleetdm/fleet:v4.93.0")
     family                       = optional(string, "fleet")
     sidecars                     = optional(list(any), [])
     depends_on                   = optional(list(any), [])
@@ -364,7 +364,7 @@ variable "fleet_config" {
     pid_mode                     = null
     command                      = null
     private_key_delivery_method  = "ecs"
-    image                        = "fleetdm/fleet:v4.89.1"
+    image                        = "fleetdm/fleet:v4.93.0"
     family                       = "fleet"
     sidecars                     = []
     depends_on                   = []
@@ -539,7 +539,7 @@ variable "alb_config" {
     https_listener_rules       = optional(any, [])
     https_overrides            = optional(any, {})
     xff_header_processing_mode = optional(string, null)
-    tls_policy                 = optional(string, "ELBSecurityPolicy-TLS13-1-2-2021-06")
+    tls_policy                 = optional(string, "ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09")
     idle_timeout               = optional(number, 905)
     internal                   = optional(bool, false)
     enable_deletion_protection = optional(bool, false)

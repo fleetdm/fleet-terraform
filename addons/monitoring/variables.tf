@@ -26,6 +26,28 @@ variable "albs" {
           period    = number
           threshold = number
         })
+        elb_5xx_error_rate = optional(object({
+          enabled            = optional(bool, true)
+          threshold_percent  = optional(number, 1.5)
+          period             = optional(number, 300)
+          evaluation_periods = optional(number, 2)
+          }), {
+          enabled            = true
+          threshold_percent  = 1.5
+          period             = 300
+          evaluation_periods = 2
+        })
+        target_5xx_error_rate = optional(object({
+          enabled            = optional(bool, true)
+          threshold_percent  = optional(number, 1.5)
+          period             = optional(number, 300)
+          evaluation_periods = optional(number, 2)
+          }), {
+          enabled            = true
+          threshold_percent  = 1.5
+          period             = 300
+          evaluation_periods = 2
+        })
       }),
       {
         HTTPCode_ELB_5XX_Count = {
@@ -92,6 +114,15 @@ variable "alert_thresholds" {
       period             = 300
       evaluation_periods = 1
     })
+    rds_aas = optional(object({
+      threshold          = number
+      period             = number
+      evaluation_periods = number
+      }), {
+      threshold          = 1
+      period             = 300
+      evaluation_periods = 1
+    })
     redis_cpu = optional(object({
       threshold          = number
       period             = number
@@ -141,6 +172,11 @@ variable "alert_thresholds" {
   default = {
     rds_cpu = {
       threshold          = 80
+      period             = 300
+      evaluation_periods = 1
+    }
+    rds_aas = {
+      threshold          = 1
       period             = 300
       evaluation_periods = 1
     }

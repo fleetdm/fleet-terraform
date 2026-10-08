@@ -17,6 +17,29 @@ resource "aws_cloudwatch_metric_alarm" "cpu_utilization_too_high" {
   }
 }
 
+// Database load (average active sessions) relative to the instance's vCPU count.
+// Uses the native AWS/RDS DBLoadRelativeToNumVCPUs ratio, published only when
+// Performance Insights / Database Insights is enabled on the instance. A ratio of
+// 1 means AAS equals the vCPU count (e.g. 16 AAS on a 16 vCPU instance).
+resource "aws_cloudwatch_metric_alarm" "rds_aas_too_high" {
+  for_each            = toset(var.mysql_cluster_members)
+  alarm_name          = "rds_aas_too_high-${var.customer_prefix}-${each.key}"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = tostring(var.alert_thresholds.rds_aas.evaluation_periods)
+  metric_name         = "DBLoadRelativeToNumVCPUs"
+  namespace           = "AWS/RDS"
+  period              = tostring(var.alert_thresholds.rds_aas.period)
+  statistic           = "Average"
+  threshold           = var.alert_thresholds.rds_aas.threshold
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Average database load (average active sessions) per vCPU on ${each.key} exceeded ${var.alert_thresholds.rds_aas.threshold} (DBLoadRelativeToNumVCPUs, ${var.alert_thresholds.rds_aas.evaluation_periods} x ${var.alert_thresholds.rds_aas.period}s). Requires Performance Insights / Database Insights."
+  alarm_actions       = lookup(var.sns_topic_arns_map, "rds_aas_too_high", var.default_sns_topic_arns)
+  ok_actions          = lookup(var.sns_topic_arns_map, "rds_aas_too_high", var.default_sns_topic_arns)
+  dimensions = {
+    DBInstanceIdentifier = each.key
+  }
+}
+
 resource "aws_db_event_subscription" "default" {
   count     = length(var.mysql_cluster_members) == 0 || (contains(keys(var.sns_topic_arns_map), "rds_db_event_subscription") == false && length(var.default_sns_topic_arns) == 0) ? 0 : 1
   name      = "rds-event-sub-${var.customer_prefix}"
@@ -230,6 +253,129 @@ resource "aws_cloudwatch_metric_alarm" "lb" {
   treat_missing_data  = "notBreaching"
   dimensions = {
     LoadBalancer = each.value.arn_suffix
+  }
+}
+
+// 5XX error rate alarms.
+// These alert on the percentage of requests returning a 5XX response instead
+// of an absolute count, so they scale with traffic volume. They are separate
+// from the absolute-count alarms above (`lb`), which remain available for
+// customers who prefer count-based alerting, and each has its own SNS topic
+// key in `sns_topic_arns_map` (`elb_5xx_error_rate` / `target_5xx_error_rate`)
+// so they can be routed to different notification services.
+//
+// RequestCount is only incremented for requests where the load balancer was
+// able to choose a target, so during a full backend outage it can read 0 (or
+// have no data at all) while ELB-generated 503s accumulate. The denominator
+// is therefore floored at 1 with IF(FILL(m2, 1) < 1, 1, FILL(m2, 1)): FILL
+// replaces missing RequestCount data points with 1, and IF bumps any value
+// below 1 up to 1. Sustained 5XX responses with zero routed requests thus
+// evaluate as a 100% error rate and still alarm instead of producing NaN.
+
+locals {
+  elb_5xx_error_rate_alerts    = { for k, v in local.alb_map : k => v if v.alert_thresholds.elb_5xx_error_rate.enabled }
+  target_5xx_error_rate_alerts = { for k, v in local.alb_map : k => v if v.alert_thresholds.target_5xx_error_rate.enabled }
+}
+
+resource "aws_cloudwatch_metric_alarm" "elb_5xx_error_rate" {
+  for_each            = local.elb_5xx_error_rate_alerts
+  alarm_name          = "${var.customer_prefix}-elb-5xx-error-rate-${each.value.name}"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = tostring(each.value.alert_thresholds.elb_5xx_error_rate.evaluation_periods)
+  threshold           = each.value.alert_thresholds.elb_5xx_error_rate.threshold_percent
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Percentage of requests receiving an ELB-generated 5XX response (HTTPCode_ELB_5XX_Count / RequestCount, with the denominator floored at 1) exceeded ${each.value.alert_thresholds.elb_5xx_error_rate.threshold_percent}% on load balancer \"${each.value.name}\". Either the lb cannot talk with the Fleet backend target or Fleet is returning an error."
+  alarm_actions       = lookup(var.sns_topic_arns_map, "elb_5xx_error_rate", var.default_sns_topic_arns)
+  ok_actions          = lookup(var.sns_topic_arns_map, "elb_5xx_error_rate", var.default_sns_topic_arns)
+
+  metric_query {
+    id          = "e1"
+    expression  = "m1 / IF(FILL(m2, 1) < 1, 1, FILL(m2, 1)) * 100"
+    label       = "ELB 5XX error rate (%)"
+    return_data = "true"
+  }
+
+  metric_query {
+    id          = "m1"
+    return_data = "false"
+    metric {
+      metric_name = "HTTPCode_ELB_5XX_Count"
+      namespace   = "AWS/ApplicationELB"
+      period      = tostring(each.value.alert_thresholds.elb_5xx_error_rate.period)
+      stat        = "Sum"
+      unit        = "Count"
+
+      dimensions = {
+        LoadBalancer = each.value.arn_suffix
+      }
+    }
+  }
+
+  metric_query {
+    id          = "m2"
+    return_data = "false"
+    metric {
+      metric_name = "RequestCount"
+      namespace   = "AWS/ApplicationELB"
+      period      = tostring(each.value.alert_thresholds.elb_5xx_error_rate.period)
+      stat        = "Sum"
+      unit        = "Count"
+
+      dimensions = {
+        LoadBalancer = each.value.arn_suffix
+      }
+    }
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "target_5xx_error_rate" {
+  for_each            = local.target_5xx_error_rate_alerts
+  alarm_name          = "${var.customer_prefix}-target-5xx-error-rate-${each.value.name}"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = tostring(each.value.alert_thresholds.target_5xx_error_rate.evaluation_periods)
+  threshold           = each.value.alert_thresholds.target_5xx_error_rate.threshold_percent
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Percentage of requests receiving a target-generated 5XX response (HTTPCode_Target_5XX_Count / RequestCount, with the denominator floored at 1) exceeded ${each.value.alert_thresholds.target_5xx_error_rate.threshold_percent}% on load balancer \"${each.value.name}\". The Fleet backend is returning errors."
+  alarm_actions       = lookup(var.sns_topic_arns_map, "target_5xx_error_rate", var.default_sns_topic_arns)
+  ok_actions          = lookup(var.sns_topic_arns_map, "target_5xx_error_rate", var.default_sns_topic_arns)
+
+  metric_query {
+    id          = "e1"
+    expression  = "m1 / IF(FILL(m2, 1) < 1, 1, FILL(m2, 1)) * 100"
+    label       = "Target 5XX error rate (%)"
+    return_data = "true"
+  }
+
+  metric_query {
+    id          = "m1"
+    return_data = "false"
+    metric {
+      metric_name = "HTTPCode_Target_5XX_Count"
+      namespace   = "AWS/ApplicationELB"
+      period      = tostring(each.value.alert_thresholds.target_5xx_error_rate.period)
+      stat        = "Sum"
+      unit        = "Count"
+
+      dimensions = {
+        LoadBalancer = each.value.arn_suffix
+      }
+    }
+  }
+
+  metric_query {
+    id          = "m2"
+    return_data = "false"
+    metric {
+      metric_name = "RequestCount"
+      namespace   = "AWS/ApplicationELB"
+      period      = tostring(each.value.alert_thresholds.target_5xx_error_rate.period)
+      stat        = "Sum"
+      unit        = "Count"
+
+      dimensions = {
+        LoadBalancer = each.value.arn_suffix
+      }
+    }
   }
 }
 

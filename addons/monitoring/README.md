@@ -3,7 +3,7 @@ This addon enables Cloudwatch monitoring for Fleet.
 
 This includes:
 
-- 5XX Errors on ALB
+- 5XX Errors on ALB (absolute count and error rate alarms)
 - ECS Service Monitoring
 - RDS Monitoring
 - Redis Monitoring
@@ -83,6 +83,16 @@ module "monitoring" {
         HTTPCode_Target_5XX_Count = {
           period    = 120
           threshold = 0
+        },
+        elb_5xx_error_rate = {
+          threshold_percent  = 1.5
+          period             = 300
+          evaluation_periods = 2
+        },
+        target_5xx_error_rate = {
+          threshold_percent  = 1.5
+          period             = 300
+          evaluation_periods = 2
         }
       }
     },
@@ -92,6 +102,8 @@ module "monitoring" {
     alb_httpcode_5xx = [var.sns_topic_arn]
     cron_monitoring  = [var.sns_topic_arn]
     cron_job_failure_monitoring  = [var.sns_another_topic_arn]
+    elb_5xx_error_rate    = [var.sns_topic_arn]
+    target_5xx_error_rate = [var.sns_another_topic_arn]
   }
   mysql_cluster_members = module.fleet.byo-vpc.rds.cluster_members
   # The cloudposse module seems to have a nested list here.
@@ -153,6 +165,7 @@ All CloudWatch alarm thresholds, periods, and evaluation periods can be overridd
 | Field | Alarm | Default threshold | Default period | Default evaluation periods |
 |---|---|---|---|---|
 | `rds_cpu` | RDS CPU Utilization | 80 | 300s | 1 |
+| `rds_aas` | RDS database load per vCPU (AAS / vCPU ratio) | 1 (ratio) | 300s | 1 |
 | `redis_cpu` | Redis CPU Utilization | 70 | 300s | 1 |
 | `redis_cpu_engine` | Redis Engine CPU Utilization | 25 | 300s | 1 |
 | `redis_memory` | Redis Database Memory % | 80 | 300s | 1 |
@@ -176,6 +189,68 @@ module "monitoring" {
 
 Anomaly detection alarms (`redis_current_connections`, `redis_replication_lag`, `target_response_time`) are not included — they use CloudWatch anomaly detection bands and do not have a simple threshold/period/evaluation\_periods structure.
 
+## RDS database load (AAS per vCPU) alarm
+
+For every instance in `mysql_cluster_members` (the same instances that get the RDS CPU alarm; none are created when the list is empty), the module creates an `rds_aas_too_high-<customer_prefix>-<instance>` alarm on the native `AWS/RDS` `DBLoadRelativeToNumVCPUs` metric (statistic `Average`, dimension `DBInstanceIdentifier`).
+
+`DBLoadRelativeToNumVCPUs` is the ratio of database load (average active sessions, AAS) to the number of vCPUs on the instance, so the threshold is a ratio rather than a session count. With the default threshold of `1` and the `GreaterThanThreshold` comparison, the alarm fires when AAS exceeds the vCPU count: on a 16 vCPU instance, an average of more than 16 active sessions over the period breaches, while exactly 16 does not. The module does not need to know the instance's vCPU count.
+
+Defaults: threshold `1`, period `300` seconds, `1` evaluation period. Missing data is treated as `notBreaching`, because idle instances may not publish a load datapoint. Override the threshold, period, and evaluation periods with `alert_thresholds.rds_aas`; any other `alert_thresholds` entries you omit keep their defaults.
+
+**Prerequisite:** RDS only publishes `DBLoadRelativeToNumVCPUs` when Performance Insights (or CloudWatch Database Insights) is enabled on the instance. This module does not change any database settings. Without Performance Insights the alarm receives no data and, with missing data treated as `notBreaching`, will not fire. The alarm uses the overall load ratio (all wait states), not the CPU-only `DBLoadCPU` metric.
+
+Example — alert when load exceeds 1.5x the vCPU count for three consecutive 5-minute periods:
+
+```hcl
+module "monitoring" {
+  # ...
+  alert_thresholds = {
+    rds_aas = {
+      threshold          = 1.5
+      period             = 300
+      evaluation_periods = 3
+    }
+  }
+}
+```
+
+Notifications for both the ALARM and OK transitions go to the `rds_aas_too_high` key of `sns_topic_arns_map`, independently of `rds_cpu_utilization_too_high`. If that key is not set, `default_sns_topic_arns` is used. Setting `rds_aas_too_high = []` explicitly disables notifications for this alarm while still creating it.
+
+## ALB 5XX alarms (per load balancer)
+
+The ALB 5XX alarms are configured per load balancer in each entry of `albs` under `alert_thresholds`, since their thresholds are typically tuned per ALB:
+
+| Field | Alarm | Default threshold | Default period | Default evaluation periods |
+|---|---|---|---|---|
+| `HTTPCode_ELB_5XX_Count` | ELB-generated 5XX count (absolute) | 0 | 120s | 1 |
+| `HTTPCode_Target_5XX_Count` | Target-generated 5XX count (absolute) | 0 | 120s | 1 |
+| `elb_5xx_error_rate` | ELB 5XX error rate (% of requests) | 1.5% | 300s | 2 |
+| `target_5xx_error_rate` | Target 5XX error rate (% of requests) | 1.5% | 300s | 2 |
+
+The error rate alarms compute `HTTPCode_*_5XX_Count / RequestCount * 100` using CloudWatch metric math, so they scale with traffic volume instead of alerting on absolute counts. Because `RequestCount` is only incremented for requests where the load balancer was able to choose a target, the denominator is floored at 1: if the backend is fully down and the ELB accumulates generated 503s while zero requests are routed, the rate evaluates to 100% and the alarm still fires. Set `enabled = false` on either error rate block to skip creating that alarm (useful while migrating from the absolute count alarms).
+
+Example — alert when more than 2% of requests return an ELB-generated 5XX over any single 10-minute window:
+
+```hcl
+module "monitoring" {
+  # ...
+  albs = [
+    {
+      # ...
+      alert_thresholds = {
+        HTTPCode_ELB_5XX_Count    = { period = 120, threshold = 0 }
+        HTTPCode_Target_5XX_Count = { period = 120, threshold = 0 }
+        elb_5xx_error_rate = {
+          threshold_percent  = 2
+          period             = 600
+          evaluation_periods = 1
+        }
+      }
+    },
+  ]
+}
+```
+
 # SNS topic ARNs map
 
 Valid targets for `sns_topic_arns_map`:
@@ -186,7 +261,9 @@ Valid targets for `sns_topic_arns_map`:
  - backend\_response\_time
  - cron\_monitoring (notifications about failures in the cron scheduler)
  - cron\_job\_failure\_monitoring (notifications about errors in individual cron jobs - defaults to value of `cron_monitoring`)
+ - elb\_5xx\_error\_rate (percentage of requests receiving ELB-generated 5XX responses)
  - log\_monitoring
+ - rds\_aas\_too\_high (database load per vCPU, `DBLoadRelativeToNumVCPUs`)
  - rds\_cpu\_utilization\_too\_high
  - rds\_db\_event\_subscription
  - redis\_cpu\_engine\_utilization
@@ -194,6 +271,7 @@ Valid targets for `sns_topic_arns_map`:
  - redis\_current\_connections
  - redis\_database\_memory\_percentage
  - redis\_replication\_lag
+ - target\_5xx\_error\_rate (percentage of requests receiving target-generated 5XX responses)
 
 If you want to publish to all, use `default_sns_topic_arns` instead and include your notification ARNs there.
 
@@ -253,13 +331,16 @@ No modules.
 | [aws_cloudwatch_metric_alarm.acm_certificate_expired](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.alb_healthyhosts](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.cpu_utilization_too_high](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
+| [aws_cloudwatch_metric_alarm.elb_5xx_error_rate](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.lb](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.log_monitoring](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
+| [aws_cloudwatch_metric_alarm.rds_aas_too_high](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.redis-current-connections](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.redis-database-memory-percentage](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.redis-replication-lag](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.redis_cpu](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.redis_cpu_engine_utilization](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
+| [aws_cloudwatch_metric_alarm.target_5xx_error_rate](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_cloudwatch_metric_alarm.target_response_time](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_metric_alarm) | resource |
 | [aws_db_event_subscription.default](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/db_event_subscription) | resource |
 | [aws_iam_policy.cron_monitoring_lambda](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
@@ -287,8 +368,8 @@ No modules.
 | Name | Description | Type | Default | Required |
 | ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_acm_certificate_arn"></a> [acm\_certificate\_arn](#input\_acm\_certificate\_arn) | n/a | `string` | `null` | no |
-| <a name="input_albs"></a> [albs](#input\_albs) | n/a | <pre>list(object({<br/>    name                    = string<br/>    arn_suffix              = string<br/>    target_group_name       = string<br/>    target_group_arn_suffix = string<br/>    min_containers          = optional(string, 1)<br/>    ecs_service_name        = string<br/>    alert_thresholds = optional(<br/>      object({<br/>        HTTPCode_ELB_5XX_Count = object({<br/>          period    = number<br/>          threshold = number<br/>        })<br/>        HTTPCode_Target_5XX_Count = object({<br/>          period    = number<br/>          threshold = number<br/>        })<br/>      }),<br/>      {<br/>        HTTPCode_ELB_5XX_Count = {<br/>          period    = 120<br/>          threshold = 0<br/>        },<br/>        HTTPCode_Target_5XX_Count = {<br/>          period    = 120<br/>          threshold = 0<br/>        }<br/>      }<br/>    )<br/>  }))</pre> | `[]` | no |
-| <a name="input_alert_thresholds"></a> [alert\_thresholds](#input\_alert\_thresholds) | CloudWatch alarm threshold overrides. Each alarm type is optional; omitted fields use the defaults below. | <pre>object({<br/>    rds_cpu = optional(object({<br/>      threshold          = number<br/>      period             = number<br/>      evaluation_periods = number<br/>      }), {<br/>      threshold          = 80<br/>      period             = 300<br/>      evaluation_periods = 1<br/>    })<br/>    redis_cpu = optional(object({<br/>      threshold          = number<br/>      period             = number<br/>      evaluation_periods = number<br/>      }), {<br/>      threshold          = 70<br/>      period             = 300<br/>      evaluation_periods = 1<br/>    })<br/>    redis_cpu_engine = optional(object({<br/>      threshold          = number<br/>      period             = number<br/>      evaluation_periods = number<br/>      }), {<br/>      threshold          = 25<br/>      period             = 300<br/>      evaluation_periods = 1<br/>    })<br/>    redis_memory = optional(object({<br/>      threshold          = number<br/>      period             = number<br/>      evaluation_periods = number<br/>      }), {<br/>      threshold          = 80<br/>      period             = 300<br/>      evaluation_periods = 1<br/>    })<br/>    acm_cert_expiry = optional(object({<br/>      threshold          = number<br/>      period             = number<br/>      evaluation_periods = number<br/>      }), {<br/>      threshold          = 30<br/>      period             = 86400<br/>      evaluation_periods = 1<br/>    })<br/>    alb_healthyhosts = optional(object({<br/>      threshold          = number<br/>      period             = number<br/>      evaluation_periods = number<br/>      }), {<br/>      threshold          = 1<br/>      period             = 60<br/>      evaluation_periods = 1<br/>    })<br/>  })</pre> | <pre>{<br/>  "acm_cert_expiry": {<br/>    "evaluation_periods": 1,<br/>    "period": 86400,<br/>    "threshold": 30<br/>  },<br/>  "alb_healthyhosts": {<br/>    "evaluation_periods": 1,<br/>    "period": 60,<br/>    "threshold": 1<br/>  },<br/>  "rds_cpu": {<br/>    "evaluation_periods": 1,<br/>    "period": 300,<br/>    "threshold": 80<br/>  },<br/>  "redis_cpu": {<br/>    "evaluation_periods": 1,<br/>    "period": 300,<br/>    "threshold": 70<br/>  },<br/>  "redis_cpu_engine": {<br/>    "evaluation_periods": 1,<br/>    "period": 300,<br/>    "threshold": 25<br/>  },<br/>  "redis_memory": {<br/>    "evaluation_periods": 1,<br/>    "period": 300,<br/>    "threshold": 80<br/>  }<br/>}</pre> | no |
+| <a name="input_albs"></a> [albs](#input\_albs) | n/a | <pre>list(object({<br/>    name                    = string<br/>    arn_suffix              = string<br/>    target_group_name       = string<br/>    target_group_arn_suffix = string<br/>    min_containers          = optional(string, 1)<br/>    ecs_service_name        = string<br/>    alert_thresholds = optional(<br/>      object({<br/>        HTTPCode_ELB_5XX_Count = object({<br/>          period    = number<br/>          threshold = number<br/>        })<br/>        HTTPCode_Target_5XX_Count = object({<br/>          period    = number<br/>          threshold = number<br/>        })<br/>        elb_5xx_error_rate = optional(object({<br/>          enabled            = optional(bool, true)<br/>          threshold_percent  = optional(number, 1.5)<br/>          period             = optional(number, 300)<br/>          evaluation_periods = optional(number, 2)<br/>          }), {<br/>          enabled            = true<br/>          threshold_percent  = 1.5<br/>          period             = 300<br/>          evaluation_periods = 2<br/>        })<br/>        target_5xx_error_rate = optional(object({<br/>          enabled            = optional(bool, true)<br/>          threshold_percent  = optional(number, 1.5)<br/>          period             = optional(number, 300)<br/>          evaluation_periods = optional(number, 2)<br/>          }), {<br/>          enabled            = true<br/>          threshold_percent  = 1.5<br/>          period             = 300<br/>          evaluation_periods = 2<br/>        })<br/>      }),<br/>      {<br/>        HTTPCode_ELB_5XX_Count = {<br/>          period    = 120<br/>          threshold = 0<br/>        },<br/>        HTTPCode_Target_5XX_Count = {<br/>          period    = 120<br/>          threshold = 0<br/>        }<br/>      }<br/>    )<br/>  }))</pre> | `[]` | no |
+| <a name="input_alert_thresholds"></a> [alert\_thresholds](#input\_alert\_thresholds) | CloudWatch alarm threshold overrides. Each alarm type is optional; omitted fields use the defaults below. | <pre>object({<br/>    rds_cpu = optional(object({<br/>      threshold          = number<br/>      period             = number<br/>      evaluation_periods = number<br/>      }), {<br/>      threshold          = 80<br/>      period             = 300<br/>      evaluation_periods = 1<br/>    })<br/>    rds_aas = optional(object({<br/>      threshold          = number<br/>      period             = number<br/>      evaluation_periods = number<br/>      }), {<br/>      threshold          = 1<br/>      period             = 300<br/>      evaluation_periods = 1<br/>    })<br/>    redis_cpu = optional(object({<br/>      threshold          = number<br/>      period             = number<br/>      evaluation_periods = number<br/>      }), {<br/>      threshold          = 70<br/>      period             = 300<br/>      evaluation_periods = 1<br/>    })<br/>    redis_cpu_engine = optional(object({<br/>      threshold          = number<br/>      period             = number<br/>      evaluation_periods = number<br/>      }), {<br/>      threshold          = 25<br/>      period             = 300<br/>      evaluation_periods = 1<br/>    })<br/>    redis_memory = optional(object({<br/>      threshold          = number<br/>      period             = number<br/>      evaluation_periods = number<br/>      }), {<br/>      threshold          = 80<br/>      period             = 300<br/>      evaluation_periods = 1<br/>    })<br/>    acm_cert_expiry = optional(object({<br/>      threshold          = number<br/>      period             = number<br/>      evaluation_periods = number<br/>      }), {<br/>      threshold          = 30<br/>      period             = 86400<br/>      evaluation_periods = 1<br/>    })<br/>    alb_healthyhosts = optional(object({<br/>      threshold          = number<br/>      period             = number<br/>      evaluation_periods = number<br/>      }), {<br/>      threshold          = 1<br/>      period             = 60<br/>      evaluation_periods = 1<br/>    })<br/>  })</pre> | <pre>{<br/>  "acm_cert_expiry": {<br/>    "evaluation_periods": 1,<br/>    "period": 86400,<br/>    "threshold": 30<br/>  },<br/>  "alb_healthyhosts": {<br/>    "evaluation_periods": 1,<br/>    "period": 60,<br/>    "threshold": 1<br/>  },<br/>  "rds_aas": {<br/>    "evaluation_periods": 1,<br/>    "period": 300,<br/>    "threshold": 1<br/>  },<br/>  "rds_cpu": {<br/>    "evaluation_periods": 1,<br/>    "period": 300,<br/>    "threshold": 80<br/>  },<br/>  "redis_cpu": {<br/>    "evaluation_periods": 1,<br/>    "period": 300,<br/>    "threshold": 70<br/>  },<br/>  "redis_cpu_engine": {<br/>    "evaluation_periods": 1,<br/>    "period": 300,<br/>    "threshold": 25<br/>  },<br/>  "redis_memory": {<br/>    "evaluation_periods": 1,<br/>    "period": 300,<br/>    "threshold": 80<br/>  }<br/>}</pre> | no |
 | <a name="input_cron_monitoring"></a> [cron\_monitoring](#input\_cron\_monitoring) | n/a | <pre>object({<br/>    mysql_host                        = string<br/>    mysql_database                    = string<br/>    mysql_user                        = string<br/>    mysql_password_secret_name        = string<br/>    mysql_password_secret_kms_key_arn = optional(string, null)<br/>    mysql_tls_config                  = optional(string, "true")<br/>    vpc_id                            = string<br/>    subnet_ids                        = list(string)<br/>    rds_security_group_id             = string<br/>    delay_tolerance                   = string<br/>    run_interval                      = string<br/>    log_retention_in_days             = optional(number, 7)<br/>    ignore_list                       = optional(list(string), [])<br/>    lambda_kms = optional(object({<br/>      cmk_enabled = optional(bool, false)<br/>      kms_key_arn = optional(string, null)<br/>      kms_alias   = optional(string, "fleet-cron-monitoring")<br/>      kms_base_policy = optional(list(object({<br/>        sid    = string<br/>        effect = string<br/>        principals = object({<br/>          type        = string<br/>          identifiers = list(string)<br/>        })<br/>        actions   = list(string)<br/>        resources = list(string)<br/>        conditions = optional(list(object({<br/>          test     = string<br/>          variable = string<br/>          values   = list(string)<br/>        })), [])<br/>      })), null)<br/>      extra_kms_policies = optional(list(any), [])<br/>      }), {<br/>      cmk_enabled        = false<br/>      kms_key_arn        = null<br/>      kms_alias          = "fleet-cron-monitoring"<br/>      kms_base_policy    = null<br/>      extra_kms_policies = []<br/>    })<br/>  })</pre> | `null` | no |
 | <a name="input_customer_prefix"></a> [customer\_prefix](#input\_customer\_prefix) | n/a | `string` | `"fleet"` | no |
 | <a name="input_default_sns_topic_arns"></a> [default\_sns\_topic\_arns](#input\_default\_sns\_topic\_arns) | n/a | `list(string)` | `[]` | no |
