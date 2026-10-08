@@ -1,0 +1,9 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Restart Fleet
+  ansible.builtin.systemd:
+    name: "{{ fleet_service_name }}"
+    state: restarted
