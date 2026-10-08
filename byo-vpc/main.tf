@@ -890,6 +890,7 @@ module "rds" {
   final_snapshot_identifier       = local.rds_final_snapshot_identifiers[each.key]
   snapshot_identifier             = each.value.snapshot_identifier
   backup_retention_period         = each.value.backup_retention_period
+  deletion_protection             = each.value.deletion_protection
   restore_to_point_in_time        = each.value.restore_to_point_in_time
 
   preferred_maintenance_window = each.value.preferred_maintenance_window
