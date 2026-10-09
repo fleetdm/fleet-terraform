@@ -1,0 +1,153 @@
+name: Check for new Go release
+
+# Checks daily whether a newer stable Go release is available than the one in
+# the Lambda go.mod files. If so, it bumps their go directive, verifies they
+# still build, and opens an automated PR.
+#
+# Unlike fleetdm/fleet's check-go-patch-release workflow, this also follows new
+# minor releases: these modules are built with the operator's local Go during
+# `terraform apply`, so there is no release cadence to coordinate a minor bump
+# with, and staying on an EOL minor would stop receiving patch releases.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 7 * * *' # Nightly 7AM UTC
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    # fail-fast using bash -eo pipefail. See https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#exit-codes-and-error-action-preference
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  check-go-release:
+    # Only run from main: a manual dispatch from a feature branch would check
+    # out that branch and open a PR against main from stale/unrelated content.
+    if: github.repository == 'fleetdm/fleet-terraform' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # for peter-evans/create-pull-request to create branch
+      pull-requests: write # for peter-evans/create-pull-request to create a PR
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check for a new Go release
+        id: check
+        run: |
+          # go.dev/dl/?mode=json returns the currently supported stable releases.
+          # Sort them instead of relying on the API's response ordering.
+          latest=$(curl -fsS --retry 3 'https://go.dev/dl/?mode=json' | \
+            jq -r '.[] | select(.stable == true) | .version | ltrimstr("go")' | \
+            sort -V | tail -n1)
+          # The version comes from an external HTTP response and gets interpolated
+          # into shell commands (go mod edit, branch names): require x.y.z.
+          if [[ ! "$latest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Unexpected Go version format from go.dev: $latest" >&2
+            exit 1
+          fi
+          echo "Latest stable Go release: $latest"
+
+          outdated=()
+          for gomod in $(git ls-files '*go.mod'); do
+            current=$(grep -E '^go ' "$gomod" | awk '{print $2}')
+            echo "$gomod: go $current"
+            # Only update if latest sorts strictly higher than current, to guard
+            # against go.mod being ahead of go.dev (e.g. release day races).
+            if [[ "$current" != "$latest" && "$(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -n1)" == "$latest" ]]; then
+              outdated+=("$(dirname "$gomod")")
+            fi
+          done
+
+          if [[ ${#outdated[@]} -eq 0 ]]; then
+            echo "All modules are on the latest release."
+            echo "update_needed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "update_needed=true" >> "$GITHUB_OUTPUT"
+          echo "new_version=$latest" >> "$GITHUB_OUTPUT"
+          echo "module_dirs=${outdated[*]}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Go
+        if: steps.check.outputs.update_needed == 'true'
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version: ${{ steps.check.outputs.new_version }}
+          check-latest: true
+          cache: false
+
+      - name: Update Go version
+        if: steps.check.outputs.update_needed == 'true'
+        env:
+          NEW_GO_VERSION: ${{ steps.check.outputs.new_version }}
+          MODULE_DIRS: ${{ steps.check.outputs.module_dirs }}
+        run: |
+          for dir in $MODULE_DIRS; do
+            echo "Updating $dir to Go $NEW_GO_VERSION"
+            (
+              cd "$dir"
+              go mod edit -go="$NEW_GO_VERSION"
+              go mod tidy
+              # Same build the Terraform modules run on apply.
+              CGO_ENABLED=0 GOOS=linux go build -tags lambda.norpc -o "$RUNNER_TEMP/go-build/" ./...
+            )
+          done
+          git diff
+
+      - name: PR changes
+        if: steps.check.outputs.update_needed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          base: main
+          branch: update-go-${{ steps.check.outputs.new_version }}
+          delete-branch: true
+          title: Update Go to ${{ steps.check.outputs.new_version }} in Lambda modules [automated]
+          assignees: lucasmrod,getvictor,JordanMontgomery,cdcme
+          commit-message: |
+            Update Go to ${{ steps.check.outputs.new_version }} in Lambda modules [automated]
+
+            Generated automatically by the check-go-release workflow.
+          body: |
+            Automated change from [GitHub action](https://github.com/fleetdm/fleet-terraform/actions/workflows/check-go-release.yml).
+
+            Updates the `go` directive of the Lambda Go modules to the latest stable release, `${{ steps.check.outputs.new_version }}`, and runs `go mod tidy`. The modules were verified to build with that version.
+
+            These modules are built with the operator's local Go during `terraform apply`, so this raises the minimum Go version needed to apply them (with the default `GOTOOLCHAIN=auto`, Go downloads it automatically).
+
+            Release notes: https://go.dev/doc/devel/release#go${{ steps.check.outputs.new_version }}
+
+      - name: Slack notification on failure
+        if: ${{ failure() }}
+        uses: slackapi/slack-github-action@e28cf165c92ffef168d23c5c9000cffc8a25e117 # v1.24.0
+        with:
+          payload: |
+            {
+              "text": "${{ job.status }}\nhttps://github.com/fleetdm/fleet-terraform/actions/runs/${{ github.run_id }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "❌ The check Go release workflow (fleet-terraform) failed\nhttps://github.com/fleetdm/fleet-terraform/actions/runs/${{ github.run_id }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_G_ORCHESTRATION_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
