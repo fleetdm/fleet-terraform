@@ -41,10 +41,17 @@ resource "google_secret_manager_secret_iam_member" "fleet_run_sa_db_secret_acces
 
 resource "google_secret_manager_secret_iam_member" "fleet_run_sa_private_key_secret_access" {
   project   = var.project_id
-  secret_id = google_secret_manager_secret.private_key.id
+  secret_id = local.fleet_private_key_secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.fleet_run_sa.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "fleet_run_sa_hmac_secret_access" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.hmac_secret.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.fleet_run_sa.email}"
 
-  depends_on = [google_secret_manager_secret.private_key]
+  depends_on = [google_secret_manager_secret.hmac_secret]
 }
 

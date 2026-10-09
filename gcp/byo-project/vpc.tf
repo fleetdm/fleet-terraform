@@ -1,6 +1,3 @@
-# Example from your vpc.tf (ensure this part is correct)
-
-
 locals {
   network_name = "${var.prefix}-network"
   subnet_name  = "${var.prefix}-subnet"

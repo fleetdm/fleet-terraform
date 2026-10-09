@@ -10,6 +10,8 @@ module "private-service-access" {
   project_id      = var.project_id
   vpc_network     = module.vpc.network_name
   deletion_policy = "ABANDON"
+
+  depends_on = [module.vpc]
 }
 
 module "mysql" {
@@ -18,7 +20,7 @@ module "mysql" {
 
   name                 = var.database_config.name
   project_id           = var.project_id
-  deletion_protection  = var.database_config.deletion_protection
+  deletion_protection  = var.allow_destroy ? false : var.database_config.deletion_protection
   database_version     = var.database_config.database_version
   tier                 = var.database_config.tier
   region               = var.region
@@ -35,9 +37,19 @@ module "mysql" {
     # We never set authorized networks, we need all connections via the
     # public IP to be mediated by Cloud SQL.
     authorized_networks = []
-    require_ssl         = false
     private_network     = module.vpc.network_self_link
   }
 
-  module_depends_on = [module.private-service-access.peering_completed]
+  # Opt-in CMEK (cmek.cloud_sql). null = Google-managed (unchanged default).
+  # ForceNew: setting or changing this on an existing instance replaces it.
+  encryption_key_name = local.cmek_cloud_sql_key_id
+
+  # The instance must not be created before the Cloud SQL service agent can
+  # use the key. module_depends_on is list(any) and only its length is read,
+  # so the grant is added as a string attribute (etag), never as a resource
+  # object. With CMEK off the list is unchanged (length 1).
+  module_depends_on = concat(
+    [module.private-service-access.peering_completed],
+    google_kms_crypto_key_iam_member.cloud_sql_cmek[*].etag,
+  )
 }
