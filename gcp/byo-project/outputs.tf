@@ -1,6 +1,6 @@
 output "fleet_application_url" {
-  description = "The primary URL to access the Fleet application. Only available when DNS management is enabled."
-  value       = var.dns_config.enable ? "https://${google_dns_record_set.fleet_dns_record[0].name}" : null
+  description = "The primary URL to access the Fleet application. Only available when both DNS management and the load balancer are enabled."
+  value       = var.dns_config.enable && var.load_balancer_config.enable ? "https://${google_dns_record_set.fleet_dns_record[0].name}" : null
 }
 
 # Load Balancer outputs (conditional based on configuration)

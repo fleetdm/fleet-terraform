@@ -12,12 +12,17 @@ terraform {
       source  = "hashicorp/google"
       version = ">= 6.35.0"
     }
+    google-beta = {
+      source  = "hashicorp/google-beta"
+      version = ">= 6.35.0"
+    }
   }
 }
 
 provider "google" {
-  project = var.project_id
-  region  = var.region
+  project        = var.project_id
+  region         = var.region
+  default_labels = var.labels
 }
 
 locals {
@@ -39,25 +44,7 @@ module "project_factory" {
   default_service_account = "delete"
 
   # Enable baseline APIs needed by most projects + your app stack
-  activate_apis = concat([
-    "compute.googleapis.com",
-    "sqladmin.googleapis.com",
-    "redis.googleapis.com",
-    "run.googleapis.com",
-    "vpcaccess.googleapis.com",
-    "secretmanager.googleapis.com",
-    "storage.googleapis.com",
-    "dns.googleapis.com",
-    "iam.googleapis.com",
-    "cloudresourcemanager.googleapis.com",
-    "serviceusage.googleapis.com",
-    "servicenetworking.googleapis.com",
-    "logging.googleapis.com",
-    "monitoring.googleapis.com",
-    "memorystore.googleapis.com",
-    "serviceconsumermanagement.googleapis.com",
-    "networkconnectivity.googleapis.com",
-  ], var.extra_apis)
+  activate_apis = concat(local.baseline_project_apis, var.extra_apis)
 
   labels = var.labels
 }
@@ -80,4 +67,12 @@ module "fleet" {
   cloud_armor          = var.cloud_armor
   replicate_secrets    = var.replicate_secrets
   allow_destroy        = var.allow_destroy
+
+  # Installers bucket versioning and noncurrent-version retention.
+  software_installers_config = var.software_installers_config
+
+  # Wait for opted-in existing-project APIs to be enabled before creating any
+  # Fleet resources. Empty (no-op) unless manage_existing_project_apis = true
+  # and create_project = false.
+  depends_on = [google_project_service.existing_project_apis]
 }

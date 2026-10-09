@@ -1,8 +1,8 @@
 # Project Configuration
 variable "create_project" {
-  description = "Whether to create a new GCP project (true) or use an existing one (false). When true, exactly one of org_id or folder_id must be set, plus billing_account_id."
+  description = "Whether to create a new GCP project (true) or use an existing one (false). When true, org_id or folder_id must be set, plus billing_account_id; folder_id takes precedence when both are provided."
   type        = bool
-  default     = false
+  default     = true
 
   validation {
     condition = !var.create_project || (
@@ -55,6 +55,20 @@ variable "random_project_id" {
   default     = true
 }
 
+# Legacy inputs were not forwarded to byo-project. Keep accepting them so
+# existing -var arguments and tfvars remain compatible, without changing names.
+variable "prefix" {
+  description = "Legacy no-op input retained for compatibility. The child module uses its own prefix default."
+  type        = string
+  default     = "fleet"
+}
+
+variable "fleet_image" {
+  description = "Legacy no-op input retained for compatibility. Use fleet_config.image_tag to select the Fleet image."
+  type        = string
+  default     = "v4.67.3"
+}
+
 variable "labels" {
   description = "Resource labels to apply to all resources"
   type        = map(string)
@@ -62,7 +76,7 @@ variable "labels" {
 }
 
 variable "extra_apis" {
-  description = "Additional GCP APIs to enable on the project, merged with the baseline set required by Fleet."
+  description = "Additional GCP APIs merged with the Fleet baseline when create_project = true, or when manage_existing_project_apis = true on an existing project. Otherwise existing-project API enablement remains operator-managed."
   type        = list(string)
   default     = []
 }
@@ -159,7 +173,7 @@ variable "database_config" {
     tier                = string
   })
   default = {
-    name                = "fleet-mysql-v2"
+    name                = "fleet-mysql"
     database_name       = "fleet"
     database_user       = "fleet"
     collation           = "utf8mb4_unicode_ci"
@@ -233,19 +247,47 @@ variable "fleet_config" {
 
 variable "cmek" {
   description = <<-EOT
-    Customer-Managed Encryption Key configuration. When enable = true, resources
-    that support CMEK (GCS buckets today; Cloud SQL, Memorystore, etc. in the
-    future) can reference the crypto key at local.kms_crypto_key_id.
+    Customer-Managed Encryption Key configuration. When enable = true, the GCS
+    buckets are encrypted with the crypto key at local.kms_crypto_key_id
+    (located at var.location).
 
     When create_kms = true, Terraform creates the key ring and crypto key in the
     target project/region using the provided names. When false, they must already
-    exist.
+    exist. These legacy settings only ever encrypt the GCS buckets.
+
+    Optional, independent opt-ins (default null = Google-managed, unchanged):
+      cloud_sql      = { kms_key_id = "<full key ID in var.region>" }
+      redis          = { kms_key_id = "<full key ID in var.region>" }
+      cloud_run      = { kms_key_id = "<full key ID in var.region>" }
+      secret_manager = {
+        kms_key_id          = "<global key ID>"       # automatic replication
+        replica_kms_key_ids = { "<region>" = "<key>" } # one per replicate_secrets region
+      }
+    Keys are never created for these; callers supply existing keys (or keys
+    managed elsewhere in their configuration). Terraform grants the Cloud SQL,
+    Memorystore, Cloud Run and Secret Manager service agents
+    roles/cloudkms.cryptoKeyEncrypterDecrypter on them. Enabling cloud_sql or
+    redis on an existing deployment replaces the instance; enabling
+    secret_manager replaces the Fleet-managed secrets.
   EOT
   type = object({
     enable         = optional(bool, false)
     create_kms     = optional(bool, false)
     kms_key_ring   = optional(string)
     kms_crypto_key = optional(string)
+    cloud_sql = optional(object({
+      kms_key_id = string
+    }))
+    redis = optional(object({
+      kms_key_id = string
+    }))
+    cloud_run = optional(object({
+      kms_key_id = string
+    }))
+    secret_manager = optional(object({
+      kms_key_id          = optional(string)
+      replica_kms_key_ids = optional(map(string), {})
+    }))
   })
   default = {
     enable         = false
@@ -269,13 +311,11 @@ variable "cmek" {
 
 variable "allow_destroy" {
   description = <<-EOT
-    When true, disables deletion protection on all resources so a full
-    `terraform destroy` can proceed:
+    When true, permits teardown of protected Cloud SQL and non-empty GCS buckets:
       - Cloud SQL: deletion_protection = false
-      - GCS buckets: force_destroy = true
-      - KMS crypto key: prevent_destroy is not enforced (GCP still applies a
-        configurable destruction window, default 30 days, before key versions
-        are permanently deleted)
+      - GCS buckets: force_destroy = true (deletes objects when destroying a bucket)
+
+    This does not control KMS key protection or GCP's key-version destruction window.
 
     Keep false in production. Set true only when tearing down the environment.
     When allow_destroy overrides database_config.deletion_protection, the more
@@ -307,9 +347,29 @@ variable "load_balancer_config" {
     log_sample_rate     = 1.0
     proxy_subnet_cidr   = "10.129.0.0/23"
   }
+
+  validation {
+    condition = !(
+      var.load_balancer_config.enable &&
+      var.load_balancer_config.use_regional_lb &&
+      var.load_balancer_config.https_redirect &&
+      !var.load_balancer_config.create_managed_cert
+    )
+    error_message = "load_balancer_config.https_redirect = true with use_regional_lb = true requires create_managed_cert = true. Without the managed certificate the regional LB has no HTTPS listener to redirect to; set https_redirect = false or create_managed_cert = true."
+  }
 }
 
 variable "cloud_armor" {
+  description = <<-EOT
+    Optional Cloud Armor allowlist for the regional load balancer (off by default).
+    When enable = true the policy allows requests from any source in allowed_ip_ranges (any path),
+    and requests to any path matching an RE2 regex in allow_public_paths (any source).
+    All other requests are denied with HTTP 403. No Fleet endpoints are allowed automatically;
+    at least one of allowed_ip_ranges or allow_public_paths must be non-empty when enabled.
+    Requires load_balancer_config.enable = true and use_regional_lb = true.
+    Attachment is managed natively with google-beta; no gcloud CLI is required.
+    Only tier = STANDARD is implemented; the legacy tier field is retained for compatibility.
+  EOT
   type = object({
     enable             = optional(bool, false)
     tier               = optional(string, "STANDARD")
@@ -338,6 +398,13 @@ variable "cloud_armor" {
       var.load_balancer_config.enable && var.load_balancer_config.use_regional_lb
     )
     error_message = "cloud_armor.enable = true requires load_balancer_config.enable = true and load_balancer_config.use_regional_lb = true. Cloud Armor is only wired for the regional LB path in this module."
+  }
+
+  # The policy ends in a deny-all rule, so an enabled policy with nothing
+  # allowed would return 403 for every request (admins and devices alike).
+  validation {
+    condition     = !var.cloud_armor.enable || length(var.cloud_armor.allowed_ip_ranges) + length(var.cloud_armor.allow_public_paths) > 0
+    error_message = "cloud_armor.enable = true requires at least one entry in cloud_armor.allowed_ip_ranges or cloud_armor.allow_public_paths. With both empty the policy would deny all traffic (403). No Fleet endpoints are allowed automatically."
   }
 }
 

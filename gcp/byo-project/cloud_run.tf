@@ -57,6 +57,10 @@ module "fleet-service" {
   enable_prometheus_sidecar     = false
   cloud_run_deletion_protection = false
 
+  # Opt-in CMEK (cmek.cloud_run). null = Google-managed (unchanged default).
+  # Changing it rolls out a new revision; the service is not replaced.
+  encryption_key = local.cmek_cloud_run_key_id
+
   vpc_access = {
     network_interfaces = {
       network    = local.fleet_vpc_network_id
@@ -119,6 +123,26 @@ module "fleet-service" {
       env_secret_vars = local.fleet_secrets_env_vars
     }
   ]
+
+  # Cloud Run resolves secret env vars ("latest") when a revision starts, so
+  # every managed secret version and every secretAccessor grant for the run
+  # service account must exist before the service is created or updated.
+  # google_secret_manager_secret_version.private_key is referenced as a whole
+  # collection: it has count = 0 when an external private-key secret is used,
+  # in which case the dependency is a no-op and only the IAM grant on the
+  # external secret applies.
+  # The Cloud Run service agent's KMS grant (cmek.cloud_run) must also exist
+  # before a CMEK-encrypted revision is deployed; empty when CMEK is off.
+  depends_on = [
+    google_service_account.fleet_run_sa,
+    google_secret_manager_secret_version.database_password,
+    google_secret_manager_secret_version.hmac_secret,
+    google_secret_manager_secret_version.private_key,
+    google_secret_manager_secret_iam_member.fleet_run_sa_db_secret_access,
+    google_secret_manager_secret_iam_member.fleet_run_sa_hmac_secret_access,
+    google_secret_manager_secret_iam_member.fleet_run_sa_private_key_secret_access,
+    google_kms_crypto_key_iam_member.cloud_run_cmek,
+  ]
 }
 
 # --- Cloud Run Job (Migrations) ---
@@ -132,6 +156,9 @@ resource "google_cloud_run_v2_job" "fleet_migration_job" {
   template {
     template {                                                    # Double template for jobs
       service_account = google_service_account.fleet_run_sa.email # Defined in iam.tf
+
+      # Same opt-in CMEK key as the service (null = Google-managed).
+      encryption_key = local.cmek_cloud_run_key_id
 
       # Define vpc_access block directly
       vpc_access {
@@ -177,9 +204,18 @@ resource "google_cloud_run_v2_job" "fleet_migration_job" {
     }
   }
 
+  # Same secret readiness gate as module.fleet-service (see the comment
+  # there): all secret versions and secretAccessor grants must exist first,
+  # plus the Cloud Run service agent's KMS grant when cmek.cloud_run is set.
   depends_on = [
     google_service_account.fleet_run_sa,
     google_secret_manager_secret_version.database_password,
+    google_secret_manager_secret_version.hmac_secret,
+    google_secret_manager_secret_version.private_key,
+    google_secret_manager_secret_iam_member.fleet_run_sa_db_secret_access,
+    google_secret_manager_secret_iam_member.fleet_run_sa_hmac_secret_access,
+    google_secret_manager_secret_iam_member.fleet_run_sa_private_key_secret_access,
+    google_kms_crypto_key_iam_member.cloud_run_cmek,
   ]
 }
 
