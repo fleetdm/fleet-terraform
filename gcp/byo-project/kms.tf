@@ -88,13 +88,20 @@ resource "google_kms_crypto_key_iam_member" "gcs_cmek" {
 #   Cloud Run       service-N@serverless-robot-prod.iam.gserviceaccount.com
 #   Secret Manager  service-N@gcp-sa-secretmanager.iam.gserviceaccount.com
 #
-# Service-agent readiness: the Cloud SQL and Secret Manager agents are not
-# guaranteed to exist until first use, so they are provisioned explicitly via
-# google_project_service_identity (google-beta). The Memorystore and Cloud Run
-# agents are created when redis.googleapis.com / run.googleapis.com are
-# enabled; the root module enables those (project factory, or
-# manage_existing_project_apis = true) before this module runs. When calling
-# this module directly on an existing project, enable those APIs first.
+# Service-agent readiness: project-level service agents are not guaranteed to
+# exist until first use, and a grant to a missing agent fails. Every opted-in
+# consumer's agent is therefore provisioned explicitly via
+# google_project_service_identity (google-beta, serviceusage
+# generateServiceIdentity) before its grant. The Memorystore and Cloud Run
+# agents above are listed as "primary service agents" for redis.googleapis.com
+# and run.googleapis.com in Google's service-agent reference, i.e. the agent
+# that call creates. For Memorystore and Cloud Run the owning API is also enabled
+# here first (only when that consumer is opted in, disable_on_destroy = false),
+# because the Memorystore module only enables redis.googleapis.com after the
+# grant it depends on, and this module may run on a project whose APIs were
+# not enabled by the root module. Enabling an already-enabled API is a no-op.
+# The grant members stay the documented agent emails (not the identity's
+# computed member) so existing grants are not replaced.
 #
 # The grants are additive (iam_member). Different consumers may share one key:
 # each consumer grants a different member, so no two grant resources manage the
@@ -149,6 +156,42 @@ resource "google_project_service_identity" "secret_manager" {
   service  = "secretmanager.googleapis.com"
 }
 
+# API activation for Memorystore and Cloud Run: nothing else in this module
+# enables those APIs before the matching grant (the Memorystore and Cloud Run
+# resources themselves depend on the grant). Gated on the consumer only, so
+# default and legacy GCS-only plans add nothing.
+resource "google_project_service" "redis" {
+  count              = var.cmek.redis != null ? 1 : 0
+  project            = var.project_id
+  service            = "redis.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_project_service" "cloud_run" {
+  count              = var.cmek.cloud_run != null ? 1 : 0
+  project            = var.project_id
+  service            = "run.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_project_service_identity" "redis" {
+  count    = var.cmek.redis != null ? 1 : 0
+  provider = google-beta
+  project  = var.project_id
+  service  = "redis.googleapis.com"
+
+  depends_on = [google_project_service.redis]
+}
+
+resource "google_project_service_identity" "cloud_run" {
+  count    = var.cmek.cloud_run != null ? 1 : 0
+  provider = google-beta
+  project  = var.project_id
+  service  = "run.googleapis.com"
+
+  depends_on = [google_project_service.cloud_run]
+}
+
 resource "google_kms_crypto_key_iam_member" "cloud_sql_cmek" {
   count         = var.cmek.cloud_sql != null ? 1 : 0
   crypto_key_id = local.cmek_cloud_sql_key_id
@@ -167,7 +210,11 @@ resource "google_kms_crypto_key_iam_member" "redis_cmek" {
   role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
   member        = "serviceAccount:service-${local.cmek_project_number}@cloud-redis.iam.gserviceaccount.com"
 
-  depends_on = [google_project_service.cloudkms]
+  depends_on = [
+    google_project_service.cloudkms,
+    google_project_service.redis,
+    google_project_service_identity.redis,
+  ]
 }
 
 resource "google_kms_crypto_key_iam_member" "cloud_run_cmek" {
@@ -176,7 +223,11 @@ resource "google_kms_crypto_key_iam_member" "cloud_run_cmek" {
   role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
   member        = "serviceAccount:service-${local.cmek_project_number}@serverless-robot-prod.iam.gserviceaccount.com"
 
-  depends_on = [google_project_service.cloudkms]
+  depends_on = [
+    google_project_service.cloudkms,
+    google_project_service.cloud_run,
+    google_project_service_identity.cloud_run,
+  ]
 }
 
 resource "google_kms_crypto_key_iam_member" "secret_manager_cmek" {

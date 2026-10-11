@@ -73,6 +73,10 @@ run "defaults_create_no_cmek_resources" {
       length(data.google_project.cmek) == 0 &&
       length(google_project_service_identity.cloud_sql) == 0 &&
       length(google_project_service_identity.secret_manager) == 0 &&
+      length(google_project_service.redis) == 0 &&
+      length(google_project_service.cloud_run) == 0 &&
+      length(google_project_service_identity.redis) == 0 &&
+      length(google_project_service_identity.cloud_run) == 0 &&
       length(google_kms_crypto_key_iam_member.gcs_cmek) == 0 &&
       length(google_kms_crypto_key_iam_member.cloud_sql_cmek) == 0 &&
       length(google_kms_crypto_key_iam_member.redis_cmek) == 0 &&
@@ -150,12 +154,16 @@ run "legacy_enable_is_gcs_only" {
       length(data.google_project.cmek) == 0 &&
       length(google_project_service_identity.cloud_sql) == 0 &&
       length(google_project_service_identity.secret_manager) == 0 &&
+      length(google_project_service.redis) == 0 &&
+      length(google_project_service.cloud_run) == 0 &&
+      length(google_project_service_identity.redis) == 0 &&
+      length(google_project_service_identity.cloud_run) == 0 &&
       length(google_kms_crypto_key_iam_member.cloud_sql_cmek) == 0 &&
       length(google_kms_crypto_key_iam_member.redis_cmek) == 0 &&
       length(google_kms_crypto_key_iam_member.cloud_run_cmek) == 0 &&
       length(google_kms_crypto_key_iam_member.secret_manager_cmek) == 0
     )
-    error_message = "Legacy enable must not opt in any non-GCS consumer."
+    error_message = "Legacy enable must not opt in any non-GCS consumer or add API/service-agent readiness resources."
   }
 
   assert {
@@ -210,6 +218,32 @@ run "all_consumers_automatic_replication_gcs_off" {
       google_project_service_identity.cloud_sql[0].project == "fleet-test-project"
     )
     error_message = "Cloud SQL and Secret Manager service identities must be provisioned in the Fleet project."
+  }
+
+  assert {
+    condition = (
+      length(google_project_service.redis) == 1 &&
+      length(google_project_service.cloud_run) == 1 &&
+      google_project_service.redis[0].service == "redis.googleapis.com" &&
+      google_project_service.cloud_run[0].service == "run.googleapis.com" &&
+      google_project_service.redis[0].project == "fleet-test-project" &&
+      google_project_service.cloud_run[0].project == "fleet-test-project" &&
+      google_project_service.redis[0].disable_on_destroy == false &&
+      google_project_service.cloud_run[0].disable_on_destroy == false
+    )
+    error_message = "Redis and Cloud Run consumers must enable their APIs in the Fleet project without disabling them on destroy."
+  }
+
+  assert {
+    condition = (
+      length(google_project_service_identity.redis) == 1 &&
+      length(google_project_service_identity.cloud_run) == 1 &&
+      google_project_service_identity.redis[0].service == "redis.googleapis.com" &&
+      google_project_service_identity.cloud_run[0].service == "run.googleapis.com" &&
+      google_project_service_identity.redis[0].project == "fleet-test-project" &&
+      google_project_service_identity.cloud_run[0].project == "fleet-test-project"
+    )
+    error_message = "Memorystore and Cloud Run service agents must be provisioned in the Fleet project."
   }
 
   assert {
@@ -326,11 +360,116 @@ run "two_region_secret_replicas_use_regional_keys" {
   assert {
     condition = (
       length(google_project_service_identity.cloud_sql) == 0 &&
+      length(google_project_service.redis) == 0 &&
+      length(google_project_service.cloud_run) == 0 &&
+      length(google_project_service_identity.redis) == 0 &&
+      length(google_project_service_identity.cloud_run) == 0 &&
       length(google_kms_crypto_key_iam_member.cloud_sql_cmek) == 0 &&
       length(google_kms_crypto_key_iam_member.redis_cmek) == 0 &&
       length(google_kms_crypto_key_iam_member.cloud_run_cmek) == 0
     )
     error_message = "Opting in secrets only must not opt in other consumers."
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Single consumers: only the matching API and service agent are provisioned.
+// ---------------------------------------------------------------------------
+run "redis_only_provisions_redis_api_and_agent" {
+  command = plan
+
+  providers = {
+    google      = google
+    google-beta = google-beta
+    null        = null
+    random      = random
+    terracurl   = terracurl
+  }
+
+  variables {
+    cmek = {
+      redis = { kms_key_id = "projects/kms-proj/locations/us-central1/keyRings/r/cryptoKeys/redis" }
+    }
+  }
+
+  assert {
+    condition = (
+      length(google_project_service.redis) == 1 &&
+      google_project_service.redis[0].service == "redis.googleapis.com" &&
+      google_project_service.redis[0].disable_on_destroy == false &&
+      length(google_project_service_identity.redis) == 1 &&
+      google_project_service_identity.redis[0].service == "redis.googleapis.com" &&
+      google_project_service_identity.redis[0].project == "fleet-test-project"
+    )
+    error_message = "Redis consumer must enable redis.googleapis.com and provision exactly one Memorystore service agent."
+  }
+
+  assert {
+    condition = (
+      length(google_project_service.cloud_run) == 0 &&
+      length(google_project_service_identity.cloud_run) == 0 &&
+      length(google_project_service_identity.cloud_sql) == 0 &&
+      length(google_project_service_identity.secret_manager) == 0 &&
+      length(google_kms_crypto_key_iam_member.cloud_run_cmek) == 0
+    )
+    error_message = "Redis consumer alone must not provision Cloud Run, Cloud SQL or Secret Manager readiness."
+  }
+
+  assert {
+    condition = (
+      length(google_kms_crypto_key_iam_member.redis_cmek) == 1 &&
+      google_kms_crypto_key_iam_member.redis_cmek[0].member == "serviceAccount:service-123456789012@cloud-redis.iam.gserviceaccount.com"
+    )
+    error_message = "Redis grant member must stay the documented Memorystore service-agent email."
+  }
+}
+
+run "cloud_run_only_provisions_run_api_and_agent" {
+  command = plan
+
+  providers = {
+    google      = google
+    google-beta = google-beta
+    null        = null
+    random      = random
+    terracurl   = terracurl
+  }
+
+  variables {
+    cmek = {
+      cloud_run = { kms_key_id = "projects/kms-proj/locations/us-central1/keyRings/r/cryptoKeys/run" }
+    }
+  }
+
+  assert {
+    condition = (
+      length(google_project_service.cloud_run) == 1 &&
+      google_project_service.cloud_run[0].service == "run.googleapis.com" &&
+      google_project_service.cloud_run[0].disable_on_destroy == false &&
+      length(google_project_service_identity.cloud_run) == 1 &&
+      google_project_service_identity.cloud_run[0].service == "run.googleapis.com" &&
+      google_project_service_identity.cloud_run[0].project == "fleet-test-project"
+    )
+    error_message = "Cloud Run consumer must enable run.googleapis.com and provision exactly one Cloud Run service agent."
+  }
+
+  assert {
+    condition = (
+      length(google_project_service.redis) == 0 &&
+      length(google_project_service_identity.redis) == 0 &&
+      length(google_project_service_identity.cloud_sql) == 0 &&
+      length(google_project_service_identity.secret_manager) == 0 &&
+      length(google_kms_crypto_key_iam_member.redis_cmek) == 0
+    )
+    error_message = "Cloud Run consumer alone must not provision Memorystore, Cloud SQL or Secret Manager readiness."
+  }
+
+  assert {
+    condition = (
+      length(google_kms_crypto_key_iam_member.cloud_run_cmek) == 1 &&
+      google_kms_crypto_key_iam_member.cloud_run_cmek[0].member == "serviceAccount:service-123456789012@serverless-robot-prod.iam.gserviceaccount.com"
+    )
+    error_message = "Cloud Run grant member must stay the documented Cloud Run service-agent email."
   }
 }
 
