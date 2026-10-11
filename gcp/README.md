@@ -26,7 +26,7 @@ It deploys:
 *   Google Secret Manager (for storing sensitive data like database passwords and Fleet server private key)
 *   Cloud Run v2 Service (for the main Fleet application)
 *   Cloud Run v2 Job (for database migrations)
-*   External HTTP(S) Load Balancer with managed SSL certificate
+*   External HTTP(S) Load Balancer with managed SSL certificate (unless you [bring your own load balancer](#bring-your-own-load-balancer-optional))
 *   Cloud DNS for managing the Fleet endpoint
 *   Appropriate IAM service accounts and permissions
 
@@ -52,7 +52,16 @@ manage_existing_project_apis = true
 extra_apis                   = [] # additional APIs beyond the Fleet baseline
 ```
 
-With this opt-in, Terraform enables the same baseline as new projects plus `extra_apis`, and waits for those APIs before creating Fleet resources. The Terraform identity needs permission to enable services, such as `roles/serviceusage.serviceUsageAdmin`. Opting out later or destroying the stack **does not disable these APIs**. Without the opt-in, `extra_apis` does not manage APIs in an existing project; some child resources still enable their individual APIs (Redis and, when requested, KMS). Direct callers of `byo-project` must manage the remaining prerequisites themselves.
+With this opt-in, Terraform enables the same baseline as new projects plus `extra_apis`, and waits for those APIs before creating Fleet resources. The Terraform identity needs permission to enable services, such as `roles/serviceusage.serviceUsageAdmin`. Opting out later or destroying the stack **does not disable these APIs**. Without the opt-in, `extra_apis` does not manage APIs in an existing project; some child resources still enable their individual APIs: Redis (through the Memorystore module, and before the Memorystore CMEK grant when `cmek.redis` is set), KMS when any CMEK setting is enabled, and Cloud Run when `cmek.cloud_run` is set. These per-feature activations don't cover every Fleet prerequisite. Direct callers of `byo-project` must manage the remaining prerequisites themselves.
+
+**Adopting API management on an existing deployment.** On a fresh deployment, the opt-in works in a single `terraform apply`. If you set `manage_existing_project_apis = true` on a Fleet stack that is **already deployed**, or later change the managed API set (for example, `extra_apis`), the module-wide `depends_on` on the API resources can defer data sources inside the Fleet module. The plan may then propose replacing KMS and Secret Manager IAM bindings. To avoid that, apply only the API resources first from this directory, then run a normal apply and review the full plan:
+
+```bash
+terraform apply -target='google_project_service.existing_project_apis'
+terraform apply
+```
+
+If you call this stack from a wrapper module, prefix the full module path, for example `-target='module.<your_module_name>.google_project_service.existing_project_apis'`. Use `-target` only for this adoption or change step. It is not part of normal deployments or fresh provisioning.
 
 ## Configuration
 
@@ -98,6 +107,21 @@ With this opt-in, Terraform enables the same baseline as new projects plus `extr
 
     Review `variables.tf` and `byo-project/variables.tf` for all available options and their defaults.
 
+## Bring your own load balancer (optional)
+
+By default the module creates a global (or, with `use_regional_lb = true`, regional) external Application Load Balancer. To front Fleet with an Application Load Balancer you own instead, disable the module-managed one:
+
+```hcl
+load_balancer_config = {
+  enable = false
+}
+```
+
+* **Cloud Run ingress does not change.** The Fleet service keeps `ingress = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"` (Cloud Run's "Internal and Cloud Load Balancing" setting). Disabling the module-managed load balancer does **not** expose Fleet at a public Cloud Run URL. The module creates no public endpoint, certificate, or DNS record in this mode, so devices and users can't reach Fleet until you connect your own load balancer.
+* **Connect your load balancer to `serverless_neg_id`.** This output is the ID of the regional serverless network endpoint group (NEG) the module already creates for the Fleet Cloud Run service (`terraform output serverless_neg_id`). Add it as a backend of your load balancer's backend service. The output is set whether or not the module-managed load balancer is enabled. Use a load balancer type that supports serverless NEG backends; a regional load balancer must be in the same `region` as Fleet.
+* **You own the rest of the load balancer:** frontend IP and forwarding rules, certificates, HTTP-to-HTTPS redirect, URL map, backend service, logging, and DNS. In this mode `fleet_application_url`, `load_balancer_ip_address`, and `regional_cert_dns_authorization_record` are `null`, and `load_balancer_type` is `"none"`. No DNS A record is created, even with `dns_config.enable = true`. Point your DNS record at your own load balancer's address.
+* **Module-managed Cloud Armor is not available.** `cloud_armor.enable = true` requires the module-managed regional load balancer. If you need a Cloud Armor policy, attach your own to your backend service. The [path guidance](#choosing-public-paths) below still applies when you choose which paths to allow.
+
 ## Cloud Armor allowlist (optional)
 
 `cloud_armor` attaches an optional Cloud Armor security policy to the load balancer. It is **off by default** (`cloud_armor.enable = false`), and when it is off nothing is created.
@@ -106,7 +130,7 @@ When enabled, the policy is an explicit allowlist that you own:
 
 | Input | Effect |
 |---|---|
-| `allowed_ip_ranges` | Requests from these source IP ranges (CIDRs) are allowed to **any path**. |
+| `allowed_ip_ranges` | Requests from these source IP addresses or CIDR ranges are allowed to **any path**. `*` matches every source, which allows all traffic. |
 | `allow_public_paths` | Requests whose path matches one of these RE2 regular expressions are allowed from **any source**. |
 | everything else | Denied with **HTTP 403**. |
 
@@ -116,13 +140,25 @@ When enabled, the policy is an explicit allowlist that you own:
 * `allow_public_paths` entries are RE2 regexes matched against the request path. Anchor them with `^` so they only match the intended path prefix. Each regex is passed to Cloud Armor as an escaped CEL string literal, so quotes and backslashes are safe and keep their regex meaning. In HCL, write a regex backslash as `\\` (for example, `"^/api/v\\d+/"`).
 * Rules are chunked to fit Cloud Armor limits: up to 5 path regexes per rule (priorities 1000, 1010, …) and up to 10 IP ranges per rule (priorities 2000, 2010, …). The deny-all rule is the policy's default rule at priority 2147483647.
 * Only `tier = "STANDARD"` is implemented. `tier = "ENTERPRISE"` is rejected when the policy is enabled.
+* **Plan-time validation.** When `cloud_armor.enable = true`, the root module and `byo-project` both reject invalid settings before anything is created. Each `allow_public_paths` entry must be a valid regular expression (checked with Terraform's `regexall`, which uses RE2 syntax). Each `allowed_ip_ranges` entry must be a valid IPv4 or IPv6 address (for example, `198.51.100.7` or `2001:db8::1`), a CIDR range (for example, `203.0.113.0/24` or `2001:db8::/32`), or `*`. Entries are passed to Cloud Armor exactly as you write them; bare addresses aren't rewritten to `/32` or `/128`. The module-managed regional load balancer must be enabled, and `tier` must be `"STANDARD"`. Passing these checks doesn't guarantee Cloud Armor accepts every expression, so review the plan and apply results.
 
 ### Choosing public paths
 
-Which paths your devices need depends on the Fleet features you use (osquery/fleetd, Fleet Desktop, Apple/Windows/Android MDM, and so on). Use Fleet's guide [What API endpoints to expose to the public internet?](https://fleetdm.com/guides/what-api-endpoints-to-expose-to-the-public-internet) as a feature-by-feature starting point. Treat it as a reference, not an exhaustive or version-locked list, and confirm the paths against the Fleet version you run:
+Which paths your devices need depends on the Fleet features you use (osquery/fleetd, Fleet Desktop, Apple/Windows/Android MDM, and so on). Use Fleet's guide [Which API endpoints to expose to the public internet?](https://fleetdm.com/guides/what-api-endpoints-to-expose-to-the-public-internet) as a feature-by-feature starting point. The [examples below](#examples) translate the guide's current list into feature groups. Treat the guide and these examples as a reference, not an exhaustive or version-locked list, and confirm the paths against the Fleet version you run. Nothing is allowed unless you add it.
 
-* Paths in the guide can differ from Fleet's server routes. For example, Fleet serves its ACME endpoints under `/api/mdm/acme/{identifier}/...`. A pattern for that route is `^/api/mdm/acme/[^/]+/`.
+* **Paths in the guide can differ from Fleet's server routes.** For ACME, the guide currently lists `/api/mdm/apple/acme/*`, while Fleet's server source (`server/mdm/acme/internal/service/handler.go` on `main`) registers its ACME endpoints under `/api/mdm/acme/{identifier}/...`. A pattern for that route is `^/api/mdm/acme/[^/]+/`. Check which route your Fleet version serves, and keep only the matching pattern.
 * fleetd's update (TUF) repository is normally not served by this load balancer. By default, fleetd downloads updates from `updates.fleetdm.com` (or from your own TUF server), so TUF paths usually do not belong in this list.
+* **Device routes and admin routes are different.** The guide's "Using fleetctl CLI from outside your network" entries (`/api/setup`, `/api/*/setup`, `/api/*/fleet/*`) cover the admin API, not device traffic. A public `^/api/[^/]+/fleet/` pattern would allow nearly the whole REST API, including admin endpoints, from any source, and would make most device-specific patterns redundant. Prefer `allowed_ip_ranges` for admins, the web UI, and `fleetctl`.
+
+The examples convert the guide's wildcard paths into anchored RE2 patterns:
+
+| Guide form | RE2 pattern | Meaning |
+|---|---|---|
+| Trailing `/*`, for example `/api/osquery/*` | `^/api/osquery/` | Any path under that prefix |
+| `*` inside a path, for example `/api/*/fleet/...` | `^/api/[^/]+/fleet/...` | Exactly one path segment, such as an API version (`v1`, `latest`) or a device token |
+| Exact endpoint, for example `/mdm/apple/mdm` | `^/mdm/apple/mdm$` | That path only. Cloud Armor's `request.path` excludes the query string |
+| Both a path and its `/*` sub-paths | `^/mdm/apple/service_discovery(/\|$)` | The path itself and anything under it |
+| A literal `.`, for example `/.well-known/...` | `^/\.well-known/...` | An escaped dot. Inside an HCL string, write it as `\\.` |
 
 After enabling, check the load balancer logs for 403 responses from managed devices and adjust the list.
 
@@ -147,7 +183,7 @@ cloud_armor = {
 }
 ```
 
-Admin IP ranges plus explicit public device paths:
+Admin IP ranges plus public device paths for common features. Remove the groups you don't use:
 
 ```hcl
 load_balancer_config = {
@@ -156,17 +192,63 @@ load_balancer_config = {
 
 cloud_armor = {
   enable            = true
-  allowed_ip_ranges = ["203.0.113.0/24"] # any path from these sources
+  allowed_ip_ranges = ["203.0.113.0/24"] # admins, web UI, fleetctl: any path from these sources
 
-  # Illustrative, not complete: build this list from the Fleet guide above
-  # for the features you use, and verify it against your Fleet version.
+  # Feature groups from Fleet's "Which API endpoints to expose to the public
+  # internet?" guide. Not complete for every feature: verify against your
+  # Fleet version and add the optional groups below only if you use them.
   allow_public_paths = [
-    "^/api/(v1/)?osquery/",
-    "^/api/fleet/orbit/",
-    "^/api/mdm/acme/[^/]+/",
+    # osquery/fleetd hosts outside your VPN or intranet
+    "^/api/osquery/",
+    "^/api/v1/osquery/",
+
+    # Fleet Desktop
+    "^/api/[^/]+/fleet/device/[^/]+/desktop$", # required for Fleet Desktop
+    "^/api/fleet/orbit/",                      # full Fleet Desktop and scripts functionality
+    "^/api/fleet/device/ping$",                # full Fleet Desktop and scripts functionality
+
+    # End-user "My device" page (frontend, static assets, and device API)
+    "^/device/",
+    "^/assets/",
+    "^/api/[^/]+/fleet/device/", # listed by the guide under macOS MDM; covers the Desktop pattern above
+
+    # Apple (macOS) MDM, including SCEP
+    "^/mdm/apple/scep$",       # SCEP certificate enrollment
+    "^/mdm/apple/mdm$",        # MDM protocol
+    "^/api/mdm/apple/enroll$", # automatic enrollment profiles
+
+    # Apple ACME (required with Hardware Attestation). The guide and Fleet's
+    # server source disagree (see "Choosing public paths"); keep the one your
+    # Fleet version serves.
+    "^/api/mdm/acme/[^/]+/", # Fleet server source route
+    "^/api/mdm/apple/acme/", # route listed in the guide
+
+    # Windows MDM
+    "^/api/mdm/microsoft/management$",
+    "^/api/mdm/microsoft/discovery$",
+    "^/api/mdm/microsoft/policy$",
+    "^/api/mdm/microsoft/enroll$",
+    "^/api/mdm/microsoft/tos$", # required for automatic enrollment
   ]
 }
 ```
+
+Optional groups. Append these to `allow_public_paths` only for the features you use:
+
+| Feature (when needed) | Patterns |
+|---|---|
+| SCEP proxy (certificates from a configured SCEP server) | `"^/mdm/scep/proxy/"` |
+| macOS setup: end-user IdP authentication (SSO) | `"^/mdm/sso$"`, `"^/api/[^/]+/fleet/mdm/sso$"`, `"^/mdm/sso/callback$"`, `"^/api/[^/]+/fleet/mdm/sso/callback$"`, `"^/assets/"` |
+| macOS setup: EULA | `"^/api/[^/]+/fleet/mdm/setup/eula/"` |
+| macOS setup: bootstrap package | `"^/api/[^/]+/fleet/mdm/bootstrap$"` |
+| macOS Platform SSO (Fleet's extension) | `"^/api/mdm/apple/psso/"`, `"^/\\.well-known/apple-app-site-association$"` |
+| iOS/iPadOS enrollment page and profile | `"^/enroll$"`, `"^/api/[^/]+/fleet/enrollment_profiles/ota$"` |
+| iOS/iPadOS in-house (`.ipa`) apps | `"^/api/[^/]+/fleet/software/titles/[^/]+/in_house_app$"` |
+| iOS/iPadOS account-driven User Enrollment (BYOD) | `"^/api/mdm/apple/account_driven_enroll(/\|$)"`, `"^/mdm/apple/account_driven_enroll/sso(/\|$)"`, `"^/mdm/apple/service_discovery(/\|$)"` |
+| Android enrollment page and Android Enterprise | `"^/enroll$"`, `"^/api/[^/]+/fleet/android_enterprise/enrollment_token$"`, `"^/api/[^/]+/fleet/android_enterprise/pubsub$"` |
+| Android Wi-Fi/VPN certificate deployment | `"^/api/fleetd/"` |
+
+The guide also covers mTLS for some device endpoints (its "Advanced" section). Cloud Armor path allowlisting does not replace Fleet's endpoint authentication.
 
 ## Customer-managed encryption (CMEK)
 
@@ -182,6 +264,10 @@ CMEK uses Google Cloud KMS keys for encryption at rest, analogous to AWS KMS cus
 | `secret_manager.replica_kms_key_ids` | Managed secrets with `replicate_secrets` set | One key in each replica's region | **Managed secret replacement** with the same IDs under the pinned provider |
 
 The new consumers accept **full key IDs** for keys provisioned separately or by the caller's Terraform configuration; they do not create additional keys. The deployer must be allowed to grant key access to each service's Google-managed service agent. API enablement is a prerequisite, particularly for existing projects; use the opt-in above or pre-enable the required services. A regional key cannot be replaced by the default multi-region GCS key, and a global Secret Manager key cannot be used for a regional service.
+
+**IAM propagation wait.** When any of `cmek.cloud_sql`, `cmek.redis`, `cmek.cloud_run`, or `cmek.secret_manager` is set, Terraform waits `cmek_iam_propagation_delay_seconds` (default `120`) after granting the service agents access to their keys and before creating the resources that use them. Google notes that IAM access changes [typically take about 2 minutes to propagate, and sometimes 7 minutes or longer](https://docs.cloud.google.com/iam/docs/access-change-propagation). Set it to a non-negative integer; `0` skips the wait. The wait is not a guarantee. If propagation takes longer, an apply can still fail, and you can re-run `terraform apply` after a few minutes. Don't assume every failure is a propagation delay: permission-denied errors that persist, or key location/region errors, point to a configuration problem (a missing grant permission, the wrong key, or a key in the wrong location) and won't resolve by waiting. The legacy GCS-only setting (`cmek.enable`) and the default configuration without CMEK don't wait.
+
+**When the wait runs again.** The wait happens when it is first created, and again only when it is replaced: when an opted-in grant's key, role or member changes, or when a per-service CMEK consumer is added or removed. Changing only `cmek_iam_propagation_delay_seconds` updates the stored duration in place without waiting; the new value applies the next time the wait is created or replaced. Not every apply waits.
 
 For example, for an encrypted fresh provision using existing keys and regional secret replication:
 
@@ -230,9 +316,13 @@ When versioning is enabled, noncurrent-version expiry defaults on after 30 days.
 
 * Legacy project creation remains the default. Keep `create_project = true` for projects managed by this module; do not switch to the existing-project path as a shortcut, because removing project-factory ownership can affect the project and its services.
 * The database default remains `fleet-mysql`. If a draft deployment was created with `fleet-mysql-v2`, explicitly retain that name in `database_config` before upgrading, or Terraform will propose replacement.
-* The regional load balancer now shares one reserved IP for HTTP and HTTPS, including when `create_static_ip = false`. Previously ephemeral draft deployments may change IP; update external DNS and review the plan.
+* The regional load balancer now shares one reserved IP for HTTP and HTTPS, regardless of `create_static_ip`. Previously ephemeral draft deployments may change IP; update external DNS and review the plan.
+* The `google-beta` provider is now configured with `default_labels = var.labels`, matching the `google` provider. Existing resources managed through `google-beta` that support provider default labels may show in-place label updates on the first plan after upgrading. This is not a no-diff upgrade; review the plan.
+* The installer bucket previously used `force_destroy = true`. It now follows `allow_destroy`, which defaults to `false`, so the plan shows an in-place `force_destroy` change. After upgrading, destroying a non-empty installer bucket fails unless you intentionally set `allow_destroy = true` and apply it first (see [Cleaning Up](#cleaning-up)). This guard is intended; keep `allow_destroy = false` outside teardown.
 * Duplicate regional invoker ownership and the unused packages mirror are forgotten without remote deletion. New deployments no longer create the mirror. Operators retaining an old mirror must manage it separately.
+* `create_static_ip` is an unsupported legacy input with no effect on either load balancer path: the regional load balancer always reserves one shared address, and the global load balancer's `lb-http` module creates its global address by default.
 * `backend_timeout_sec` is an unsupported legacy input: serverless NEG backends do not accept a configurable backend timeout. The Fleet Cloud Run service timeout remains 300 seconds; this input does not change it.
+* An enabled module-managed load balancer, global or regional, now requires `load_balancer_config.create_managed_cert = true` regardless of `https_redirect`. Configurations that previously set `create_managed_cert = false` with an enabled load balancer, including the HTTP-only regional setup with `https_redirect = false`, now fail at plan time. Set `create_managed_cert = true` and review the plan for the new certificate and listener changes, or set `load_balancer_config.enable = false` and use your own load balancer.
 
 ## Known Limitations
 
@@ -299,7 +389,7 @@ Once the deployment is complete, migrations have run successfully, and DNS has p
 *   **Service Account (`fleet-run-sa`):** Used by Cloud Run services/jobs with necessary permissions.
 *   **Cloud Run Service:** Hosts the main Fleet application.
 *   **Cloud Run Job:** Runs database migrations.
-*   **External HTTP(S) Load Balancer:** Provides public HTTPS access to Fleet.
+*   **External HTTP(S) Load Balancer:** Provides public HTTPS access to Fleet. Not created with `load_balancer_config.enable = false`; see [Bring your own load balancer](#bring-your-own-load-balancer-optional).
 *   **Cloud DNS Managed Zone:** Manages DNS records for `dns_zone_name`.
 *   **DNS A Record:** Points `dns_record_name` to the load balancer IP.
 
@@ -321,7 +411,7 @@ Setting `allow_destroy = true` disables Cloud SQL's Terraform deletion protectio
 *   **Fleet Configuration:** This Terraform setup provisions the infrastructure. Further Fleet application configuration (e.g., SSO, SMTP, agent options) is done through the Fleet UI or API after deployment.
 *   **Security:**
     *   Review IAM permissions granted.
-    *   With the default managed certificate and `https_redirect = true`, the load balancer provides HTTPS and redirects HTTP. Disabling the regional managed certificate also requires disabling HTTPS redirects; that configuration is HTTP-only.
+    *   An enabled module-managed load balancer, global or regional, always requires `load_balancer_config.create_managed_cert = true`, whatever `https_redirect` is set to. `create_managed_cert = false` is rejected at plan time; there is no HTTP-only configuration. With the default `https_redirect = true`, HTTP requests are redirected to HTTPS. This check doesn't apply with `load_balancer_config.enable = false`, where your own load balancer handles certificates.
     *   Cloud SQL and Memorystore are not publicly accessible and connect via Private Service Access.
 *   **Scalability:** Cloud Run scaling (`min_instance_count`, `max_instance_count`) and database/cache tier can be adjusted via `fleet_config`, `database_config`, and `cache_config`.
 
@@ -367,6 +457,8 @@ graph TD
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | ~> 1.11 |
 | <a name="requirement_google"></a> [google](#requirement\_google) | >= 6.35.0 |
 | <a name="requirement_google-beta"></a> [google-beta](#requirement\_google-beta) | >= 6.35.0 |
+| <a name="requirement_terracurl"></a> [terracurl](#requirement\_terracurl) | ~> 1.0 |
+| <a name="requirement_time"></a> [time](#requirement\_time) | >= 0.9.0 |
 
 ## Providers
 
@@ -396,6 +488,7 @@ graph TD
 | <a name="input_cache_config"></a> [cache\_config](#input\_cache\_config) | Configuration for the Memorystore (Redis) instance. | <pre>object({<br/>    name           = string<br/>    tier           = string<br/>    engine_version = string<br/>    connect_mode   = string<br/>    memory_size    = number<br/>  })</pre> | <pre>{<br/>  "connect_mode": "PRIVATE_SERVICE_ACCESS",<br/>  "engine_version": null,<br/>  "memory_size": 1,<br/>  "name": "fleet-cache",<br/>  "tier": "STANDARD_HA"<br/>}</pre> | no |
 | <a name="input_cloud_armor"></a> [cloud\_armor](#input\_cloud\_armor) | Optional Cloud Armor allowlist for the regional load balancer (off by default).<br/>When enable = true the policy allows requests from any source in allowed\_ip\_ranges (any path),<br/>and requests to any path matching an RE2 regex in allow\_public\_paths (any source).<br/>All other requests are denied with HTTP 403. No Fleet endpoints are allowed automatically;<br/>at least one of allowed\_ip\_ranges or allow\_public\_paths must be non-empty when enabled.<br/>Requires load\_balancer\_config.enable = true and use\_regional\_lb = true.<br/>Attachment is managed natively with google-beta; no gcloud CLI is required.<br/>Only tier = STANDARD is implemented; the legacy tier field is retained for compatibility. | <pre>object({<br/>    enable             = optional(bool, false)<br/>    tier               = optional(string, "STANDARD")<br/>    allowed_ip_ranges  = optional(list(string), [])<br/>    allow_public_paths = optional(list(string), [])<br/>  })</pre> | <pre>{<br/>  "allow_public_paths": [],<br/>  "allowed_ip_ranges": [],<br/>  "enable": false,<br/>  "tier": "STANDARD"<br/>}</pre> | no |
 | <a name="input_cmek"></a> [cmek](#input\_cmek) | Customer-Managed Encryption Key configuration. When enable = true, the GCS<br/>buckets are encrypted with the crypto key at local.kms\_crypto\_key\_id<br/>(located at var.location).<br/><br/>When create\_kms = true, Terraform creates the key ring and crypto key in the<br/>target project/region using the provided names. When false, they must already<br/>exist. These legacy settings only ever encrypt the GCS buckets.<br/><br/>Optional, independent opt-ins (default null = Google-managed, unchanged):<br/>  cloud\_sql      = { kms\_key\_id = "<full key ID in var.region>" }<br/>  redis          = { kms\_key\_id = "<full key ID in var.region>" }<br/>  cloud\_run      = { kms\_key\_id = "<full key ID in var.region>" }<br/>  secret\_manager = {<br/>    kms\_key\_id          = "<global key ID>"       # automatic replication<br/>    replica\_kms\_key\_ids = { "<region>" = "<key>" } # one per replicate\_secrets region<br/>  }<br/>Keys are never created for these; callers supply existing keys (or keys<br/>managed elsewhere in their configuration). Terraform grants the Cloud SQL,<br/>Memorystore, Cloud Run and Secret Manager service agents<br/>roles/cloudkms.cryptoKeyEncrypterDecrypter on them. Enabling cloud\_sql or<br/>redis on an existing deployment replaces the instance; enabling<br/>secret\_manager replaces the Fleet-managed secrets. | <pre>object({<br/>    enable         = optional(bool, false)<br/>    create_kms     = optional(bool, false)<br/>    kms_key_ring   = optional(string)<br/>    kms_crypto_key = optional(string)<br/>    cloud_sql = optional(object({<br/>      kms_key_id = string<br/>    }))<br/>    redis = optional(object({<br/>      kms_key_id = string<br/>    }))<br/>    cloud_run = optional(object({<br/>      kms_key_id = string<br/>    }))<br/>    secret_manager = optional(object({<br/>      kms_key_id          = optional(string)<br/>      replica_kms_key_ids = optional(map(string), {})<br/>    }))<br/>  })</pre> | <pre>{<br/>  "create_kms": false,<br/>  "enable": false,<br/>  "kms_crypto_key": null,<br/>  "kms_key_ring": null<br/>}</pre> | no |
+| <a name="input_cmek_iam_propagation_delay_seconds"></a> [cmek\_iam\_propagation\_delay\_seconds](#input\_cmek\_iam\_propagation\_delay\_seconds) | Seconds to wait after the per-service CMEK KMS grants (cmek.cloud\_sql,<br/>cmek.redis, cmek.cloud\_run, cmek.secret\_manager) before creating the<br/>resources that use those keys. Only applies when at least one of those<br/>consumers is set; 0 keeps the ordering but skips the wait. Default 120<br/>follows Google's typical IAM propagation time (about 2 minutes,<br/>https://docs.cloud.google.com/iam/docs/access-change-propagation); it is<br/>not a readiness guarantee. | `number` | `120` | no |
 | <a name="input_create_project"></a> [create\_project](#input\_create\_project) | Whether to create a new GCP project (true) or use an existing one (false). When true, org\_id or folder\_id must be set, plus billing\_account\_id; folder\_id takes precedence when both are provided. | `bool` | `true` | no |
 | <a name="input_database_config"></a> [database\_config](#input\_database\_config) | Configuration for the Cloud SQL (MySQL) instance. | <pre>object({<br/>    name                = string<br/>    database_name       = string<br/>    database_user       = string<br/>    collation           = string<br/>    charset             = string<br/>    deletion_protection = bool<br/>    database_version    = string<br/>    tier                = string<br/>  })</pre> | <pre>{<br/>  "charset": "utf8mb4",<br/>  "collation": "utf8mb4_unicode_ci",<br/>  "database_name": "fleet",<br/>  "database_user": "fleet",<br/>  "database_version": "MYSQL_8_0",<br/>  "deletion_protection": false,<br/>  "name": "fleet-mysql",<br/>  "tier": "db-n1-standard-1"<br/>}</pre> | no |
 | <a name="input_dns_config"></a> [dns\_config](#input\_dns\_config) | DNS configuration. Set enable=false when using external DNS providers or when Cloud DNS is unavailable. | <pre>object({<br/>    enable = bool<br/>  })</pre> | <pre>{<br/>  "enable": true<br/>}</pre> | no |
@@ -438,6 +531,7 @@ graph TD
 | <a name="output_redis_instance_name"></a> [redis\_instance\_name](#output\_redis\_instance\_name) | The name of the Memorystore for Redis instance. |
 | <a name="output_redis_port"></a> [redis\_port](#output\_redis\_port) | The port number of the Memorystore for Redis instance. |
 | <a name="output_regional_cert_dns_authorization_record"></a> [regional\_cert\_dns\_authorization\_record](#output\_regional\_cert\_dns\_authorization\_record) | CNAME record to publish at your external DNS provider when using a regional managed certificate with dns\_config.enable = false. |
+| <a name="output_serverless_neg_id"></a> [serverless\_neg\_id](#output\_serverless\_neg\_id) | ID of the existing regional serverless network endpoint group (NEG) for the Fleet Cloud Run service. Always available, whether or not the module-managed load balancer is enabled. Use it as the backend of a caller-owned Application Load Balancer when load\_balancer\_config.enable = false. |
 | <a name="output_software_installers_bucket_name"></a> [software\_installers\_bucket\_name](#output\_software\_installers\_bucket\_name) | The name of the GCS bucket for Fleet software installers. |
 | <a name="output_software_installers_bucket_url"></a> [software\_installers\_bucket\_url](#output\_software\_installers\_bucket\_url) | The gsutil URL of the GCS bucket for Fleet software installers. |
 | <a name="output_vpc_network_name"></a> [vpc\_network\_name](#output\_vpc\_network\_name) | The name of the VPC network created. |

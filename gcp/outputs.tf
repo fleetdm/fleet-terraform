@@ -18,6 +18,11 @@ output "regional_cert_dns_authorization_record" {
   value       = module.fleet.regional_cert_dns_authorization_record
 }
 
+output "serverless_neg_id" {
+  description = "ID of the existing regional serverless network endpoint group (NEG) for the Fleet Cloud Run service. Always available, whether or not the module-managed load balancer is enabled. Use it as the backend of a caller-owned Application Load Balancer when load_balancer_config.enable = false."
+  value       = module.fleet.serverless_neg_id
+}
+
 output "cloud_run_service_name" {
   description = "The name of the deployed Fleet Cloud Run service."
   value       = module.fleet.cloud_run_service_name

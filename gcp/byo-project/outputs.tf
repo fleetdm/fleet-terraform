@@ -20,6 +20,17 @@ output "load_balancer_type" {
   ) : "none"
 }
 
+# The serverless NEG for the Fleet Cloud Run service always exists, independent
+# of load_balancer_config. With load_balancer_config.enable = false (bring your
+# own load balancer), attach this NEG to a caller-owned Application Load
+# Balancer backend service. Cloud Run ingress stays restricted to
+# INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER, so the service is not reachable
+# directly from the internet.
+output "serverless_neg_id" {
+  description = "ID of the existing regional serverless network endpoint group (NEG) for the Fleet Cloud Run service. Always available, whether or not the module-managed load balancer is enabled. Use it as the backend of a caller-owned Application Load Balancer when load_balancer_config.enable = false."
+  value       = google_compute_region_network_endpoint_group.neg.id
+}
+
 output "cloud_run_service_name" {
   description = "The name of the deployed Fleet Cloud Run service."
   value       = module.fleet-service.service_name
