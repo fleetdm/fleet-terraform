@@ -11,6 +11,11 @@
 //   * everything else    -> deny(403) at priority 2147483647
 //   * IP-only and paths-only policies are valid
 //   * enable = true with both lists empty is rejected
+//   * enabled entries are syntax-checked: IPv4/IPv6 CIDRs, bare IPv4/IPv6
+//     addresses (checked as /32 or /128, rendered unchanged) or "*" for
+//     allowed_ip_ranges, valid RE2 (match not required) for allow_public_paths
+//   * enabled policies require an enabled regional LB and tier = STANDARD,
+//     mirroring the root module; disabled configs are not format-checked
 //   * public path regexes are embedded as escaped CEL string literals
 //
 // google-beta is required by child registry modules and the regional backend
@@ -356,6 +361,9 @@ run "mixed_policy_is_valid_and_chunked" {
 // literal, so a quote could close the literal and inject CEL, and backslashes
 // were reinterpreted by CEL. Each pattern must now be a double-quoted CEL
 // literal whose JSON/CEL escaping decodes back to the exact configured regex.
+// The breakout payloads are wrapped so they are still valid RE2 (patterns are
+// syntax-checked by variable validation); the quotes and backslashes they
+// carry are what exercise the CEL escaping.
 run "public_path_patterns_are_escaped_for_cel" {
   command = plan
 
@@ -376,11 +384,12 @@ run "public_path_patterns_are_escaped_for_cel" {
         // backslash escapes in the regex: ^/api/v\d+/a\.b$
         "^/api/v\\d+/a\\.b$",
         // single-quote breakout attempt from the old '...' literal
-        "^/x') || true || request.path.matches('y",
+        "(^/x') || true || request.path.matches('y)",
         // double-quote breakout attempt against the new "..." literal
-        "^/x\") || true || request.path.matches(\"y",
-        // trailing backslash that would otherwise escape the closing quote
-        "^/trailing\\",
+        "(^/x\") || true || request.path.matches(\"y)",
+        // trailing backslash (regex ^/trailing\\, an escaped literal
+        // backslash) that would otherwise escape the closing quote
+        "^/trailing\\\\",
       ]
     }
   }
@@ -391,9 +400,9 @@ run "public_path_patterns_are_escaped_for_cel" {
     condition = google_compute_region_security_policy_rule.allow_public_paths[0].match[0].expr[0].expression == join(" || ", [
       "request.path.matches(\"^/api/v1/fleet/device/\")",
       "request.path.matches(\"^/api/v\\\\d+/a\\\\.b$\")",
-      "request.path.matches(\"^/x') || true || request.path.matches('y\")",
-      "request.path.matches(\"^/x\\\") || true || request.path.matches(\\\"y\")",
-      "request.path.matches(\"^/trailing\\\\\")",
+      "request.path.matches(\"(^/x') || true || request.path.matches('y)\")",
+      "request.path.matches(\"(^/x\\\") || true || request.path.matches(\\\"y)\")",
+      "request.path.matches(\"^/trailing\\\\\\\\\")",
     ])
     error_message = "Public path patterns must be rendered as escaped double-quoted CEL string literals."
   }
@@ -409,10 +418,353 @@ run "public_path_patterns_are_escaped_for_cel" {
       ] == [
       "^/api/v1/fleet/device/",
       "^/api/v\\d+/a\\.b$",
-      "^/x') || true || request.path.matches('y",
-      "^/x\") || true || request.path.matches(\"y",
-      "^/trailing\\",
+      "(^/x') || true || request.path.matches('y)",
+      "(^/x\") || true || request.path.matches(\"y)",
+      "^/trailing\\\\",
     ]
     error_message = "Decoding the CEL literals must return the configured regexes unchanged."
   }
+}
+
+run "ipv4_ipv6_and_wildcard_ranges_are_valid" {
+  command = plan
+
+  providers = {
+    google      = google
+    google-beta = google-beta
+    null        = null
+    random      = random
+    terracurl   = terracurl
+  }
+
+  variables {
+    cloud_armor = {
+      enable            = true
+      allowed_ip_ranges = ["203.0.113.0/24", "2001:db8::/32", "*"]
+    }
+  }
+
+  assert {
+    condition     = google_compute_region_security_policy_rule.allow_admin_ips["0"].match[0].config[0].src_ip_ranges == tolist(["203.0.113.0/24", "2001:db8::/32", "*"])
+    error_message = "IPv4, IPv6 and \"*\" ranges must be accepted and rendered unchanged."
+  }
+
+  assert {
+    condition     = length(google_compute_region_security_policy_rule.allow_public_paths) == 0
+    error_message = "An IP-only policy must not add any public path rules (no automatic endpoints)."
+  }
+}
+
+// Bare addresses are syntax-checked as single hosts (/32 or /128) but must
+// reach Cloud Armor exactly as the caller wrote them (no suffix appended).
+run "bare_ipv4_and_ipv6_addresses_are_valid_and_unchanged" {
+  command = plan
+
+  providers = {
+    google      = google
+    google-beta = google-beta
+    null        = null
+    random      = random
+    terracurl   = terracurl
+  }
+
+  variables {
+    cloud_armor = {
+      enable            = true
+      allowed_ip_ranges = ["203.0.113.7", "2001:db8::7", "::1", "198.51.100.0/24", "2001:db8::/32", "*"]
+    }
+  }
+
+  assert {
+    condition     = length(google_compute_region_security_policy_rule.allow_admin_ips) == 1
+    error_message = "Six allowed entries must fit in a single source IP allow rule."
+  }
+
+  assert {
+    condition     = google_compute_region_security_policy_rule.allow_admin_ips["0"].match[0].config[0].src_ip_ranges == tolist(["203.0.113.7", "2001:db8::7", "::1", "198.51.100.0/24", "2001:db8::/32", "*"])
+    error_message = "Bare IPv4/IPv6 addresses must be rendered into src_ip_ranges exactly as configured (no /32 or /128 appended), alongside CIDRs and \"*\"."
+  }
+
+  assert {
+    condition     = length(google_compute_region_security_policy_rule.allow_public_paths) == 0
+    error_message = "An IP-only policy must not add any public path rules (no automatic endpoints)."
+  }
+
+  assert {
+    condition     = google_compute_region_security_policy_rule.default_deny[0].action == "deny(403)"
+    error_message = "A policy with bare addresses must still deny all other traffic with 403."
+  }
+}
+
+run "malformed_bare_ipv4_is_rejected" {
+  command = plan
+
+  providers = {
+    google      = google
+    google-beta = google-beta
+    null        = null
+    random      = random
+    terracurl   = terracurl
+  }
+
+  variables {
+    cloud_armor = {
+      enable            = true
+      allowed_ip_ranges = ["203.0.113.7", "203.0.113.256"]
+    }
+  }
+
+  expect_failures = [
+    var.cloud_armor,
+  ]
+}
+
+run "malformed_bare_ipv6_is_rejected" {
+  command = plan
+
+  providers = {
+    google      = google
+    google-beta = google-beta
+    null        = null
+    random      = random
+    terracurl   = terracurl
+  }
+
+  variables {
+    cloud_armor = {
+      enable            = true
+      allowed_ip_ranges = ["2001:db8::7", "2001:db8:::7"]
+    }
+  }
+
+  expect_failures = [
+    var.cloud_armor,
+  ]
+}
+
+run "malformed_cidr_is_rejected" {
+  command = plan
+
+  providers = {
+    google      = google
+    google-beta = google-beta
+    null        = null
+    random      = random
+    terracurl   = terracurl
+  }
+
+  variables {
+    cloud_armor = {
+      enable            = true
+      allowed_ip_ranges = ["203.0.113.0/24", "203.0.113.0/33"]
+    }
+  }
+
+  expect_failures = [
+    var.cloud_armor,
+  ]
+}
+
+run "non_cidr_range_is_rejected" {
+  command = plan
+
+  providers = {
+    google      = google
+    google-beta = google-beta
+    null        = null
+    random      = random
+    terracurl   = terracurl
+  }
+
+  variables {
+    cloud_armor = {
+      enable            = true
+      allowed_ip_ranges = ["not-a-cidr"]
+    }
+  }
+
+  expect_failures = [
+    var.cloud_armor,
+  ]
+}
+
+run "valid_nonmatching_anchored_regex_is_accepted" {
+  command = plan
+
+  providers = {
+    google      = google
+    google-beta = google-beta
+    null        = null
+    random      = random
+    terracurl   = terracurl
+  }
+
+  // "^/api/fleet/device/[a-z0-9]+/ping$" does not match the empty string;
+  // validation only checks RE2 syntax, so it must still be accepted.
+  variables {
+    cloud_armor = {
+      enable             = true
+      allow_public_paths = ["^/api/fleet/device/[a-z0-9]+/ping$"]
+    }
+  }
+
+  assert {
+    condition     = google_compute_region_security_policy_rule.allow_public_paths[0].match[0].expr[0].expression == "request.path.matches(\"^/api/fleet/device/[a-z0-9]+/ping$\")"
+    error_message = "A valid anchored regex that does not match the empty string must be accepted unchanged."
+  }
+
+  assert {
+    condition     = length(google_compute_region_security_policy_rule.allow_admin_ips) == 0
+    error_message = "A paths-only policy must not add any source IP allow rules."
+  }
+}
+
+run "malformed_regex_is_rejected" {
+  command = plan
+
+  providers = {
+    google      = google
+    google-beta = google-beta
+    null        = null
+    random      = random
+    terracurl   = terracurl
+  }
+
+  variables {
+    cloud_armor = {
+      enable             = true
+      allow_public_paths = ["^/api/fleet/orbit/", "^/api/(unclosed"]
+    }
+  }
+
+  expect_failures = [
+    var.cloud_armor,
+  ]
+}
+
+run "disabled_with_malformed_entries_is_valid" {
+  command = plan
+
+  providers = {
+    google      = google
+    google-beta = google-beta
+    null        = null
+    random      = random
+    terracurl   = terracurl
+  }
+
+  // Matches the root module: disabled policies are not format-checked and
+  // create nothing.
+  variables {
+    cloud_armor = {
+      enable             = false
+      allowed_ip_ranges  = ["not-a-cidr"]
+      allow_public_paths = ["^/api/(unclosed"]
+    }
+  }
+
+  assert {
+    condition     = length(google_compute_region_security_policy.regional_security_policy) == 0
+    error_message = "A disabled policy must not create anything."
+  }
+}
+
+run "enabled_with_global_lb_is_rejected" {
+  command = plan
+
+  providers = {
+    google      = google
+    google-beta = google-beta
+    null        = null
+    random      = random
+    terracurl   = terracurl
+  }
+
+  variables {
+    load_balancer_config = {
+      use_regional_lb = false
+    }
+    cloud_armor = {
+      enable            = true
+      allowed_ip_ranges = ["203.0.113.0/24"]
+    }
+  }
+
+  expect_failures = [
+    var.cloud_armor,
+  ]
+}
+
+run "enabled_with_lb_disabled_is_rejected" {
+  command = plan
+
+  providers = {
+    google      = google
+    google-beta = google-beta
+    null        = null
+    random      = random
+    terracurl   = terracurl
+  }
+
+  variables {
+    load_balancer_config = {
+      enable          = false
+      use_regional_lb = true
+    }
+    cloud_armor = {
+      enable            = true
+      allowed_ip_ranges = ["203.0.113.0/24"]
+    }
+  }
+
+  expect_failures = [
+    var.cloud_armor,
+  ]
+}
+
+run "enabled_enterprise_tier_is_rejected" {
+  command = plan
+
+  providers = {
+    google      = google
+    google-beta = google-beta
+    null        = null
+    random      = random
+    terracurl   = terracurl
+  }
+
+  variables {
+    cloud_armor = {
+      enable            = true
+      tier              = "ENTERPRISE"
+      allowed_ip_ranges = ["203.0.113.0/24"]
+    }
+  }
+
+  expect_failures = [
+    var.cloud_armor,
+  ]
+}
+
+run "unknown_tier_is_rejected" {
+  command = plan
+
+  providers = {
+    google      = google
+    google-beta = google-beta
+    null        = null
+    random      = random
+    terracurl   = terracurl
+  }
+
+  variables {
+    cloud_armor = {
+      enable = false
+      tier   = "PREMIUM"
+    }
+  }
+
+  expect_failures = [
+    var.cloud_armor,
+  ]
 }

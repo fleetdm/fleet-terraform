@@ -294,7 +294,7 @@ run "regional_redirect_without_managed_cert_rejected" {
   expect_failures = [var.load_balancer_config]
 }
 
-run "regional_without_managed_cert_or_redirect_serves_http" {
+run "regional_without_managed_cert_or_redirect_rejected" {
   command = plan
 
   providers = {
@@ -313,25 +313,7 @@ run "regional_without_managed_cert_or_redirect_serves_http" {
     }
   }
 
-  assert {
-    condition = (
-      length(google_compute_region_url_map.regional_https_redirect) == 0 &&
-      length(google_compute_region_target_https_proxy.regional_https_proxy) == 0 &&
-      length(google_compute_forwarding_rule.regional_https) == 0 &&
-      length(google_certificate_manager_certificate.regional_cert) == 0
-    )
-    error_message = "create_managed_cert = false with https_redirect = false must not create a redirect, HTTPS listener or certificate."
-  }
-
-  assert {
-    condition     = google_compute_region_target_http_proxy.regional_main_proxy[0].url_map == google_compute_region_url_map.regional_url_map[0].id
-    error_message = "Port 80 proxy must serve the backend URL map when there is no HTTPS listener."
-  }
-
-  assert {
-    condition     = output.regional_cert_dns_authorization_record == null
-    error_message = "No certificate DNS authorization record should be reported without a managed cert."
-  }
+  expect_failures = [var.load_balancer_config]
 }
 
 run "lb_disabled_allows_redirect_without_managed_cert" {
@@ -364,7 +346,36 @@ run "lb_disabled_allows_redirect_without_managed_cert" {
   }
 }
 
-run "global_allows_redirect_without_managed_cert" {
+run "lb_disabled_allows_no_redirect_without_managed_cert" {
+  command = plan
+
+  providers = {
+    google      = google
+    google-beta = google-beta
+    null        = null
+    random      = random
+    terracurl   = terracurl
+  }
+
+  variables {
+    load_balancer_config = {
+      enable              = false
+      use_regional_lb     = false
+      create_managed_cert = false
+      https_redirect      = false
+    }
+  }
+
+  assert {
+    condition = (
+      output.load_balancer_type == "none" &&
+      output.fleet_application_url == null
+    )
+    error_message = "A disabled LB must accept create_managed_cert = false and create no LB resources."
+  }
+}
+
+run "global_redirect_without_managed_cert_rejected" {
   command = plan
 
   providers = {
@@ -383,10 +394,29 @@ run "global_allows_redirect_without_managed_cert" {
     }
   }
 
-  assert {
-    condition     = output.load_balancer_type == "global"
-    error_message = "The regional-only validation must not affect the global LB path."
+  expect_failures = [var.load_balancer_config]
+}
+
+run "global_without_managed_cert_or_redirect_rejected" {
+  command = plan
+
+  providers = {
+    google      = google
+    google-beta = google-beta
+    null        = null
+    random      = random
+    terracurl   = terracurl
   }
+
+  variables {
+    load_balancer_config = {
+      use_regional_lb     = false
+      create_managed_cert = false
+      https_redirect      = false
+    }
+  }
+
+  expect_failures = [var.load_balancer_config]
 }
 
 run "default_lb_config_unchanged" {

@@ -147,8 +147,9 @@ run "byo_project_default_database_name" {
   }
 }
 
-# Regional HTTPS redirect needs the managed cert's HTTPS listener; the
-# unsupported combination is rejected at the root and direct-child inputs.
+# An enabled load balancer (global or regional) needs the managed cert's HTTPS
+# listener; HTTP-only LBs are rejected at the root and direct-child inputs
+# regardless of https_redirect. A disabled LB accepts any cert setting.
 run "root_regional_redirect_without_managed_cert_rejected" {
   command = plan
 
@@ -165,7 +166,7 @@ run "root_regional_redirect_without_managed_cert_rejected" {
   expect_failures = [var.load_balancer_config]
 }
 
-run "root_regional_without_managed_cert_or_redirect_allowed" {
+run "root_regional_without_managed_cert_or_redirect_rejected" {
   command = plan
 
   variables {
@@ -178,10 +179,39 @@ run "root_regional_without_managed_cert_or_redirect_allowed" {
     }
   }
 
-  assert {
-    condition     = var.load_balancer_config.create_managed_cert == false && var.load_balancer_config.https_redirect == false
-    error_message = "Regional LB without managed cert and without redirect must remain valid."
+  expect_failures = [var.load_balancer_config]
+}
+
+run "root_global_redirect_without_managed_cert_rejected" {
+  command = plan
+
+  variables {
+    create_project = false
+    project_id     = "my-existing-project"
+    load_balancer_config = {
+      use_regional_lb     = false
+      create_managed_cert = false
+      https_redirect      = true
+    }
   }
+
+  expect_failures = [var.load_balancer_config]
+}
+
+run "root_global_without_managed_cert_or_redirect_rejected" {
+  command = plan
+
+  variables {
+    create_project = false
+    project_id     = "my-existing-project"
+    load_balancer_config = {
+      use_regional_lb     = false
+      create_managed_cert = false
+      https_redirect      = false
+    }
+  }
+
+  expect_failures = [var.load_balancer_config]
 }
 
 run "root_lb_disabled_redirect_without_managed_cert_allowed" {
@@ -204,6 +234,26 @@ run "root_lb_disabled_redirect_without_managed_cert_allowed" {
   }
 }
 
+run "root_lb_disabled_without_managed_cert_or_redirect_allowed" {
+  command = plan
+
+  variables {
+    create_project = false
+    project_id     = "my-existing-project"
+    load_balancer_config = {
+      enable              = false
+      use_regional_lb     = false
+      create_managed_cert = false
+      https_redirect      = false
+    }
+  }
+
+  assert {
+    condition     = var.load_balancer_config.enable == false && var.load_balancer_config.create_managed_cert == false
+    error_message = "A disabled LB must accept create_managed_cert = false."
+  }
+}
+
 run "byo_project_regional_redirect_without_managed_cert_rejected" {
   command = plan
 
@@ -217,6 +267,63 @@ run "byo_project_regional_redirect_without_managed_cert_rejected" {
       use_regional_lb     = true
       create_managed_cert = false
       https_redirect      = true
+    }
+  }
+
+  expect_failures = [var.load_balancer_config]
+}
+
+run "byo_project_regional_without_managed_cert_or_redirect_rejected" {
+  command = plan
+
+  module {
+    source = "./byo-project"
+  }
+
+  variables {
+    project_id = "my-existing-project"
+    load_balancer_config = {
+      use_regional_lb     = true
+      create_managed_cert = false
+      https_redirect      = false
+    }
+  }
+
+  expect_failures = [var.load_balancer_config]
+}
+
+run "byo_project_global_redirect_without_managed_cert_rejected" {
+  command = plan
+
+  module {
+    source = "./byo-project"
+  }
+
+  variables {
+    project_id = "my-existing-project"
+    load_balancer_config = {
+      use_regional_lb     = false
+      create_managed_cert = false
+      https_redirect      = true
+    }
+  }
+
+  expect_failures = [var.load_balancer_config]
+}
+
+run "byo_project_global_without_managed_cert_or_redirect_rejected" {
+  command = plan
+
+  module {
+    source = "./byo-project"
+  }
+
+  variables {
+    project_id = "my-existing-project"
+    load_balancer_config = {
+      use_regional_lb     = false
+      create_managed_cert = false
+      https_redirect      = false
     }
   }
 

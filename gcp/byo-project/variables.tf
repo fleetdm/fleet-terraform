@@ -173,13 +173,8 @@ variable "load_balancer_config" {
   default = {}
 
   validation {
-    condition = !(
-      var.load_balancer_config.enable &&
-      var.load_balancer_config.use_regional_lb &&
-      var.load_balancer_config.https_redirect &&
-      !var.load_balancer_config.create_managed_cert
-    )
-    error_message = "load_balancer_config.https_redirect = true with use_regional_lb = true requires create_managed_cert = true. Without the managed certificate the regional LB has no HTTPS listener to redirect to; set https_redirect = false or create_managed_cert = true."
+    condition     = !var.load_balancer_config.enable || var.load_balancer_config.create_managed_cert
+    error_message = "load_balancer_config.enable = true requires create_managed_cert = true for both the global and regional load balancers (regardless of https_redirect). Without the managed certificate the load balancer has no HTTPS listener; HTTP-only load balancers are not supported. Set create_managed_cert = true or load_balancer_config.enable = false."
   }
 }
 
@@ -198,11 +193,52 @@ variable "cloud_armor" {
     allow_public_paths = []
   }
 
-  # Mirrors the root module check: an enabled policy with nothing allowed
-  # would deny all traffic with 403.
+  # The checks below mirror the root module's cloud_armor validation so that
+  # direct consumers of this module get the same contract.
+  validation {
+    condition     = contains(["STANDARD", "ENTERPRISE"], var.cloud_armor.tier)
+    error_message = "cloud_armor.tier must be one of: STANDARD, ENTERPRISE."
+  }
+
+  validation {
+    condition     = var.cloud_armor.tier != "ENTERPRISE" || !var.cloud_armor.enable
+    error_message = "cloud_armor.tier = ENTERPRISE is not yet implemented in this module. Set tier = STANDARD or leave cloud_armor.enable = false."
+  }
+
+  validation {
+    condition = !var.cloud_armor.enable || (
+      var.load_balancer_config.enable && var.load_balancer_config.use_regional_lb
+    )
+    error_message = "cloud_armor.enable = true requires load_balancer_config.enable = true and load_balancer_config.use_regional_lb = true. Cloud Armor is only wired for the regional LB path in this module."
+  }
+
+  # An enabled policy with nothing allowed would deny all traffic with 403.
   validation {
     condition     = !var.cloud_armor.enable || length(var.cloud_armor.allowed_ip_ranges) + length(var.cloud_armor.allow_public_paths) > 0
     error_message = "cloud_armor.enable = true requires at least one entry in cloud_armor.allowed_ip_ranges or cloud_armor.allow_public_paths. With both empty the policy would deny all traffic (403). No Fleet endpoints are allowed automatically."
+  }
+
+  # Syntax-only checks on the operator-supplied entries (no endpoints are
+  # added automatically). regexall() returns [] for a valid pattern that does
+  # not match "", so only malformed RE2 is rejected (regex() would also reject
+  # valid patterns such as "^/api/fleet/orbit/" that do not match "").
+  # A bare address (no "/") is checked as a single host: /128 when it contains
+  # ":" (IPv6), otherwise /32 (IPv4). The suffix is only used for this check;
+  # the caller's original string is what reaches the policy.
+  validation {
+    condition = !var.cloud_armor.enable || alltrue([
+      for c in var.cloud_armor.allowed_ip_ranges : c == "*" || can(cidrhost(
+        strcontains(c, "/") ? c : "${c}/${strcontains(c, ":") ? 128 : 32}", 0
+      ))
+    ])
+    error_message = "Every cloud_armor.allowed_ip_ranges entry must be an IPv4/IPv6 CIDR range (for example 203.0.113.0/24 or 2001:db8::/32), a bare IPv4/IPv6 address (for example 203.0.113.7 or 2001:db8::7), or \"*\" (any source)."
+  }
+
+  validation {
+    condition = !var.cloud_armor.enable || alltrue([
+      for p in var.cloud_armor.allow_public_paths : can(regexall(p, ""))
+    ])
+    error_message = "Every cloud_armor.allow_public_paths entry must be a valid RE2 regular expression."
   }
 }
 

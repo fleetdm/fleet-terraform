@@ -8,6 +8,11 @@
 # IP-only and paths-only policies are valid. Enabling it with both lists empty
 # is rejected at the root and at the direct-child (byo-project) inputs,
 # because it would deny all traffic. No endpoints are added automatically.
+# When enabled, allowed_ip_ranges entries must be IPv4/IPv6 CIDRs, bare
+# IPv4/IPv6 addresses (forwarded unchanged, syntax-checked as /32 or /128) or
+# "*", and
+# allow_public_paths entries must be valid RE2 (they need not match ""); the
+# byo-project module mirrors the root tier/regional-LB requirements.
 #
 # Every provider is mocked and module.fleet is overridden, so these runs never
 # contact Google Cloud. Rule rendering (priorities, CEL escaping) is covered by
@@ -198,6 +203,291 @@ run "byo_project_cloud_armor_enabled_with_both_lists_empty_rejected" {
       enable             = true
       allowed_ip_ranges  = []
       allow_public_paths = []
+    }
+  }
+
+  expect_failures = [var.cloud_armor]
+}
+
+run "root_cloud_armor_ipv4_ipv6_and_wildcard_valid" {
+  command = plan
+
+  variables {
+    load_balancer_config = {
+      use_regional_lb = true
+    }
+    cloud_armor = {
+      enable            = true
+      allowed_ip_ranges = ["203.0.113.0/24", "2001:db8::/32", "*"]
+    }
+  }
+
+  assert {
+    condition     = var.cloud_armor.allowed_ip_ranges == tolist(["203.0.113.0/24", "2001:db8::/32", "*"])
+    error_message = "IPv4, IPv6 and \"*\" ranges must be accepted unchanged."
+  }
+}
+
+run "root_cloud_armor_bare_ipv4_and_ipv6_valid" {
+  command = plan
+
+  variables {
+    load_balancer_config = {
+      use_regional_lb = true
+    }
+    cloud_armor = {
+      enable            = true
+      allowed_ip_ranges = ["203.0.113.7", "2001:db8::7", "::1", "198.51.100.0/24", "2001:db8::/32", "*"]
+    }
+  }
+
+  assert {
+    condition     = var.cloud_armor.allowed_ip_ranges == tolist(["203.0.113.7", "2001:db8::7", "::1", "198.51.100.0/24", "2001:db8::/32", "*"])
+    error_message = "Bare IPv4/IPv6 addresses must be accepted alongside CIDRs and \"*\" and kept unchanged (no /32 or /128 appended)."
+  }
+}
+
+run "root_cloud_armor_malformed_bare_ipv4_rejected" {
+  command = plan
+
+  variables {
+    load_balancer_config = {
+      use_regional_lb = true
+    }
+    cloud_armor = {
+      enable            = true
+      allowed_ip_ranges = ["203.0.113.256"]
+    }
+  }
+
+  expect_failures = [var.cloud_armor]
+}
+
+run "root_cloud_armor_malformed_bare_ipv6_rejected" {
+  command = plan
+
+  variables {
+    load_balancer_config = {
+      use_regional_lb = true
+    }
+    cloud_armor = {
+      enable            = true
+      allowed_ip_ranges = ["2001:db8:::7"]
+    }
+  }
+
+  expect_failures = [var.cloud_armor]
+}
+
+run "root_cloud_armor_malformed_cidr_rejected" {
+  command = plan
+
+  variables {
+    load_balancer_config = {
+      use_regional_lb = true
+    }
+    cloud_armor = {
+      enable            = true
+      allowed_ip_ranges = ["203.0.113.0/33"]
+    }
+  }
+
+  expect_failures = [var.cloud_armor]
+}
+
+run "root_cloud_armor_non_cidr_range_rejected" {
+  command = plan
+
+  variables {
+    load_balancer_config = {
+      use_regional_lb = true
+    }
+    cloud_armor = {
+      enable            = true
+      allowed_ip_ranges = ["not-a-cidr"]
+    }
+  }
+
+  expect_failures = [var.cloud_armor]
+}
+
+run "root_cloud_armor_valid_nonmatching_anchored_regex_accepted" {
+  command = plan
+
+  variables {
+    load_balancer_config = {
+      use_regional_lb = true
+    }
+    cloud_armor = {
+      enable             = true
+      allow_public_paths = ["^/api/fleet/device/[a-z0-9]+/ping$"]
+    }
+  }
+
+  assert {
+    condition     = var.cloud_armor.allow_public_paths == tolist(["^/api/fleet/device/[a-z0-9]+/ping$"])
+    error_message = "A valid anchored regex that does not match the empty string must be accepted."
+  }
+}
+
+run "root_cloud_armor_malformed_regex_rejected" {
+  command = plan
+
+  variables {
+    load_balancer_config = {
+      use_regional_lb = true
+    }
+    cloud_armor = {
+      enable             = true
+      allow_public_paths = ["^/api/(unclosed"]
+    }
+  }
+
+  expect_failures = [var.cloud_armor]
+}
+
+run "root_cloud_armor_disabled_with_malformed_entries_valid" {
+  command = plan
+
+  variables {
+    load_balancer_config = {
+      use_regional_lb = true
+    }
+    cloud_armor = {
+      enable             = false
+      allowed_ip_ranges  = ["not-a-cidr"]
+      allow_public_paths = ["^/api/(unclosed"]
+    }
+  }
+
+  assert {
+    condition     = var.cloud_armor.enable == false
+    error_message = "A disabled policy must not be format-checked."
+  }
+}
+
+run "byo_project_cloud_armor_malformed_cidr_rejected" {
+  command = plan
+
+  module {
+    source = "./byo-project"
+  }
+
+  variables {
+    project_id = "my-existing-project"
+    load_balancer_config = {
+      use_regional_lb = true
+    }
+    cloud_armor = {
+      enable            = true
+      allowed_ip_ranges = ["203.0.113.0/33"]
+    }
+  }
+
+  expect_failures = [var.cloud_armor]
+}
+
+run "byo_project_cloud_armor_malformed_bare_ip_rejected" {
+  command = plan
+
+  module {
+    source = "./byo-project"
+  }
+
+  variables {
+    project_id = "my-existing-project"
+    load_balancer_config = {
+      use_regional_lb = true
+    }
+    cloud_armor = {
+      enable            = true
+      allowed_ip_ranges = ["203.0.113.7", "2001:db8::zz"]
+    }
+  }
+
+  expect_failures = [var.cloud_armor]
+}
+
+run "byo_project_cloud_armor_malformed_regex_rejected" {
+  command = plan
+
+  module {
+    source = "./byo-project"
+  }
+
+  variables {
+    project_id = "my-existing-project"
+    load_balancer_config = {
+      use_regional_lb = true
+    }
+    cloud_armor = {
+      enable             = true
+      allow_public_paths = ["^/api/(unclosed"]
+    }
+  }
+
+  expect_failures = [var.cloud_armor]
+}
+
+run "byo_project_cloud_armor_enabled_with_global_lb_rejected" {
+  command = plan
+
+  module {
+    source = "./byo-project"
+  }
+
+  variables {
+    project_id = "my-existing-project"
+    load_balancer_config = {
+      use_regional_lb = false
+    }
+    cloud_armor = {
+      enable            = true
+      allowed_ip_ranges = ["203.0.113.0/24"]
+    }
+  }
+
+  expect_failures = [var.cloud_armor]
+}
+
+run "byo_project_cloud_armor_enabled_with_lb_disabled_rejected" {
+  command = plan
+
+  module {
+    source = "./byo-project"
+  }
+
+  variables {
+    project_id = "my-existing-project"
+    load_balancer_config = {
+      enable          = false
+      use_regional_lb = true
+    }
+    cloud_armor = {
+      enable            = true
+      allowed_ip_ranges = ["203.0.113.0/24"]
+    }
+  }
+
+  expect_failures = [var.cloud_armor]
+}
+
+run "byo_project_cloud_armor_enterprise_tier_rejected" {
+  command = plan
+
+  module {
+    source = "./byo-project"
+  }
+
+  variables {
+    project_id = "my-existing-project"
+    load_balancer_config = {
+      use_regional_lb = true
+    }
+    cloud_armor = {
+      enable            = true
+      tier              = "ENTERPRISE"
+      allowed_ip_ranges = ["203.0.113.0/24"]
     }
   }
 
