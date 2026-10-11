@@ -20,9 +20,11 @@ module "memstore" {
   customer_managed_key = local.cmek_redis_key_id
 
   # The Redis service agent must be able to use the key before the instance
-  # is created (no-op when cmek.redis is null).
+  # is created: direct grant, then the shared IAM propagation wait
+  # (cmek-readiness.tf). Both are no-ops when no per-service CMEK is set.
   depends_on = [
     module.private-service-access.peering_completed,
     google_kms_crypto_key_iam_member.redis_cmek,
+    time_sleep.cmek_iam_propagation,
   ]
 }

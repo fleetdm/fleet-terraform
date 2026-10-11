@@ -16,6 +16,13 @@ terraform {
       source  = "devops-rob/terracurl"
       version = "~> 1.0"
     }
+
+    # time_sleep for the per-service CMEK IAM propagation wait
+    # (cmek-readiness.tf). 0.9.0+ is the plugin-framework rewrite.
+    time = {
+      source  = "hashicorp/time"
+      version = ">= 0.9.0"
+    }
   }
 }
 

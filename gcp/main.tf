@@ -22,6 +22,11 @@ terraform {
       source  = "devops-rob/terracurl"
       version = "~> 1.0"
     }
+    # Same constraint as ./byo-project (CMEK IAM propagation time_sleep).
+    time = {
+      source  = "hashicorp/time"
+      version = ">= 0.9.0"
+    }
   }
 }
 
@@ -73,6 +78,10 @@ module "fleet" {
   cloud_armor          = var.cloud_armor
   replicate_secrets    = var.replicate_secrets
   allow_destroy        = var.allow_destroy
+
+  # Wait after per-service CMEK grants; no-op unless a per-service consumer
+  # (cmek.cloud_sql/redis/cloud_run/secret_manager) is set.
+  cmek_iam_propagation_delay_seconds = var.cmek_iam_propagation_delay_seconds
 
   # Installers bucket versioning and noncurrent-version retention.
   software_installers_config = var.software_installers_config

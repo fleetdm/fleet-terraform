@@ -45,11 +45,15 @@ module "mysql" {
   encryption_key_name = local.cmek_cloud_sql_key_id
 
   # The instance must not be created before the Cloud SQL service agent can
-  # use the key. module_depends_on is list(any) and only its length is read,
-  # so the grant is added as a string attribute (etag), never as a resource
-  # object. With CMEK off the list is unchanged (length 1).
+  # use the key: direct grant, then the shared IAM propagation wait
+  # (cmek-readiness.tf). module_depends_on is list(any) and only its length is
+  # read, so both are added as string attributes (etag, id), never as
+  # resource objects. The wait is only added when cmek.cloud_sql is set, so
+  # opting in another consumer does not change this list. With CMEK off the
+  # list is unchanged (length 1).
   module_depends_on = concat(
     [module.private-service-access.peering_completed],
     google_kms_crypto_key_iam_member.cloud_sql_cmek[*].etag,
+    var.cmek.cloud_sql != null ? time_sleep.cmek_iam_propagation[*].id : [],
   )
 }

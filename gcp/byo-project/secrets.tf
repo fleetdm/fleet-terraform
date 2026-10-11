@@ -13,7 +13,8 @@ resource "random_pet" "suffix" {
 # extra_secret_env_vars) are never modified. replication is ForceNew, so
 # enabling this on an existing deployment replaces these secrets (same
 # secret_id) and re-creates their versions from the same Terraform values.
-# Each managed secret waits for the Secret Manager service agent's KMS grants.
+# Each managed secret waits for the Secret Manager service agent's KMS grants
+# and then the shared IAM propagation wait (cmek-readiness.tf).
 locals {
   secret_use_user_managed_replication = length(var.replicate_secrets) > 0
   secret_cmek_enabled                 = var.cmek.secret_manager != null
@@ -54,7 +55,10 @@ resource "google_secret_manager_secret" "database_password" {
     }
   }
 
-  depends_on = [google_kms_crypto_key_iam_member.secret_manager_cmek]
+  depends_on = [
+    google_kms_crypto_key_iam_member.secret_manager_cmek,
+    time_sleep.cmek_iam_propagation,
+  ]
 }
 
 resource "google_secret_manager_secret_version" "database_password" {
@@ -129,7 +133,10 @@ resource "google_secret_manager_secret" "private_key" {
     }
   }
 
-  depends_on = [google_kms_crypto_key_iam_member.secret_manager_cmek]
+  depends_on = [
+    google_kms_crypto_key_iam_member.secret_manager_cmek,
+    time_sleep.cmek_iam_propagation,
+  ]
 }
 
 resource "google_secret_manager_secret_version" "private_key" {
@@ -196,7 +203,10 @@ resource "google_secret_manager_secret" "hmac_secret" {
     }
   }
 
-  depends_on = [google_kms_crypto_key_iam_member.secret_manager_cmek]
+  depends_on = [
+    google_kms_crypto_key_iam_member.secret_manager_cmek,
+    time_sleep.cmek_iam_propagation,
+  ]
 }
 
 resource "google_secret_manager_secret_version" "hmac_secret" {

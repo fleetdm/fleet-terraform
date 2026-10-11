@@ -131,8 +131,9 @@ module "fleet-service" {
   # collection: it has count = 0 when an external private-key secret is used,
   # in which case the dependency is a no-op and only the IAM grant on the
   # external secret applies.
-  # The Cloud Run service agent's KMS grant (cmek.cloud_run) must also exist
-  # before a CMEK-encrypted revision is deployed; empty when CMEK is off.
+  # The Cloud Run service agent's KMS grant (cmek.cloud_run) and the shared
+  # IAM propagation wait (cmek-readiness.tf) must also complete before a
+  # CMEK-encrypted revision is deployed; both are empty when CMEK is off.
   depends_on = [
     google_service_account.fleet_run_sa,
     google_secret_manager_secret_version.database_password,
@@ -142,6 +143,7 @@ module "fleet-service" {
     google_secret_manager_secret_iam_member.fleet_run_sa_hmac_secret_access,
     google_secret_manager_secret_iam_member.fleet_run_sa_private_key_secret_access,
     google_kms_crypto_key_iam_member.cloud_run_cmek,
+    time_sleep.cmek_iam_propagation,
   ]
 }
 
@@ -206,7 +208,8 @@ resource "google_cloud_run_v2_job" "fleet_migration_job" {
 
   # Same secret readiness gate as module.fleet-service (see the comment
   # there): all secret versions and secretAccessor grants must exist first,
-  # plus the Cloud Run service agent's KMS grant when cmek.cloud_run is set.
+  # plus the Cloud Run service agent's KMS grant when cmek.cloud_run is set
+  # and the shared IAM propagation wait (cmek-readiness.tf).
   depends_on = [
     google_service_account.fleet_run_sa,
     google_secret_manager_secret_version.database_password,
@@ -216,6 +219,7 @@ resource "google_cloud_run_v2_job" "fleet_migration_job" {
     google_secret_manager_secret_iam_member.fleet_run_sa_hmac_secret_access,
     google_secret_manager_secret_iam_member.fleet_run_sa_private_key_secret_access,
     google_kms_crypto_key_iam_member.cloud_run_cmek,
+    time_sleep.cmek_iam_propagation,
   ]
 }
 
