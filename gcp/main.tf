@@ -16,6 +16,12 @@ terraform {
       source  = "hashicorp/google-beta"
       version = ">= 6.35.0"
     }
+    # Declared here so the root module (and its tests) resolve the same
+    # terracurl provider as ./byo-project instead of hashicorp/terracurl.
+    terracurl = {
+      source  = "devops-rob/terracurl"
+      version = "~> 1.0"
+    }
   }
 }
 
