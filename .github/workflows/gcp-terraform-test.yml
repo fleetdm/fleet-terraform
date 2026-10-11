@@ -1,9 +1,9 @@
 name: gcp-terraform-test
 
 # Runs the credential-free `terraform test` suites for the GCP modules.
-# Every provider used by these suites is replaced with a mock_provider in the
-# *.tftest.hcl files, so no cloud credentials or secrets are needed and nothing
-# is planned or applied against a real GCP project.
+# Cloud-facing providers are mocked in the *.tftest.hcl files, so no cloud
+# credentials or secrets are needed and nothing is planned or applied against
+# a real GCP project. The wait-specific tests also mock the time provider.
 
 on:
   push:
@@ -35,7 +35,7 @@ permissions:
 
 jobs:
   tftest:
-    name: terraform test (${{ matrix.terraform_dir }})
+    name: terraform test (${{ matrix.terraform_dir }}, TF ${{ matrix.terraform_version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -43,6 +43,11 @@ jobs:
         terraform_dir:
           - gcp
           - gcp/byo-project
+        # Run both suites on the 1.12.0 baseline and on 1.14.5 so changes in
+        # newer terraform test loading/runtime behavior are covered too.
+        terraform_version:
+          - 1.12.0
+          - 1.14.5
     env:
       TF_IN_AUTOMATION: 'true'
       TF_INPUT: '0'
@@ -60,7 +65,7 @@ jobs:
       - name: Install terraform
         uses: hashicorp/setup-terraform@633666f66e0061ca3b725c73b2ec20cd13a8fdd1 # v2.0.3
         with:
-          terraform_version: 1.12.0
+          terraform_version: ${{ matrix.terraform_version }}
 
       - name: Init ${{ matrix.terraform_dir }}
         working-directory: ${{ matrix.terraform_dir }}
