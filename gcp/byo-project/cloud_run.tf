@@ -40,6 +40,10 @@ locals {
     FLEET_S3_SOFTWARE_INSTALLERS_REGION              = var.region
   })
 
+  # Literal so the migration gate can address the service before
+  # module.fleet-service is applied (referencing the module would be a cycle).
+  fleet_service_name = "fleet-api"
+
   fleet_vpc_network_id = module.vpc.network_id
   # Use the subnet name from vpc_config variable
   fleet_vpc_subnet_id = var.vpc_config.subnets[0].subnet_name
@@ -49,7 +53,7 @@ module "fleet-service" {
   source  = "GoogleCloudPlatform/cloud-run/google//modules/v2"
   version = "0.17.2"
 
-  service_name                  = "fleet-api"
+  service_name                  = local.fleet_service_name
   project_id                    = var.project_id
   location                      = var.region
   create_service_account        = false
@@ -144,6 +148,11 @@ module "fleet-service" {
     google_secret_manager_secret_iam_member.fleet_run_sa_private_key_secret_access,
     google_kms_crypto_key_iam_member.cloud_run_cmek,
     time_sleep.cmek_iam_propagation,
+    # Service updates (new image, scaling, env) wait for the migration gate:
+    # if the gate fails, Terraform does not touch the service, so it can
+    # neither restart Fleet nor reset the gate's MANUAL/0 stop to AUTOMATIC
+    # (the module does not set scaling_mode, and the provider sends it unset).
+    terraform_data.fleet_migration_gate,
   ]
 }
 
@@ -156,6 +165,11 @@ resource "google_cloud_run_v2_job" "fleet_migration_job" {
   deletion_protection = false
 
   template {
+    # One task, one attempt: the migration gate verifies a single execution
+    # with exactly one task and never retries it.
+    task_count  = 1
+    parallelism = 1
+
     template {                                                    # Double template for jobs
       service_account = google_service_account.fleet_run_sa.email # Defined in iam.tf
 
@@ -171,7 +185,8 @@ resource "google_cloud_run_v2_job" "fleet_migration_job" {
         egress = "ALL_TRAFFIC"
       }
 
-      timeout = "3600s"
+      timeout     = "3600s"
+      max_retries = 0
 
       containers {
         image = local.fleet_image_tag
@@ -223,27 +238,94 @@ resource "google_cloud_run_v2_job" "fleet_migration_job" {
   ]
 }
 
-data "google_client_config" "default" {}
+# --- Database migration gate ---
+# Runs scripts/fleet_migration_gate.py (Python 3 standard library) on the
+# machine running Terraform. With an existing service it stops Fleet (service
+# scaling MANUAL with 0 instances, recorded with the pre-migration scaling in
+# the fleetdm.com/migration-gate service annotation), waits until Cloud
+# Monitoring reports explicit zero active and idle instances for every
+# revision, runs the migration job exactly once, verifies it succeeded, deploys
+# the new image together with the serving env and CMEK key while still
+# stopped, and only then restores the recorded scaling. Every unknown fails
+# closed and leaves Fleet stopped for manual recovery; see the README section
+# "Database migration gate".
+#
+# Seam: the controller copies the container env (plain values and secret
+# references, e.g. the MySQL/Redis addresses) and the CMEK key from the
+# migration job into the service template, because the job and the service are
+# built from the same locals (fleet_env_vars, fleet_secrets_env_vars,
+# cmek_cloud_run_key_id) and Terraform updates the job first. Keep those
+# shared. Job-only settings (command, args, timeout, retries) are never copied;
+# other service settings (ports, probes, resources, VPC access) are left as
+# they are and applied by module.fleet-service after the gate.
+#
+# Re-runs (replacement) on the first apply that includes it (initial setup or
+# adoption) and whenever one of these changes:
+#  * the Fleet image;
+#  * the project/region/service/job identity;
+#  * the target database: the Cloud SQL instance (sql_instance) or the logical
+#    database name (database).
+# sql_instance is the instance's connection_name, a computed-only attribute.
+# Terraform plans a replacement as a create, and for a create the provider
+# leaves that attribute unknown. That holds even when the instance keeps the
+# same name (for example, a ForceNew CMEK change). An unknown trigger value
+# always replaces this resource, so `fleet prepare db` runs against the new
+# instance. Terraform replaces the instance before the gate runs. It does
+# not re-run for other job, service or database changes, such as CPU, memory,
+# scaling, tier, labels, or extra env. The gate never creates, replaces or
+# restores Cloud SQL, and `fleet prepare db` copies no data.
+#
+# The database and user that the sql-db module creates are not module outputs.
+# depends_on = [module.mysql] makes the gate wait for them as well as for the
+# instance. This is ordering only; it does not trigger a re-run.
+#
+# The controller authenticates with Application Default Credentials through
+# `gcloud auth application-default print-access-token` at run time; no token
+# or secret is passed here or stored in state. Arguments are an argv list (no
+# shell) and the environment carries only non-secret identifiers.
+resource "terraform_data" "fleet_migration_gate" {
+  count = var.fleet_config.exec_migration ? 1 : 0
 
-resource "terracurl_request" "exec" {
-  count  = var.fleet_config.exec_migration ? 1 : 0
-  name   = "exec-job"
-  url    = "https://run.googleapis.com/v2/${google_cloud_run_v2_job.fleet_migration_job.id}:run"
-  method = "POST"
-  headers = {
-    Authorization = "Bearer ${data.google_client_config.default.access_token}"
-    Content-Type  = "application/json",
+  triggers_replace = {
+    # The image tag is not secret; fleet_config is marked sensitive as a whole.
+    image   = nonsensitive(local.fleet_image_tag)
+    project = var.project_id
+    region  = var.region
+    service = local.fleet_service_name
+    job     = google_cloud_run_v2_job.fleet_migration_job.name
+    # Target database identity (see above). Neither value is secret.
+    sql_instance = module.mysql.instance_connection_name
+    database     = var.database_config.database_name
   }
-  response_codes = [200]
-  // no-op destroy
-  // we don't use terracurl_request data source as that will result in
-  // repeated job runs on every refresh
-  destroy_url            = "https://run.googleapis.com/v2/${google_cloud_run_v2_job.fleet_migration_job.id}"
-  destroy_method         = "GET"
-  destroy_response_codes = [200]
-  destroy_headers = {
-    Authorization = "Bearer ${data.google_client_config.default.access_token}"
-    Content-Type  = "application/json",
+
+  provisioner "local-exec" {
+    interpreter = ["python3", "${path.module}/scripts/fleet_migration_gate.py"]
+    command     = "run"
+    environment = {
+      FLEET_GATE_PROJECT        = self.triggers_replace.project
+      FLEET_GATE_REGION         = self.triggers_replace.region
+      FLEET_GATE_SERVICE        = self.triggers_replace.service
+      FLEET_GATE_JOB            = self.triggers_replace.job
+      FLEET_GATE_IMAGE          = self.triggers_replace.image
+      FLEET_GATE_RUN_ID         = self.id
+      FLEET_GATE_TRIGGER        = sha256(jsonencode(self.triggers_replace))
+      FLEET_GATE_JOB_GENERATION = google_cloud_run_v2_job.fleet_migration_job.generation
+      PYTHONDONTWRITEBYTECODE   = "1"
+    }
+  }
+
+  depends_on = [google_cloud_run_v2_job.fleet_migration_job, module.mysql]
+}
+
+# The previous terracurl_request ran the job with a plan-time OAuth token and
+# without stopping Fleet. Forget it without destroying: its destroy action was
+# an authenticated GET, which must not run. The terracurl provider stays in
+# required_providers so existing state can be read for this removal.
+removed {
+  from = terracurl_request.exec
+
+  lifecycle {
+    destroy = false
   }
 }
 

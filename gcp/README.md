@@ -34,12 +34,14 @@ It deploys:
 
 1.  **Terraform:** Version `~> 1.11` (as specified in `main.tf`).
 2.  **Google Cloud SDK (`gcloud`):** Installed and configured. Install from [cloud.google.com/sdk](https://cloud.google.com/sdk/docs/install).
-3.  **GCP Account & Permissions:**
-    *   Credentials configured for Terraform to interact with GCP. Run `gcloud auth application-default login`.
+3.  **Python 3** (standard library only) on the machine that runs Terraform, unless `fleet_config.exec_migration = false`. It runs the [database migration gate](#database-migration-gate).
+4.  **GCP Account & Permissions:**
+    *   Credentials configured for Terraform to interact with GCP. Run `gcloud auth application-default login`. The migration gate uses the same Application Default Credentials through `gcloud auth application-default print-access-token` at run time.
+    *   The ADC identity must be able to update Cloud Run services and jobs, run jobs and read executions, tasks, revisions and operations (for example `roles/run.admin`), and read Cloud Monitoring time series (`roles/monitoring.viewer`). Project `Owner`/`Editor` include these.
     *   **New project** (`create_project = true`, the default): `Organization Administrator` or `Folder Creator` & `Project Creator` at the org/folder level, plus `Billing Account User` on the billing account.
     *   **Existing project** (`create_project = false`): `Owner` or `Editor` on the target project, plus `roles/dns.admin` if managing Cloud DNS.
-4.  **Registered Domain Name:** You will need a domain name that you can manage DNS records for. This project will create a Cloud DNS Managed Zone for this domain (or a subdomain).
-5.  **(Optional) Fleet License Key:** If you have a premium Fleet license, you can provide it via `fleet_config.license_key`.
+5.  **Registered Domain Name:** You will need a domain name that you can manage DNS records for. This project will create a Cloud DNS Managed Zone for this domain (or a subdomain).
+6.  **(Optional) Fleet License Key:** If you have a premium Fleet license, you can provide it via `fleet_config.license_key`.
 
 ### APIs in an existing project
 
@@ -312,6 +314,67 @@ software_installers_config = {
 
 When versioning is enabled, noncurrent-version expiry defaults on after 30 days. The lifecycle targets **archived/noncurrent versions only**, never the live installer object. Disable expiry to retain all versions indefinitely. With versioning off, this module adds no expiry rule. Enabling expiry on an existing versioned bucket can delete versions already older than the configured window; `allow_destroy` does not prevent lifecycle expiry. Applying the new default to a previously versioned draft deployment suspends versioning without deleting its retained versions.
 
+## Database migration gate
+
+With `fleet_config.exec_migration = true` (the default), Terraform runs the Fleet database migration (`fleet prepare db` in the `fleet-migration` Cloud Run job) through a controller, [`byo-project/scripts/fleet_migration_gate.py`](./byo-project/scripts/fleet\_migration\_gate.py), on the machine running Terraform. The controller runs before Terraform updates the Fleet service. It runs on the first apply that includes it (initial setup, or the first apply after upgrading this module). It runs again whenever one of these changes:
+
+* `fleet_config.image_tag`.
+* The project, region, service or job identity.
+* The target database:
+  * Terraform creates or replaces the Cloud SQL instance. This includes a replacement that keeps the same instance name and image, for example a ForceNew change such as opting into `cmek.cloud_sql`.
+  * `database_config.database_name` changes. The migration then prepares the newly created logical database.
+
+It does not re-run for other job, service or database changes, for example CPU, memory, scaling, SQL tier, labels, IAM, load balancer, Redis or extra environment variables.
+
+**The gate does not replace, back up or restore the database.** It never creates, replaces or restores Cloud SQL. Terraform performs any instance replacement shown in the plan before the gate runs, so the gate cannot keep Fleet stopped during the replacement itself. `fleet prepare db` creates or upgrades the schema of the target database. It does not copy or restore existing Fleet data. A replaced instance or a new database name starts empty. Back up first, and restore data yourself, if you replace the database on purpose.
+
+The contract is that no Fleet server, background or vulnerability processing runs while the migration runs. Only the migration job runs; Cloud SQL and Redis stay up. A minimum instance count of 0 is not treated as stopped. For an existing service, the controller does the following:
+
+1. **Read-only preflight.** Checks the service, the job, every job execution, and every revision (including soft-deleted ones). Refuses without changing anything if the service is reconciling or failed, traffic is not a single untagged 100% `LATEST` target, any traffic tag exists, a prior execution has not settled, the job is not single-task, single-attempt (`task_count = 1`, `parallelism = 1`, `max_retries = 0`) and on the target image, or an unfinished gate record exists. Also refuses if Cloud Monitoring has no recent `run.googleapis.com/container/instance_count` data for every revision. That check only predicts whether the proof below can succeed; it is not evidence of zero.
+2. **Stop.** One etag-guarded update sets service scaling to `MANUAL` with `manualInstanceCount = 0` and `minInstanceCount = 0`. The same write records the pre-migration scaling and the run phase in the `fleetdm.com/migration-gate` service annotation. The record contains no secrets.
+3. **Verified actual zero.** Reads raw, unaggregated `instance_count` points (every page) and waits until every revision has an explicit `active = 0` and `idle = 0` point at the same timestamp. That covers every revision from the full revision list and every revision in the telemetry. The point must be after the stop (HTTP `Date` + 1 s) and no later than the server time Google already reported. Missing, partial, stale, future-dated, non-zero or erroring telemetry blocks the migration. The gate gives up after 20 minutes.
+4. **Migration.** Exactly one `:run`, guarded by the job etag and never retried. Success requires the operation, the execution counts and conditions, and the single task (completed, a successful attempt with exit code and termination signal both zero, including documented ProtoJSON default zeros within a present result, not retried) to all verify. Any other execution, or a change to the service or job, makes the outcome uncertain.
+5. **Resume.** While still `MANUAL`/0, deploys the target image together with the serving environment (plain values and Secret Manager references, including the MySQL and Redis addresses) and the Cloud Run CMEK key. These are copied from the migration job, which Terraform builds from the same settings as the service and updates first. The job's command, arguments, timeout and retries are never copied, and ports, probes and other service settings are kept. Google names the new revision. The gate waits for a new Ready revision that runs exactly that configuration and serves 100% with no tags, then restores the recorded pre-migration scaling. If the service already runs that configuration (for example, on the first apply after upgrading this module with an unchanged image), no new revision is created; the current Ready revision is verified instead. The job and its executions are re-checked before and throughout this step. Terraform then applies the remaining service changes (for example resources or probes). A previous image version is not restored when it differs from the target image. If no matching Ready revision appears under `MANUAL`/0, the gate does not restore scaling.
+
+For a fresh deployment (no service yet), the controller runs the migration only after confirming three things: no service with that name exists, including soft-deleted ones; Cloud Monitoring shows no recent instances; and no job execution is unsettled. A 404 alone is not treated as proof. Every entry in the region's service listing must have a well-formed name; an entry it cannot identify blocks the bootstrap. A `fleet-api` entry blocks it whether the project is spelled as the project ID or the project number. Ownership is recorded on the job annotation, and Terraform creates the service only after the migration is verified. The completed record lists the verified executions. A later bootstrap refuses, and requires manual recovery, if the job's executions no longer match that list.
+
+**Failure behavior.** Any failure, timeout or unknown makes `terraform apply` fail before Terraform updates the service. A preflight rejection leaves the service unchanged and starts no new migration. After stopping, an unverified migration never permits restoration of scaling. If a restore write has an uncertain outcome, the controller attempts to disable restarts again; it cannot promise shutdown when the control plane cannot confirm it. The controller reports the state it last verified:
+
+* "restart disabled" means the `MANUAL`/0 setting was read back but no current complete zero measurement exists.
+* "stopped" means a complete measured zero was verified and the service is unchanged since.
+* "unknown" means it could not verify either.
+
+It also reports whether the migration did not run, failed, succeeded, or has an unknown outcome. Nothing is retried automatically. Because the gate's Terraform resource is tainted, the next apply replaces it, and the new run refuses until the unfinished record is resolved.
+
+**Manual recovery.**
+
+1. Inspect the `fleetdm.com/migration-gate` annotation on the `fleet-api` service, or on the `fleet-migration` job for a fresh deployment. It holds the run phase and the pre-migration scaling.
+2. Inspect the job executions and logs.
+3. Before finishing or repeating the migration, verify complete actual zero instances and that restarts remain disabled, with no traffic tags or other active migration executions. A `MANUAL`/0 setting alone is not zero evidence. If complete zero cannot be established, do not run the migration. While Fleet is verifiably stopped, finish or repeat the migration if needed and verify that it succeeded.
+4. Deploy the intended image.
+5. Restore the recorded scaling.
+6. Remove the annotation.
+7. Run `terraform apply` again. It performs a fresh, fully gated cycle with a brief stop; `fleet prepare db` is idempotent.
+
+Do not restore scaling on the old image after a partial migration.
+
+**Trust boundary and limits.**
+
+* The gate relies on Google's documented behavior:
+  * `MANUAL` scaling with 0 instances accepts no requests and starts no instances.
+  * `instance_count` is the number of container instances that exist.
+  * List and Monitoring responses are complete when they report no errors.
+* It assumes no other person, pipeline or controller changes the Fleet service or job, or runs the job, while it runs. Etag checks and the Terraform state lock detect or prevent ordinary concurrent writers. They do not protect against a malicious administrator or a platform defect.
+* Whether Google publishes fresh explicit zero points for revisions with no instances (for example, older revisions) is **not verified**. If it does not, the gate refuses: in the read-only preflight when no recent data exists, otherwise after stopping. A service with retained older revisions may then be unable to upgrade through the gate until those revisions are deleted and no longer listed. Plan for a maintenance window, and test an upgrade in a non-production project first.
+* New-revision readiness under `MANUAL`/0 has not been verified against a live deployment. If it cannot be confirmed, scaling is not restored.
+* Other identity checks compare Cloud Run resource names with the configured project ID. If the API reported names using the project number instead, the gate would refuse in its read-only preflight, without stopping Fleet.
+* Do not bypass the gate with `-target` on the service.
+* `exec_migration = false` removes the gate. Image changes then roll out without any migration; run migrations yourself. Do not disable it while an unfinished gate record exists: doing so removes the dependency that prevents Terraform from restoring scaling prematurely.
+* Use an immutable image tag or digest. The gate compares configured image strings; a mutable tag can resolve to different binaries for the migration job and the serving revision.
+* Replacement detection uses the instance's `connection_name`, which only the provider sets. For a planned replacement, Terraform plans that value as unknown, and so replaces the gate's Terraform resource. This was checked against the source of Terraform 1.12.0 and 1.14.5 and of `google-beta` 6.35.0 and 6.50.0, the provider the `sql-db` 25.x module uses for the instance. It has not been verified with a live replacement.
+* When an instance is replaced and keeps the same name, the `sql-db` module does not plan new database and user resources in that apply, because they reference the instance only by name. The migration is then expected to fail, and Fleet stays stopped. Follow the manual recovery steps. A subsequent apply can refresh and recreate the missing database and user, but an unfinished migration record still blocks automatic retries. Resolve the missing SQL resources as part of manual recovery while keeping Fleet fenced, then verify the migration before restoring scaling.
+* Recreating a logical database or user without changing the instance identity or database name is not detected: neither resource's creation identity is a module output. This includes out-of-band changes or explicitly replacing those individual Terraform resources. To request a fully gated migration in that case, use `terraform apply -replace='module.fleet.terraform_data.fleet_migration_gate[0]'` (adjust the module path if you call `byo-project` directly). An unfinished gate record must first be resolved through manual recovery; `-replace` does not bypass that check.
+
 ## Upgrade notes
 
 * Legacy project creation remains the default. Keep `create_project = true` for projects managed by this module; do not switch to the existing-project path as a shortcut, because removing project-factory ownership can affect the project and its services.
@@ -320,6 +383,7 @@ When versioning is enabled, noncurrent-version expiry defaults on after 30 days.
 * The `google-beta` provider is now configured with `default_labels = var.labels`, matching the `google` provider. Existing resources managed through `google-beta` that support provider default labels may show in-place label updates on the first plan after upgrading. This is not a no-diff upgrade; review the plan.
 * The installer bucket previously used `force_destroy = true`. It now follows `allow_destroy`, which defaults to `false`, so the plan shows an in-place `force_destroy` change. After upgrading, destroying a non-empty installer bucket fails unless you intentionally set `allow_destroy = true` and apply it first (see [Cleaning Up](#cleaning-up)). This guard is intended; keep `allow_destroy = false` outside teardown.
 * Duplicate regional invoker ownership and the unused packages mirror are forgotten without remote deletion. New deployments no longer create the mirror. Operators retaining an old mirror must manage it separately.
+* The migration job is no longer started by a `terracurl_request` with a plan-time access token. That resource is removed from state without being destroyed, so no destroy request is sent. The new [database migration gate](#database-migration-gate) runs on the first apply after upgrading, even if the image is unchanged, so Fleet stops briefly. It refuses before stopping Fleet if its preconditions or telemetry coverage are not met. The machine running Terraform now needs Python 3 and `gcloud` ADC. The migration job is now set to one task, one attempt (`max_retries = 0`).
 * `create_static_ip` is an unsupported legacy input with no effect on either load balancer path: the regional load balancer always reserves one shared address, and the global load balancer's `lb-http` module creates its global address by default.
 * `backend_timeout_sec` is an unsupported legacy input: serverless NEG backends do not accept a configurable backend timeout. The Fleet Cloud Run service timeout remains 300 seconds; this input does not change it.
 * An enabled module-managed load balancer, global or regional, now requires `load_balancer_config.create_managed_cert = true` regardless of `https_redirect`. Configurations that previously set `create_managed_cert = false` with an enabled load balancer, including the HTTP-only regional setup with `https_redirect = false`, now fail at plan time. Set `create_managed_cert = true` and review the plan for the new certificate and listener changes, or set `load_balancer_config.enable = false` and use your own load balancer.
