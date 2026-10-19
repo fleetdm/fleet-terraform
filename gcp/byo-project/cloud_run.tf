@@ -240,14 +240,19 @@ resource "google_cloud_run_v2_job" "fleet_migration_job" {
 
 # --- Database migration gate ---
 # Runs scripts/fleet_migration_gate.py (Python 3 standard library) on the
-# machine running Terraform. With an existing service it stops Fleet (service
-# scaling MANUAL with 0 instances, recorded with the pre-migration scaling in
-# the fleetdm.com/migration-gate service annotation), waits until Cloud
-# Monitoring reports explicit zero active and idle instances for every
-# revision, runs the migration job exactly once, verifies it succeeded, deploys
-# the new image together with the serving env and CMEK key while still
-# stopped, and only then restores the recorded scaling. Every unknown fails
-# closed and leaves Fleet stopped for manual recovery; see the README section
+# machine running Terraform. With an existing service it claims the job
+# (etag-guarded ownership record), stops Fleet (service scaling MANUAL with 0
+# instances, recorded with the pre-migration scaling in the
+# fleetdm.com/migration-gate service annotation), waits until Cloud Monitoring
+# reports explicit zero active and idle instances for every revision, runs the
+# migration job at most once per apply, verifies it succeeded, deploys the new
+# image together with the serving env and CMEK key while still stopped, and
+# only then restores the recorded scaling. Every unknown fails the apply
+# closed, keeping Fleet stopped once it was stopped. After the underlying
+# problem (database, configuration, API) is fixed, the next plain
+# `terraform apply` replaces this tainted resource and the gate continues
+# automatically from the current state, keeping the original recorded scaling;
+# the annotation is internal state, not a lock. See the README section
 # "Database migration gate".
 #
 # Seam: the controller copies the container env (plain values and secret

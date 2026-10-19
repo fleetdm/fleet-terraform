@@ -60,6 +60,7 @@ class OfflineTestCase(unittest.TestCase):
             log=self.logs.append,
         )
         self.assert_no_leaks()
+        self.assertEqual(self.cloud.violations, [], "fake safety invariants (no overlapping :run, no early resume)")
         return code
 
     def assert_no_leaks(self):
@@ -118,6 +119,7 @@ class UpgradeHappyPath(OfflineTestCase):
         self.assertEqual(self.run_gate(), 0, self.text())
         writes = c.writes()
         self.assertEqual(writes, [
+            ("PATCH", "job"),      # job ownership claim (fences older :run etags)
             ("PATCH", "service"),  # stop + checkpoint (atomic)
             ("PATCH", "service"),  # phase migrating
             ("POST", "run"),       # exactly one execution
@@ -278,11 +280,6 @@ PREFLIGHT_CASES = {
         scaling={"scalingMode": "MANUAL", "manualInstanceCount": 0})),
     "manual_without_explicit_count": svc_mutation(lambda s: s.update(scaling={"scalingMode": "MANUAL"})),
     "unknown_scaling_field": svc_mutation(lambda s: s.update(scaling={"minInstanceCount": 1, "future": 1})),
-    "unfinished_checkpoint_other_run": svc_mutation(lambda s: s["annotations"].update({fg.CHECKPOINT: json.dumps(
-        {"v": 1, "run": "other", "phase": "migrating", "pre_scaling": {"scalingMode": "AUTOMATIC"}})})),
-    "failed_checkpoint": svc_mutation(lambda s: s["annotations"].update({fg.CHECKPOINT: json.dumps(
-        {"v": 1, "run": "other", "phase": "failed", "pre_scaling": {}})})),
-    "garbage_checkpoint": svc_mutation(lambda s: s["annotations"].update({fg.CHECKPOINT: "not-json"})),
     "service_without_etag": svc_mutation(lambda s: s.pop("etag")),
     "service_wrong_name": svc_mutation(lambda s: s.update(name=fg.LOC + "/services/other")),
     "job_old_image": job_mutation(lambda j: j["template"]["template"]["containers"][0].update(image=fg.OLD_IMAGE)),
@@ -293,8 +290,6 @@ PREFLIGHT_CASES = {
     "job_generation_mismatch": job_mutation(lambda j: j.update(generation="4", observedGeneration="4")),
     "job_reconciling": job_mutation(lambda j: j.update(reconciling=True)),
     "job_execution_token": job_mutation(lambda j: j.update(runExecutionToken="abc")),
-    "job_unfinished_bootstrap_record": job_mutation(lambda j: j.setdefault("annotations", {}).update(
-        {fg.CHECKPOINT: json.dumps({"v": 1, "run": "other", "phase": "bootstrap-migrating", "pre_scaling": None})})),
     "job_bad_timeout": job_mutation(lambda j: j["template"]["template"].update(timeout="1h")),
     "unsettled_prior_execution": lambda t: t.cloud.add_prior_execution(settled=False),
     "old_revision_has_no_telemetry": lambda t: t.cloud.no_metrics_for.add("fleet-api-00001-aaa"),
@@ -1183,17 +1178,21 @@ class BootstrapRefusals(OfflineTestCase):
         self.cloud.faults.append(_fail_nth_write("job", 1, fg.error(409, "ABORTED")))
         self.check_refused()
 
-    def test_failed_bootstrap_migration_leaves_record(self):
+    def test_failed_bootstrap_migration_is_retried_by_the_next_apply(self):
         self.cloud.outcome = "fail"
         self.assertEqual(self.run_gate(), 1)
         cp = json.loads(self.cloud.job["annotations"][fg.CHECKPOINT])
         self.assertEqual(cp["phase"], "bootstrap-migrating")
-        # A rerun (new Terraform run id) refuses until manual recovery.
+        # The database problem is fixed; the next apply (new Terraform run id)
+        # proves the deployment is still fresh and runs one fresh migration.
         self.cloud.log.clear()
         self.cloud.outcome = "success"
         self.assertEqual(self.run_gate(environ=fg.env(FLEET_GATE_RUN_ID="second-run",
-                                                      FLEET_GATE_JOB_GENERATION=self.cloud.job["generation"])), 1)
-        self.assert_not_run()
+                                                      FLEET_GATE_JOB_GENERATION=self.cloud.job["generation"])), 0,
+                         self.text())
+        self.assertEqual(self.cloud.run_calls(), 1)
+        cp = json.loads(self.cloud.job["annotations"][fg.CHECKPOINT])
+        self.assertEqual((cp["run"], cp["phase"]), ("second-run", "completed"))
 
 
 # ---------------------------------------------------------------------------
@@ -1202,27 +1201,34 @@ class BootstrapRefusals(OfflineTestCase):
 
 
 class RerunAfterFailure(OfflineTestCase):
-    def test_failed_migration_is_never_rerun_automatically(self):
+    def test_failed_migration_is_not_retried_within_the_apply_but_by_the_next_one(self):
         self.cloud.outcome = "fail"
         self.assertEqual(self.run_gate(), 1)
+        self.assertEqual(self.cloud.run_calls(), 1, "never retried within an apply")
         snapshot = self.cloud.checkpoint()["pre_scaling"]
         self.cloud.outcome = "success"
         self.cloud.log.clear()
         self.cloud.bodies.clear()
         self.logs.clear()
-        self.assertEqual(self.run_gate(environ=fg.env(FLEET_GATE_RUN_ID="retry-run")), 1)
-        self.assert_no_writes()
-        self.assertIn("unfinished migration-gate record", self.text())
+        self.assertEqual(self.run_gate(environ=fg.env(FLEET_GATE_RUN_ID="retry-run",
+                                                      FLEET_GATE_JOB_GENERATION=self.cloud.job["generation"])), 0,
+                         self.text())
+        self.assertEqual(self.cloud.run_calls(), 1)
         self.assertEqual(self.cloud.checkpoint()["pre_scaling"], snapshot)
+        self.assertEqual(self.cloud.checkpoint()["run"], "retry-run")
+        self.assertEqual(self.cloud.service["scaling"], {"scalingMode": "AUTOMATIC", "minInstanceCount": 1})
 
-    def test_second_controller_cannot_take_over_a_stopped_service(self):
-        # Simulate another controller holding the service stopped.
+    def test_stopped_service_of_an_earlier_run_is_recovered_with_its_recorded_scaling(self):
+        # An earlier run left the service stopped; its recorded scaling (not
+        # the current MANUAL/0) is restored after one fresh migration.
         self.cloud.service["scaling"] = {"scalingMode": "MANUAL", "manualInstanceCount": 0}
+        self.cloud.stop_time = fg.START - 3600
         self.cloud.service["annotations"][fg.CHECKPOINT] = json.dumps(
             {"v": 1, "run": "other-controller", "phase": "stopped",
-             "pre_scaling": {"scalingMode": "AUTOMATIC", "minInstanceCount": 1, "maxInstanceCount": 0}})
-        self.assertEqual(self.run_gate(), 1)
-        self.assert_no_writes()
+             "pre_scaling": {"scalingMode": "AUTOMATIC", "minInstanceCount": 3, "maxInstanceCount": 0}})
+        self.assertEqual(self.run_gate(), 0, self.text())
+        self.assertEqual(self.cloud.run_calls(), 1)
+        self.assertEqual(self.cloud.service["scaling"], {"scalingMode": "AUTOMATIC", "minInstanceCount": 3})
 
 
 # ---------------------------------------------------------------------------
@@ -1463,40 +1469,38 @@ class BootstrapExecutionInventory(OfflineTestCase):
         return self.run_gate(environ=fg.env(FLEET_GATE_RUN_ID=run_id,
                                             FLEET_GATE_JOB_GENERATION=self.cloud.job["generation"]))
 
-    def test_uncertain_completion_cannot_be_automatically_retried(self):
+    def test_uncertain_completion_is_retried_with_a_fresh_migration(self):
         def is_completion(body):
             raw = (body or {}).get("annotations", {}).get(fg.CHECKPOINT)
             return bool(raw) and json.loads(raw)["phase"] == "completed"
         _add_execution_on("PATCH", "job", is_completion)(self)
         self.assertEqual(self.run_gate(), 1, self.text())
         self.assertIn("Migration: " + gate.MIGRATION_UNKNOWN, self.text())
-        # The extra execution has settled by now (the fake adds it settled).
-        self.assertEqual(self.rerun("retry-run"), 1, self.text())
-        self.assert_not_run()
-        self.assert_no_writes()
-        self.assertIn("unexpected job executions exist before retrying a completed bootstrap", self.text())
+        # The extra execution has settled by now (the fake adds it settled):
+        # the next apply treats it as prior baseline and runs one fresh
+        # migration under its own claim; the earlier success is not adopted.
+        self.assertEqual(self.rerun("retry-run"), 0, self.text())
+        self.assertEqual(self.cloud.run_calls(), 1)
 
-    def test_verified_completed_bootstrap_can_be_revalidated(self):
+    def test_completed_bootstrap_is_never_adopted_instead_of_a_migration(self):
         self.assertEqual(self.run_gate(), 0, self.text())
         cp = json.loads(self.cloud.job["annotations"][fg.CHECKPOINT])
         self.assertEqual(cp["executions"], [cp["execution"]])
         self.assertEqual(self.rerun("next-run"), 0, self.text())
         self.assertEqual(self.cloud.run_calls(), 1)
+        self.assertEqual(len(self.cloud.executions), 2)
 
-    def test_completed_record_without_inventory_requires_manual_recovery(self):
+    def test_completed_record_without_inventory_is_not_a_blocker(self):
         self.cloud.job["annotations"] = {fg.CHECKPOINT: json.dumps(
             {"v": 1, "run": "older", "phase": "completed", "pre_scaling": None})}
-        self.assertEqual(self.run_gate(), 1, self.text())
-        self.assert_not_run()
-        self.assert_no_writes()
-        self.assertIn("lacks a trusted execution inventory", self.text())
+        self.assertEqual(self.run_gate(), 0, self.text())
+        self.assertEqual(self.cloud.run_calls(), 1)
 
-    def test_completed_record_whose_execution_vanished_requires_manual_recovery(self):
+    def test_completed_record_whose_execution_vanished_is_not_a_blocker(self):
         self.assertEqual(self.run_gate(), 0, self.text())
         self.cloud.executions.clear()
-        self.assertEqual(self.rerun("next-run"), 1, self.text())
-        self.assert_not_run()
-        self.assert_no_writes()
+        self.assertEqual(self.rerun("next-run"), 0, self.text())
+        self.assertEqual(self.cloud.run_calls(), 1)
 
     def test_extra_execution_during_final_task_read_blocks_completion(self):
         _add_execution_on("GET", "tasks")(self)
@@ -1542,7 +1546,7 @@ class ServingConfigAfterMigration(OfflineTestCase):
         c.job["template"]["template"]["containers"][0]["env"] = fg.fleet_env(fg.NEW_DB_ADDRESS)
         old_ready = c.service["latestReadyRevision"]
         self.assertEqual(self.run_gate(), 0, self.text())
-        self.assertEqual(c.writes(), [("PATCH", "service"), ("PATCH", "service"), ("POST", "run"),
+        self.assertEqual(c.writes(), [("PATCH", "job"), ("PATCH", "service"), ("PATCH", "service"), ("POST", "run"),
                                       ("PATCH", "service"), ("PATCH", "service"), ("PATCH", "service")])
         stop, migrating, migrated, rollout, restore = c.service_patches()
         # Before the verified migration the template (old DB address) is untouched.
@@ -1821,7 +1825,7 @@ class ImageIdentityHappyPath(OfflineTestCase):
         c = self.cloud
         c.resolve_images()
         self.assertEqual(self.run_gate(), 0, self.text())
-        self.assertEqual(c.writes(), [("PATCH", "service"), ("PATCH", "service"), ("POST", "run"),
+        self.assertEqual(c.writes(), [("PATCH", "job"), ("PATCH", "service"), ("PATCH", "service"), ("POST", "run"),
                                       ("PATCH", "service"), ("PATCH", "service"), ("PATCH", "service")])
         self.assertEqual(c.run_calls(), 1)
         # The observed shape: the job and the task keep the configured tag;
@@ -2196,10 +2200,10 @@ class OwnedExecutionImageRechecks(OfflineTestCase):
         self.assert_unknown_not_resumed("execution image digest differs")
         self.assertEqual(c.writes(), [("PATCH", "job"), ("POST", "run")])
 
-    def test_completed_bootstrap_record_from_an_earlier_image_is_revalidated(self):
+    def test_completed_bootstrap_record_from_an_earlier_image_does_not_pin_this_run(self):
         # A completed record names an execution of an earlier image (another
-        # digest). Revalidating that record keeps its old behavior (inventory
-        # and success only); this run's own execution is still pinned and
+        # digest). It is neither adopted nor re-verified as this run's
+        # evidence: this run runs its own execution, which is pinned and
         # checked on its own digest.
         c = self.cloud = fg.FakeCloud(service=False)
         first = fg.MIRROR_NEW_IMAGE
@@ -2447,7 +2451,7 @@ class ObservedTaskShape(OfflineTestCase):
         c = self.cloud
         c.resolve_images()
         self.assertEqual(self.run_gate(), 0, self.text())
-        self.assertEqual(c.writes(), [("PATCH", "service"), ("PATCH", "service"), ("POST", "run"),
+        self.assertEqual(c.writes(), [("PATCH", "job"), ("PATCH", "service"), ("PATCH", "service"), ("POST", "run"),
                                       ("PATCH", "service"), ("PATCH", "service"), ("PATCH", "service")])
         self.assertEqual(c.run_calls(), 1)
         self.assertIn("verified successful", self.text())

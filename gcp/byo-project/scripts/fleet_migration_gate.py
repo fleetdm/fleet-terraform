@@ -8,52 +8,81 @@ Invoked by terraform_data.fleet_migration_gate (cloud_run.tf) as
 with non-secret configuration in FLEET_GATE_* environment variables. It runs
 the Fleet migration Cloud Run job (`fleet prepare db`) only while no Fleet
 server instance can exist, and lets Fleet start again only after the migration
-is verified successful. Every unknown fails closed.
+is verified successful. Every unknown fails closed for the current apply.
 
 Upgrade path (the Cloud Run service exists):
 
- 1. Read-only preflight: service, job, every job execution, every revision
-    (showDeleted=true) and Cloud Monitoring telemetry coverage. Nothing is
-    changed when a precondition fails.
- 2. Stop: one etag-guarded PATCH sets service scaling to MANUAL with
+ 1. Read-only preflight: service, job, every job execution (cross-checked with
+    the job's latestCreatedExecution), every revision (showDeleted=true) and
+    Cloud Monitoring telemetry coverage. A prior execution that is running or
+    not yet consistently visible is waited for (bounded, read-only), never
+    treated as absent. Nothing is changed when a precondition fails.
+ 2. Claim: one etag-guarded job write records this run's ownership on the job
+    annotation fleetdm.com/migration-gate. The read-back etag is the one :run
+    is later sent with, so a :run prepared earlier with an older etag cannot
+    match it. The execution inventory is re-read and must be settled.
+ 3. Stop: one etag-guarded PATCH sets service scaling to MANUAL with
     manualInstanceCount=0 and minInstanceCount=0 and, in the same write,
-    records a non-secret checkpoint (run id, phase, pre-migration scaling) in
+    records this run's checkpoint (run id, phase, pre-migration scaling) in
     the service annotation fleetdm.com/migration-gate.
- 3. Verified zero: every revision from revisions.list(showDeleted=true) and
+ 4. Verified zero: every revision from revisions.list(showDeleted=true) and
     every revision in the returned telemetry must report explicit raw
     run.googleapis.com/container/instance_count points active=0 AND idle=0 at
     the same measurement timestamp, strictly after a conservative server-clock
     fence (HTTP Date + 1 s of the stop confirmation). Missing, stale, partial,
     erroring or non-zero telemetry blocks the migration.
- 4. Exactly one job execution (:run with the job etag, never retried), polled
-    to verified success: operation, execution counts and conditions, and the
-    single task's completion and exit code.
+ 5. Exactly one job execution (:run with the claimed job etag, never retried
+    within an apply), launched only after the job is re-read as claimed and
+    the complete execution inventory is re-listed, and polled to verified
+    success: operation, execution counts and conditions, and the single
+    task's completion and exit code.
     Image identity: the job and service templates must carry the configured
     image string exactly; the execution, task and serving revision may report
     it as Google resolved it (same canonical repository, configured tag or a
     sha256 digest), and every digest reported in the run must be the same
     (see "Image references" below).
- 5. Resume: while still MANUAL/0, deploy the new image together with the
+ 6. Resume: while still MANUAL/0, deploy the new image together with the
     serving env (MySQL/Redis addresses, secret references) and CMEK key taken
     from the migration job, which Terraform built from the same locals as the
     service; wait for a new Ready revision that runs exactly that and serves
-    100% with no tags (or, if the service already runs it, verify the current
-    Ready revision instead), then restore the recorded pre-migration scaling.
-    The job and its executions are re-verified before and during this step.
+    100% with no tags (or, if the service already runs it on a Ready latest
+    revision, verify that revision instead), then restore the recorded
+    pre-migration scaling. The job and its executions are re-verified before
+    and during this step.
 
 Fresh bootstrap path (the service does not exist): run the migration only when
 no service named FLEET_GATE_SERVICE exists, including soft-deleted services
 (services.list showDeleted=true), no telemetry exists for it in the lookback
-window, and every prior job execution has settled. Ownership is recorded on
-the job annotation.
+window, and every job execution has settled. Ownership is claimed on the job
+annotation (etag-guarded) and completed after the verified migration. Every
+bootstrap run proves absence afresh and runs one fresh migration; an earlier
+record never blocks it and never substitutes for it.
 
-Any failure after the stop leaves Fleet stopped for manual recovery; the
-controller never resumes after an unverified migration and never restarts the
-old image. Trust boundary: Google's documented Cloud Run / Monitoring
-semantics, and no other writer (person, CI, controller) touching the service or
-job while the gate runs. Etag compare-and-swap and the Terraform state lock
-detect or prevent ordinary concurrent writers; they do not defend against a
-malicious administrator or a platform bug.
+Automatic recovery: there is no operator recovery procedure and the checkpoint
+is never a lock. When an apply fails (Terraform taints the gate resource), the
+next apply runs the gate again under a new run id. A service that an earlier
+run left stopped under a valid unfinished record keeps that record's
+pre-migration scaling; the new run claims the job and the service, proves zero
+afresh, runs at most one fresh migration, redeploys (including a fresh
+explicit revision name when an earlier rollout of the unchanged template
+failed) and restores the original scaling only after the migration and a
+matching Ready revision are verified. Prior executions that are still running
+or not consistently visible make the run wait (bounded) and then fail without
+starting anything; a later apply re-checks. Every write that could clobber a
+successor (restop, bootstrap completion, phase writes) is sent with the etag
+of a read that still shows this run's own record in the expected phase. The
+controller never resumes after an unverified migration, never restarts the old
+image, never repairs or rolls back SQL, and never guesses scaling.
+
+Trust boundary: Google's documented Cloud Run / Monitoring semantics (etag
+preconditions, complete listings, latestCreatedExecution), and no other
+writer (person, CI, controller) touching the service or job while the gate
+runs. Etag compare-and-swap, the ownership record and the Terraform state lock
+detect or prevent ordinary concurrent writers and stale requests from an
+earlier controller; they are an engineering safeguard built on documented
+behavior, not a proof that every request accepted before a takeover is already
+visible, and they do not defend against a malicious administrator or a
+platform bug.
 
 Authentication uses Application Default Credentials through
 `gcloud auth application-default print-access-token` at runtime. The token is
@@ -65,6 +94,7 @@ Importing this module has no side effects.
 
 import datetime
 import email.utils
+import hashlib
 import json
 import os
 import re
@@ -82,8 +112,10 @@ INSTANCE_COUNT_METRIC = "run.googleapis.com/container/instance_count"
 CHECKPOINT_ANNOTATION = "fleetdm.com/migration-gate"
 CHECKPOINT_VERSION = 1
 
-# Phases recorded in the checkpoint annotation. Only PHASE_COMPLETED means "no
-# unfinished run"; every other phase requires manual recovery.
+# Phases recorded in the checkpoint annotation. The record is internal,
+# resumable metadata written by the gate itself: a later run reads an earlier
+# run's unfinished service record only to keep its pre-migration scaling, then
+# claims it. It is never an operator-maintained lock.
 PHASE_STOPPED = "stopped"
 PHASE_MIGRATING = "migrating"
 PHASE_MIGRATED = "migrated"
@@ -91,6 +123,9 @@ PHASE_ROLLING_OUT = "rolling-out"
 PHASE_COMPLETED = "completed"
 PHASE_FAILED = "failed"
 PHASE_BOOTSTRAP_MIGRATING = "bootstrap-migrating"
+PHASE_CLAIMED = "claimed"  # job ownership record of an upgrade run
+# Service phases in which an earlier run left Fleet stopped (or meant to).
+SERVICE_UNFINISHED_PHASES = frozenset({PHASE_STOPPED, PHASE_MIGRATING, PHASE_MIGRATED, PHASE_ROLLING_OUT, PHASE_FAILED})
 
 CONDITION_SUCCEEDED = "CONDITION_SUCCEEDED"
 CONDITION_FAILED = "CONDITION_FAILED"
@@ -160,6 +195,10 @@ FLEET_STATE_UNKNOWN = "UNKNOWN: the service state could not be verified; inspect
 FLEET_NOT_STOPPED = ("NOT verified stopped: the service is not MANUAL/0 under this run's record "
                      "(another writer, or a partial restore); inspect it now")
 FLEET_NOT_CREATED = "not created (fresh bootstrap; Terraform creates the service only after the gate succeeds)"
+FLEET_PRIOR_STOP = ("unchanged by this run: still MANUAL/0 under an earlier run's gate record (restart disabled; "
+                    "actual instance zero is NOT re-verified)")
+FLEET_TAKEN_OVER = ("MANUAL/0 under another run's gate record: a later run has taken over the service; this run no "
+                    "longer changes it")
 
 MIGRATION_NOT_RUN = "not run"
 MIGRATION_FAILED = "FAILED"
@@ -636,6 +675,23 @@ def has_tags(svc):
     return any(not isinstance(e, dict) or e.get("tag") or e.get("uri") for e in entries)
 
 
+def failed_reconciliation(svc):
+    """True for Cloud Run's documented settled failed-reconciliation shape:
+    reconciling is false, terminalCondition is CONDITION_FAILED, and
+    observedGeneration still names an earlier (last serving) generation,
+    which must be a positive integer not above generation."""
+    if not isinstance(svc, dict) or svc.get("reconciling", False) is not False:
+        return False
+    if (svc.get("terminalCondition") or {}).get("state") != CONDITION_FAILED:
+        return False
+    try:
+        generation = proto_int(svc, "generation", default_zero=False)
+        observed = proto_int(svc, "observedGeneration", default_zero=False)
+    except ValueError:
+        return False
+    return generation is not None and observed is not None and 0 < observed <= generation
+
+
 def is_stopped_scaling(scaling):
     try:
         n = normalize_scaling(scaling)
@@ -1003,10 +1059,20 @@ class MigrationGate:
         self.fence_ns = None
         self.zero_at = None
         self.zero_proof_current = False
+        # Job ownership: this run's claimed job record (phase), and the etag
+        # and generation read back right after the claim. :run is sent with
+        # exactly that etag.
+        self.job_phase = None
         self.job_etag = None
         self.job_generation = None
         self.executions_before = None
         self.execution_name = None
+        self.migration_timeout = None
+        # Narrow recovery exemption: set only while recovering a service that
+        # an earlier run of this gate left stopped (valid unfinished record,
+        # MANUAL/0). It tolerates a settled failed/unready latest revision
+        # (an earlier failed rollout) until this run's own rollout write.
+        self.rollout_exempt = False
         # First runtime image digest reported in this run (owned execution,
         # its task or the serving revision); every later one must equal it.
         self.image_digest = None
@@ -1109,12 +1175,6 @@ class MigrationGate:
 
     # -- checkpoint ------------------------------------------------------
 
-    def read_checkpoint(self, resource, what):
-        data = parse_checkpoint(resource)
-        if data is False:
-            self.fail(f"{what} annotation {CHECKPOINT_ANNOTATION} is not a recognised checkpoint; manual recovery required")
-        return data
-
     def make_checkpoint(self, phase, pre_scaling, **extra):
         data = {
             "v": CHECKPOINT_VERSION,
@@ -1134,6 +1194,11 @@ class MigrationGate:
         resource["annotations"] = annotations
         return resource
 
+    def owns(self, resource, phases):
+        """True when resource's record is this run's, in one of phases."""
+        data = parse_checkpoint(resource)
+        return isinstance(data, dict) and data.get("run") == self.cfg.run_id and data.get("phase") in phases
+
     # -- service validation ----------------------------------------------
 
     def validate_service(self, svc, *, expect_stopped, expect_phase=None):
@@ -1146,11 +1211,25 @@ class MigrationGate:
             observed = proto_int(svc, "observedGeneration", default_zero=False)
         except ValueError:
             self.fail("service generation fields are malformed")
-        self.check(observed is not None and observed == generation,
-                   "service observedGeneration does not match generation (reconciling or changed)")
         self.check(svc.get("reconciling", False) is False, "service is reconciling")
-        terminal = svc.get("terminalCondition") or {}
-        self.check(terminal.get("state") == CONDITION_SUCCEEDED, "service terminalCondition is not CONDITION_SUCCEEDED")
+        terminal = (svc.get("terminalCondition") or {}).get("state")
+        if self.rollout_exempt and failed_reconciliation(svc):
+            # Documented Cloud Run shape of a settled failed reconciliation:
+            # observedGeneration (with trafficStatuses and latestReadyRevision)
+            # keeps the state of the last serving generation. Accepted only in
+            # the stopped-recovery exemption, until this run's own rollout.
+            pass
+        else:
+            self.check(observed is not None and observed == generation,
+                       "service observedGeneration does not match generation (reconciling or changed)")
+        if self.rollout_exempt:
+            # Recovery of a service this gate left stopped: an earlier
+            # rollout may have settled as failed. Still settled (checked
+            # above); traffic, tag, identity and zero checks are unchanged.
+            self.check(terminal in (CONDITION_SUCCEEDED, CONDITION_FAILED),
+                       "service terminalCondition is neither CONDITION_SUCCEEDED nor a settled CONDITION_FAILED")
+        else:
+            self.check(terminal == CONDITION_SUCCEEDED, "service terminalCondition is not CONDITION_SUCCEEDED")
         self.check_no_tags(svc)
         template = svc.get("template")
         self.check(isinstance(template, dict), "service has no template")
@@ -1158,16 +1237,18 @@ class MigrationGate:
         # and its presence does not prove a user pin. The module this gate
         # belongs to never sets it (revision = null). Metadata/scaling-only
         # writes resend the template exactly as read; the new-image write
-        # omits it so Google generates a new, unused revision name.
+        # omits it so Google generates a new, unused revision name, except
+        # when an unchanged template must be redeployed after a failed
+        # rollout (see roll_out_serving_config).
         self.check(isinstance(template.get("revision", ""), str), "service template revision is malformed")
         container = single_container(template, "service template")
         self.check(isinstance(container.get("image"), str) and container.get("image"), "service container has no image")
         for token in JOB_EXECUTION_TOKENS:
             self.check(token not in svc, "service has an unexpected execution token field")
-        checkpoint = self.read_checkpoint(svc, "service")
+        checkpoint = parse_checkpoint(svc)
         if expect_stopped:
             self.check(is_stopped_scaling(svc.get("scaling")), "service is no longer stopped (MANUAL, 0 instances)")
-            self.check(checkpoint is not None and checkpoint.get("run") == self.cfg.run_id,
+            self.check(isinstance(checkpoint, dict) and checkpoint.get("run") == self.cfg.run_id,
                        "service checkpoint is missing or owned by another run")
             if expect_phase is not None:
                 self.check(checkpoint.get("phase") == expect_phase, "service checkpoint phase changed unexpectedly")
@@ -1243,6 +1324,8 @@ class MigrationGate:
             return FLEET_RESTART_DISABLED
         if isinstance(cp, dict) and cp.get("run") == self.cfg.run_id and cp.get("phase") == PHASE_COMPLETED:
             return FLEET_NOT_STOPPED + " (the restore write was applied)"
+        if isinstance(cp, dict) and cp.get("run") != self.cfg.run_id and is_stopped_scaling(svc.get("scaling")):
+            return FLEET_TAKEN_OVER
         return FLEET_NOT_STOPPED
 
     # -- service writes --------------------------------------------------
@@ -1331,64 +1414,233 @@ class MigrationGate:
                    f"{what} image digest differs from the digest already reported in this run "
                    "(for example a mutable tag, or an image index vs platform manifest digest)")
 
+    # -- job ownership and execution inventory ---------------------------
+    #
+    # Every run claims the job with one etag-guarded write of its own record
+    # (bootstrap and upgrade alike), reads the job back, and from then on
+    # requires its own record on every job read. The claimed etag is the one
+    # :run is sent with, so a :run prepared by an earlier controller with an
+    # older etag is rejected by the API's conditional check. Immediately
+    # before :run the complete execution inventory is re-listed and
+    # cross-checked with the job's latestCreatedExecution: an execution the
+    # job reports but the listing does not show yet, or one that has not
+    # settled, is never treated as absent. This is a detection layer built on
+    # Google's documented etag and listing semantics; it is not a proof that
+    # every request accepted before the claim is already visible.
+
+    def execution_full_name(self, value):
+        """Full resource name of an execution of this job, from a full or a
+        short name (Job.latestCreatedExecution.name is observed short); None
+        when the value cannot name an execution of this job."""
+        if not isinstance(value, str):
+            return None
+        prefix = self.cfg.job_name + "/executions/"
+        short = value[len(prefix):] if value.startswith(prefix) else value
+        if not re.fullmatch(r"[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?", short):
+            return None
+        return prefix + short
+
+    def latest_created_execution(self, job):
+        """(full name, completed) from Job.latestCreatedExecution, or None."""
+        pointer = job.get("latestCreatedExecution")
+        if pointer is None:
+            return None
+        self.check(isinstance(pointer, dict), "job latestCreatedExecution is malformed")
+        full = self.execution_full_name(pointer.get("name"))
+        self.check(full is not None, "job latestCreatedExecution does not name an execution of this job")
+        return full, bool(pointer.get("completionTime"))
+
+    def execution_settled(self, ex):
+        try:
+            running = proto_int(ex, "runningCount")
+        except ValueError:
+            self.fail("execution listing returned malformed counts")
+        return bool(ex.get("completionTime")) and running == 0 and ex.get("reconciling", False) is False
+
+    def execution_inventory(self, job, executions):
+        """(names, pending): the listed executions, and why the inventory
+        cannot yet be trusted as complete and settled (empty when it can).
+
+        Malformed entries fail the gate. Pending reasons are transient states
+        a bounded wait may resolve: an unsettled execution, or a job that
+        reports a latest execution the listing does not show (yet) or shows
+        as not completed."""
+        names = set()
+        unsettled = []
+        for ex in executions:
+            name = ex.get("name")
+            self.check(isinstance(name, str) and self.execution_full_name(name) == name,
+                       "execution listing returned an invalid entry")
+            self.check(name not in names, "execution listing returned a duplicate entry")
+            names.add(name)
+            if not self.execution_settled(ex):
+                unsettled.append(short_name(name))
+        pending = []
+        if unsettled:
+            pending.append("job execution(s) " + ", ".join(sorted(unsettled)) + " have not settled")
+        try:
+            count = proto_int(job, "executionCount")
+        except ValueError:
+            self.fail("job executionCount is malformed")
+        latest = self.latest_created_execution(job)
+        if latest is None:
+            if names or count:
+                pending.append("the job does not report its latest created execution")
+        else:
+            full, completed = latest
+            if full not in names:
+                pending.append(f"the job reports execution {short_name(full)} that the execution listing does "
+                               "not show yet")
+            elif not completed:
+                pending.append(f"the job reports execution {short_name(full)} as not completed")
+        return names, pending
+
+    def wait_for_settled_inventory(self, when, read_job):
+        """Bounded read-only wait until the job's execution inventory is
+        complete and settled. Never starts or stops anything. If prior work
+        is still running (or not consistently visible) at the deadline the
+        gate fails without starting a migration; a later apply re-checks."""
+        deadline = self.deadline(self.migration_timeout)
+        while True:
+            job = read_job()
+            names, pending = self.execution_inventory(job, self.list_executions())
+            if not pending:
+                return job, names
+            if self.expired(deadline):
+                self.fail("; ".join(pending) + f" ({when}, after waiting {self.migration_timeout}s). A prior "
+                          "migration may still be running or its state is not consistently visible, so this run "
+                          "started none; a later terraform apply re-checks automatically")
+            self.log("waiting before any migration: " + "; ".join(pending))
+            self.clock.sleep(MIGRATION_POLL)
+
+    def read_unclaimed_job(self):
+        job = self.get_job()
+        self.validate_job(job)
+        self.check(job["generation"] == self.cfg.job_generation,
+                   "job generation does not match the one Terraform just applied; another writer changed it")
+        return job
+
+    def read_owned_job(self, when, same_etag=False):
+        """The job, still carrying this run's ownership record and the
+        claimed generation (and, before :run, the claimed etag)."""
+        job = self.get_job()
+        self.validate_job(job)
+        self.check(self.owns(job, (self.job_phase,)),
+                   f"the migration job's ownership record is no longer this run's {when}; another run took over "
+                   "or another writer changed it")
+        self.check(job["generation"] == self.job_generation, f"the job changed {when}")
+        if same_etag:
+            self.check(job["etag"] == self.job_etag, f"the job changed {when} (etag)")
+        return job
+
+    def job_body(self, job):
+        return {k: v for k, v in job.items() if k not in JOB_OUTPUT_ONLY and k not in JOB_EXECUTION_TOKENS}
+
+    def claim_job(self, job, phase):
+        """Etag-guarded write of this run's job ownership record.
+
+        Any earlier record (finished or not, from any run) is replaced: it is
+        internal metadata, never a lock. The read-back etag must differ from
+        the pre-claim etag, so a :run prepared with an older etag cannot
+        match the etag this run launches with."""
+        pre_etag = job["etag"]
+        body = self.job_body(job)
+        self.with_annotation(body, self.make_checkpoint(phase, None))
+        self.log(f"claiming the migration job for run {self.cfg.run_id} (etag-guarded)")
+        try:
+            op = self.api.write("PATCH", self.run_url(self.cfg.job_name), "job ownership claim", body)
+            self.wait_operation(op, "job ownership claim")
+        except ApiError as err:
+            self.fail(f"the job ownership claim was rejected ({err}); another writer changed the job. No migration "
+                      "was started")
+        except WriteOutcomeUnknown as err:
+            self.fail(f"the job ownership claim outcome is unknown ({err}); no migration was started")
+        claimed = self.get_job()
+        self.validate_job(claimed)
+        cp = parse_checkpoint(claimed)
+        self.check(isinstance(cp, dict) and cp.get("run") == self.cfg.run_id and cp.get("phase") == phase,
+                   "job ownership record was not written as expected")
+        self.check(claimed["etag"] != pre_etag,
+                   "the job etag did not change with the ownership claim, so requests prepared before the claim "
+                   "cannot be told apart; refusing")
+        self.job_phase = phase
+        self.job_etag = claimed["etag"]
+        self.job_generation = claimed["generation"]
+        return claimed
+
+    def final_launch_check(self):
+        """Immediately before :run: the job is exactly as claimed (record,
+        generation, etag) and the complete execution inventory, cross-checked
+        with latestCreatedExecution, is the settled baseline read after the
+        claim."""
+        job = self.read_owned_job("before the migration started", same_etag=True)
+        names, pending = self.execution_inventory(job, self.list_executions())
+        self.check(not pending and names == self.executions_before,
+                   "job executions changed before the migration started; another execution may be active")
+        return job
+
     def check_executions_settled(self, executions):
         names = set()
         prefix = self.cfg.job_name + "/executions/"
         for ex in executions:
             name = ex.get("name")
             self.check(isinstance(name, str) and name.startswith(prefix), "execution listing returned an invalid entry")
-            try:
-                running = proto_int(ex, "runningCount")
-            except ValueError:
-                self.fail("execution listing returned malformed counts")
-            self.check(ex.get("completionTime") and running == 0 and ex.get("reconciling", False) is False,
+            self.check(self.execution_settled(ex),
                        f"job execution {short_name(name)} has not settled; a prior run may still be active")
             names.add(name)
         return names
 
-    def write_job_checkpoint(self, job, phase, label):
-        """Etag-guarded update of the job's ownership annotation (bootstrap).
-
-        A completed record carries the verified execution boundary (our
-        execution and the exact inventory) so a later bootstrap can prove no
-        other execution appeared after it."""
-        if phase == PHASE_COMPLETED:
-            # The freshly read job must be the one already verified: otherwise
-            # the etag-guarded write would adopt another writer's change as
-            # the new baseline.
-            try:
-                self.validate_job(job)
-                self.check(job["generation"] == self.job_generation,
-                           "the job changed before the bootstrap completion write")
-            except GateError:
-                self.migration = MIGRATION_UNKNOWN
-                raise
-        body = {k: v for k, v in job.items() if k not in JOB_OUTPUT_ONLY and k not in JOB_EXECUTION_TOKENS}
-        extra = {}
-        if phase == PHASE_COMPLETED:
-            extra = {
-                "execution": self.execution_name,
-                "executions": sorted(self.executions_before | {self.execution_name}),
-            }
-        self.with_annotation(body, self.make_checkpoint(phase, None, **extra))
-        op = self.api.write("PATCH", self.run_url(self.cfg.job_name), label, body)
-        self.wait_operation(op, label)
+    def complete_bootstrap_record(self):
+        """Etag-guarded completion of this run's bootstrap job record. The
+        same read whose etag is sent must still carry this run's record in
+        the bootstrap-migrating phase and the verified generation, so a
+        superseded controller can never overwrite its successor's record."""
+        job = self.get_job()
+        try:
+            self.validate_job(job)
+            self.check(self.owns(job, (PHASE_BOOTSTRAP_MIGRATING,)),
+                       "the migration job's ownership record is no longer this run's before the bootstrap "
+                       "completion write; another run took over")
+            self.check(job["generation"] == self.job_generation,
+                       "the job changed before the bootstrap completion write")
+        except GateError:
+            self.migration = MIGRATION_UNKNOWN
+            raise
+        body = self.job_body(job)
+        self.with_annotation(body, self.make_checkpoint(PHASE_COMPLETED, None, execution=self.execution_name,
+                                                        executions=sorted(self.executions_before
+                                                                          | {self.execution_name})))
+        op = self.api.write("PATCH", self.run_url(self.cfg.job_name), "job ownership record completion", body)
+        self.wait_operation(op, "job ownership record completion")
         job = self.get_job()
         self.validate_job(job)
-        checkpoint = self.read_checkpoint(job, "job")
-        self.check(checkpoint is not None and checkpoint.get("run") == self.cfg.run_id and checkpoint.get("phase") == phase,
-                   "job ownership record was not written as expected")
+        self.check(self.owns(job, (PHASE_COMPLETED,)), "job ownership record was not completed as expected")
+        self.job_phase = PHASE_COMPLETED
+        self.job_etag = job["etag"]
+        self.job_generation = job["generation"]
         return job
 
     # -- telemetry -------------------------------------------------------
 
-    def coverage_preflight(self):
+    def coverage_preflight(self, allow_missing=False):
+        """Read-only telemetry coverage check before any write.
+
+        For a running service, missing coverage refuses before Fleet is
+        stopped (the post-stop proof could not succeed). For a service an
+        earlier run already left stopped (allow_missing), the query still
+        discovers revisions and fatal anomalies, but missing coverage does
+        not block: the bounded post-claim zero proof decides."""
         now = self.api.server_now_ns
         series, observed = self.query_instance_count(now - COVERAGE_LOOKBACK * NANOS, now)
         result = analyze_coverage(series, self.cfg, now, observed, self.revisions)
         if result.fatal:
             self.fail("telemetry preflight: " + "; ".join(sorted(set(result.fatal))))
         self.required_revisions = set(self.revisions) | result.revisions
+        if result.pending and allow_missing:
+            self.log("no recent active and idle instance_count telemetry for revision(s) "
+                     + ", ".join(result.pending) + "; Fleet is already stopped, so this run goes on to the "
+                     "bounded post-claim zero proof")
+            return
         if result.pending:
             self.fail(
                 "Cloud Monitoring has no recent active and idle instance_count telemetry for revision(s) "
@@ -1425,7 +1677,8 @@ class MigrationGate:
                         return
                     self.log("waiting for explicit zero telemetry for: " + ", ".join(result.pending))
             if self.expired(deadline):
-                self.fail(f"no verified actual zero for every revision within {ZERO_TIMEOUT}s; the migration was not run")
+                self.fail(f"no verified actual zero for every revision within {ZERO_TIMEOUT}s; the migration was not "
+                          "run")
             self.clock.sleep(ZERO_POLL)
 
     def recheck_zero_after_migration(self):
@@ -1452,7 +1705,9 @@ class MigrationGate:
             self.migration = MIGRATION_NOT_RUN
             self.fail(f"the migration job was not started: {err}")
         except WriteOutcomeUnknown as err:
-            self.fail(f"the migration job start outcome is unknown ({err}); it is never retried")
+            self.fail(f"the migration job start outcome is unknown ({err}); this run does not retry it. A later "
+                      "terraform apply waits for any execution it may have started to settle before running one "
+                      "fresh migration")
         metadata = op.get("metadata") if isinstance(op, dict) else None
         name = metadata.get("name") if isinstance(metadata, dict) else None
         op_name = op.get("name") if isinstance(op, dict) else None
@@ -1466,9 +1721,7 @@ class MigrationGate:
         while True:
             self.clock.sleep(MIGRATION_POLL)
             recheck()
-            job = self.get_job()
-            self.validate_job(job)
-            self.check(job["generation"] == self.job_generation, "the job changed during the migration")
+            self.read_owned_job("during the migration")
             executions = self.list_executions()
             new = {e.get("name") for e in executions} - self.executions_before
             self.check(new == {name}, "unexpected job executions appeared during the migration")
@@ -1488,28 +1741,26 @@ class MigrationGate:
             if self.expired(deadline):
                 self.fail(f"migration execution {short_name(name)} did not reach a verified outcome within {timeout}s")
 
-    def verify_execution_inventory(self, when, current_run=True):
-        """The job is unchanged and its executions are exactly the prior
-        (settled) ones plus our verified-successful execution.
-
-        For this run's own execution (current_run=True) its template and
-        runtime image are re-verified too, against the digest pinned in this
-        run. A completed bootstrap record from an earlier run
-        (current_run=False) may name an execution of an earlier image; only
-        its inventory and success are re-verified, as before.
+    def verify_execution_inventory(self, when):
+        """The job is still this run's and unchanged, and its executions are
+        exactly the settled baseline plus this run's verified-successful
+        execution (whose template and runtime image are re-verified against
+        the digest pinned in this run). A latestCreatedExecution naming any
+        other execution fails too.
 
         Called after task verification and immediately before every write
         that lets Fleet start (new image, scaling restore, bootstrap
         completion). Anything else makes the database state uncertain.
         """
         try:
-            job = self.get_job()
-            self.validate_job(job)
-            self.check(job["generation"] == self.job_generation, f"the job changed {when}")
+            job = self.read_owned_job(when)
             executions = self.list_executions()
             names = [e.get("name") for e in executions]
-            self.check(len(names) == len(set(names)) and set(names) == self.executions_before | {self.execution_name},
+            known = self.executions_before | {self.execution_name}
+            self.check(len(names) == len(set(names)) and set(names) == known,
                        f"unexpected job executions exist {when}")
+            latest = self.latest_created_execution(job)
+            self.check(latest is None or latest[0] in known, f"unexpected job executions exist {when}")
             self.check_executions_settled([e for e in executions if e.get("name") != self.execution_name])
             owned = next(e for e in executions if e.get("name") == self.execution_name)
             try:
@@ -1523,8 +1774,7 @@ class MigrationGate:
                        and owned.get("reconciling", False) is False
                        and has_condition(owned, "Completed", CONDITION_SUCCEEDED),
                        f"the migration execution no longer reports success {when}")
-            if current_run:
-                self.check_owned_execution_image(owned)
+            self.check_owned_execution_image(owned)
         except GateError:
             self.migration = MIGRATION_UNKNOWN
             raise
@@ -1545,10 +1795,12 @@ class MigrationGate:
     def ensure_no_new_execution_after_rejection(self):
         try:
             executions = self.list_executions()
-        except ApiError:
-            self.fail("the :run request was rejected but executions could not be re-listed; outcome unknown")
+            job = self.get_job()
+            latest = self.latest_created_execution(job) if isinstance(job, dict) else None
+        except (ApiError, GateError):
+            self.fail("the :run request was rejected but executions could not be re-checked; outcome unknown")
         names = {e.get("name") for e in executions}
-        if names != self.executions_before:
+        if names != self.executions_before or (latest is not None and latest[0] not in self.executions_before):
             self.fail("the :run request was rejected but a new execution exists; outcome unknown")
 
     def evaluate_execution(self, op, execution):
@@ -1687,17 +1939,13 @@ class MigrationGate:
     def run(self):
         cfg = self.cfg
         self.log(f"run {cfg.run_id}: service {cfg.service}, job {cfg.job}, region {cfg.region}")
-        job = self.get_job()
-        self.job_generation = job.get("generation")
-        self.validate_job(job)
-        self.check(job["generation"] == cfg.job_generation,
-                   "job generation does not match the one Terraform just applied; another writer changed it")
-        job_checkpoint = self.read_checkpoint(job, "job")
-        if job_checkpoint is not None and job_checkpoint.get("phase") != PHASE_COMPLETED:
-            self.fail("the job has an unfinished migration-gate record from run "
-                      f"{job_checkpoint.get('run')!s:.64} (phase {job_checkpoint.get('phase')!s:.32}); manual recovery required")
+        job = self.read_unclaimed_job()
         self.timeout_from_job(job)
-        self.executions_before = self.check_executions_settled(self.list_executions())
+        self.describe_job_record(job)
+        # Read-only: never overlap a prior execution. Anything still running
+        # (or not consistently visible) is waited for, bounded; it is never
+        # taken to mean "nothing is running".
+        job, _ = self.wait_for_settled_inventory("before any change", self.read_unclaimed_job)
         svc, _ = self.get_service(allow_404=True)
         if svc is None:
             return self.bootstrap(job)
@@ -1707,45 +1955,36 @@ class MigrationGate:
         timeout = parse_duration_seconds(job["template"]["template"]["timeout"])
         self.migration_timeout = timeout + MIGRATION_MARGIN
 
+    def describe_job_record(self, job):
+        """Log an earlier run's job record. It is internal metadata: it is
+        neither a lock nor evidence that a migration succeeded, and this run
+        replaces it with its own claim."""
+        cp = parse_checkpoint(job)
+        if cp is False:
+            self.log("the job carries an unrecognised migration-gate record; it confers nothing and this run "
+                     "replaces it with its own claim")
+        elif isinstance(cp, dict) and cp.get("phase") != PHASE_COMPLETED:
+            self.log(f"the job carries an unfinished record from run {cp.get('run')!s:.64} "
+                     f"(phase {cp.get('phase')!s:.32}); this run re-checks the current state and claims the job")
+
     # -- protocol: fresh bootstrap ---------------------------------------
 
-    def verify_completed_bootstrap(self, checkpoint):
-        """A completed bootstrap record is only trusted if the job's executions
-        are still exactly the recorded inventory and the recorded execution
-        still reports success. Otherwise (for example an extra execution that
-        appeared while the record was written) manual recovery is required."""
-        names = checkpoint.get("executions")
-        owned = checkpoint.get("execution")
-        prefix = self.cfg.job_name + "/executions/"
-        self.check(isinstance(names, list) and names
-                   and all(isinstance(n, str) and n.startswith(prefix) and len(n) > len(prefix) for n in names)
-                   and len(names) == len(set(names))
-                   and isinstance(owned, str) and owned in names,
-                   "completed bootstrap record lacks a trusted execution inventory; manual recovery required")
-        current_inventory = self.executions_before
-        self.executions_before = set(names) - {owned}
-        self.execution_name = owned
-        try:
-            self.verify_execution_inventory("before retrying a completed bootstrap", current_run=False)
-        finally:
-            self.executions_before = current_inventory
-            self.execution_name = None
-
     def bootstrap(self, job):
-        cfg = self.cfg
-        checkpoint = self.read_checkpoint(job, "job")
-        if checkpoint is not None and checkpoint.get("phase") == PHASE_COMPLETED:
-            self.verify_completed_bootstrap(checkpoint)
+        """Fresh deployment: the service does not exist.
+
+        Every bootstrap run proves absence afresh and runs one fresh
+        migration under its own claim. An earlier record (unfinished, or
+        completed with an inventory that no longer matches) neither blocks
+        this nor substitutes for the migration."""
         self.fleet = FLEET_NOT_CREATED
         self.log("service not found; checking that this is a fresh deployment")
         self.check_fresh()
-        job = self.write_job_checkpoint(job, PHASE_BOOTSTRAP_MIGRATING, "job ownership record")
-        self.job_etag = job["etag"]
-        self.job_generation = job["generation"]
+        self.claim_job(job, PHASE_BOOTSTRAP_MIGRATING)
+        _, self.executions_before = self.wait_for_settled_inventory(
+            "after claiming the job", lambda: self.read_owned_job("after the ownership claim", same_etag=True))
         # The service must still be absent right before :run.
         self.check_fresh()
-        self.check(self.check_executions_settled(self.list_executions()) == self.executions_before,
-                   "job executions changed before the migration started")
+        self.final_launch_check()
 
         def recheck():
             svc, _ = self.get_service(allow_404=True)
@@ -1755,13 +1994,11 @@ class MigrationGate:
         recheck()
         self.verify_execution_inventory("before completing the bootstrap")
         try:
-            job = self.write_job_checkpoint(self.get_job(), PHASE_COMPLETED, "job ownership record completion")
-        except (ApiError, WriteOutcomeUnknown, GateError) as err:
-            message = getattr(err, "message", None) or str(err)
-            self.fail(f"the migration succeeded but the job ownership record could not be completed ({message}); "
-                      f"remove the {CHECKPOINT_ANNOTATION} job annotation after checking the run, then re-apply")
-        # Our own annotation write bumps the job generation.
-        self.job_generation = job["generation"]
+            self.complete_bootstrap_record()
+        except (ApiError, WriteOutcomeUnknown) as err:
+            self.fail(f"the migration succeeded but this run's job ownership record could not be completed ({err}); "
+                      "Terraform does not create the service in this apply. A later terraform apply proves the "
+                      "deployment is still fresh and runs one fresh migration")
         recheck()
         self.verify_execution_inventory("before Terraform creates the service")
         self.log("fresh bootstrap migration verified; Terraform may now create the service")
@@ -1807,35 +2044,108 @@ class MigrationGate:
 
     # -- protocol: upgrade -----------------------------------------------
 
-    def upgrade(self, svc, job):
-        cfg = self.cfg
-        checkpoint = self.validate_service(svc, expect_stopped=False)
-        if checkpoint is not None and checkpoint.get("phase") != PHASE_COMPLETED:
-            self.fail(
-                f"the service has an unfinished migration-gate record from run {checkpoint.get('run')!s:.64} "
-                f"(phase {checkpoint.get('phase')!s:.32}, pre-migration scaling "
-                f"{json.dumps(checkpoint.get('pre_scaling'), sort_keys=True)}); manual recovery required"
-            )
-        self.check_latest_traffic(svc)
-        self.check(svc.get("latestReadyRevision") and svc.get("latestReadyRevision") == svc.get("latestCreatedRevision"),
-                   "the latest created revision is not ready; refusing")
+    def recovery_record(self, checkpoint):
+        """The semantically valid unfinished service record of an earlier run
+        of this gate, as {run, phase, pre_scaling (normalized)}; else None.
+
+        Validity is semantic (v1, a known unfinished phase, a run id, and a
+        usable recorded scaling that is not itself a stop); key order, extra
+        keys and the recorded image/trigger do not matter, because each run
+        re-derives its target from the current, generation-pinned job.
+        Anything else is not trusted and confers no recovery authority."""
+        if not isinstance(checkpoint, dict) or checkpoint.get("phase") not in SERVICE_UNFINISHED_PHASES:
+            return None
+        run = checkpoint.get("run")
+        if not isinstance(run, str) or not re.fullmatch(Config.PATTERNS["run_id"], run):
+            return None
+        raw = checkpoint.get("pre_scaling")
+        if not isinstance(raw, dict):
+            return None
         try:
-            pre_scaling = normalize_scaling(svc.get("scaling"))
-        except ValueError as err:
-            self.fail(f"service scaling cannot be captured ({err})")
+            pre_scaling = normalize_scaling(raw)
+        except ValueError:
+            return None
         if pre_scaling["scalingMode"] == "MANUAL" and pre_scaling["manualInstanceCount"] == 0:
-            self.fail("service is already MANUAL with 0 instances but has no unfinished gate record; the "
-                      "pre-migration scaling is unknown, refusing")
+            return None
+        return {"run": run, "phase": checkpoint["phase"], "pre_scaling": pre_scaling}
+
+    def wait_for_settled_service(self, svc):
+        """Read-only, bounded: a service left stopped by an earlier run may
+        still be reconciling (for example a late rollout). Wait for it to
+        settle under the same record; never write meanwhile."""
+        raw = (svc.get("annotations") or {}).get(CHECKPOINT_ANNOTATION)
+        deadline = self.deadline(ROLLOUT_TIMEOUT)
+        while True:
+            try:
+                settled = svc.get("reconciling", False) is False and (
+                    proto_int(svc, "observedGeneration", default_zero=False)
+                    == proto_int(svc, "generation", default_zero=False)
+                    or failed_reconciliation(svc))
+            except ValueError:
+                self.fail("service generation fields are malformed")
+            if settled:
+                return svc
+            if self.expired(deadline):
+                self.fail(f"the stopped Fleet service is still reconciling after {ROLLOUT_TIMEOUT}s; nothing was "
+                          "changed. A later terraform apply re-checks automatically")
+            self.log("waiting for the stopped service to finish reconciling")
+            self.clock.sleep(ROLLOUT_POLL)
+            svc, _ = self.get_service()
+            self.check(svc is not None, "service disappeared")
+            self.check(is_stopped_scaling(svc.get("scaling"))
+                       and (svc.get("annotations") or {}).get(CHECKPOINT_ANNOTATION) == raw,
+                       "the stopped service changed while waiting for it to settle; another writer is active")
+
+    def upgrade(self, svc, job):
+        cp = parse_checkpoint(svc)
+        record = self.recovery_record(cp)
+        if record is not None and is_stopped_scaling(svc.get("scaling")):
+            # Recovery of a service an earlier run left stopped.
+            self.rollout_exempt = True
+            self.fleet = FLEET_PRIOR_STOP
+            svc = self.wait_for_settled_service(svc)
+        self.validate_service(svc, expect_stopped=False)
+        self.check_latest_traffic(svc)
+        if record is not None:
+            pre_scaling = record["pre_scaling"]
+            self.log(f"continuing from run {record['run']}'s unfinished gate record (phase {record['phase']}): its "
+                     f"pre-migration scaling {json.dumps(pre_scaling, sort_keys=True)} is kept; this run claims the "
+                     "record, proves zero afresh and runs one fresh migration")
+        else:
+            try:
+                pre_scaling = normalize_scaling(svc.get("scaling"))
+            except ValueError as err:
+                self.fail(f"service scaling cannot be captured ({err})")
+            if pre_scaling["scalingMode"] == "MANUAL" and pre_scaling["manualInstanceCount"] == 0:
+                self.fail("service is already MANUAL with 0 instances but carries no valid gate record holding its "
+                          "pre-migration scaling (this state was not produced by the gate); the gate never guesses "
+                          "scaling, refusing")
+            if cp is False or (isinstance(cp, dict) and cp.get("phase") != PHASE_COMPLETED):
+                self.log("the service carries a migration-gate record that is not a valid unfinished record; it "
+                         "confers nothing, and this run records the current scaling instead")
+        latest_ready = svc.get("latestReadyRevision")
+        latest_created = svc.get("latestCreatedRevision")
+        if self.rollout_exempt:
+            self.check(isinstance(latest_created, str) and latest_created,
+                       "the service reports no latest created revision")
+        else:
+            self.check(latest_ready and latest_ready == latest_created,
+                       "the latest created revision is not ready; refusing")
         self.revisions = self.revision_names(self.list_revisions())
-        for field in ("latestReadyRevision", "latestCreatedRevision"):
-            self.check(short_name(svc.get(field)) in self.revisions, "revision listing is incomplete")
+        for value in (latest_ready, latest_created):
+            if value:
+                self.check(short_name(value) in self.revisions, "revision listing is incomplete")
         # Validate the serving configuration the gate will deploy after the
         # migration now, so an unusable job fails before Fleet is stopped.
         self.desired_serving(job)
-        self.coverage_preflight()
-        self.job_etag = job["etag"]
+        self.coverage_preflight(allow_missing=self.rollout_exempt)
 
-        # --- Stop (atomic with the checkpoint) ---
+        # --- Claim the job: fences :run requests prepared with older etags ---
+        self.claim_job(job, PHASE_CLAIMED)
+        _, self.executions_before = self.wait_for_settled_inventory(
+            "after claiming the job", lambda: self.read_owned_job("after the ownership claim", same_etag=True))
+
+        # --- Claim/stop the service (atomic with the checkpoint) ---
         self.checkpoint = self.make_checkpoint(PHASE_STOPPED, pre_scaling)
         body = dict(svc)
         stop = {"scalingMode": "MANUAL", "manualInstanceCount": 0, "minInstanceCount": 0}
@@ -1847,11 +2157,10 @@ class MigrationGate:
         try:
             self.patch_service(body, "service stop")
         except ApiError as err:
-            self.fail(f"the stop was rejected ({err}); Fleet was not changed")
+            self.fail(f"the stop was rejected ({err}); Fleet was not changed by this run")
         except WriteOutcomeUnknown as err:
             self.stop_attempted = True
-            self.fail(f"the stop outcome is unknown ({err}); check the service scaling and the "
-                      f"{CHECKPOINT_ANNOTATION} annotation")
+            self.fail(f"the stop outcome is unknown ({err})")
         self.stop_attempted = True
         self.fleet = FLEET_STATE_UNKNOWN
         stopped, date_ns = self.get_service()
@@ -1866,25 +2175,22 @@ class MigrationGate:
             self.fail("service updateTime is missing after the stop")
         # HTTP Date has one-second precision: the confirmation happened at or
         # after Date and before Date + 1 s, so only points after Date + 1 s are
-        # guaranteed to be later than the confirmed stop.
+        # guaranteed to be later than the confirmed stop (or, for a service an
+        # earlier run left stopped, than this run's takeover).
         self.fence_ns = max(date_ns + NANOS, update_ns)
         self.log(f"stop confirmed; telemetry fence {format_rfc3339_ns(self.fence_ns)}")
         self.recheck_revisions()
 
-        # --- Verified actual zero ---
+        # --- Verified actual zero (fresh, after this run's claim) ---
         self.wait_for_verified_zero()
         self.log("verified explicit zero active and idle instances for every revision")
 
         # --- Record intent to run, then run exactly once ---
         current = self.recheck_service(phase=PHASE_STOPPED)
-        job_now = self.get_job()
-        self.validate_job(job_now)
-        self.check(job_now["etag"] == self.job_etag and job_now["generation"] == self.job_generation,
-                   "the job changed after preflight")
-        self.check(self.check_executions_settled(self.list_executions()) == self.executions_before,
-                   "job executions changed after preflight")
+        self.final_launch_check()
         self.write_service_phase(current, PHASE_MIGRATING, "service checkpoint (migrating)")
         self.recheck_revisions()
+        self.final_launch_check()
         self.run_migration(lambda: self.recheck_service(phase=PHASE_MIGRATING))
         self.recheck_revisions()
         self.recheck_zero_after_migration()
@@ -1913,14 +2219,37 @@ class MigrationGate:
         self.expected_service = (updated["etag"], updated["generation"])
         return updated
 
+    def fresh_revision_name(self, svc):
+        """A new, unused, run-derived revision name for redeploying an
+        unchanged template whose latest revision failed. Cloud Run revision
+        names are service-prefixed DNS labels (at most 63 characters) and
+        immutable; the name is checked against the full revision inventory
+        (including deleted revisions) and never reuses an existing one."""
+        existing = self.revision_names(self.list_revisions())
+        self.check(existing == self.revisions,
+                   "the revision inventory changed while Fleet was stopped; a configuration change occurred")
+        existing = existing | {svc["template"].get("revision")}
+        for attempt in range(8):
+            suffix = hashlib.sha256(f"{self.cfg.run_id}/{attempt}".encode("utf-8")).hexdigest()[:10]
+            name = f"{self.cfg.service}-g{suffix}"
+            if (len(name) <= 63 and re.fullmatch(r"[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?", name)
+                    and name not in existing):
+                return name
+        self.fail("could not derive an unused revision name for this run")
+
     def roll_out_serving_config(self):
         """Deploy the target image and the job's serving env/CMEK key while the
         service is still MANUAL/0, and wait for a Ready revision that runs it.
 
-        If the service template already runs exactly that configuration (for
-        example first inclusion of the gate with an unchanged image), no
-        template write is made and no new revision is expected; the current
-        Ready revision must then be verified to run it.
+        If the service template already runs exactly that configuration and
+        its latest revision is Ready (for example first inclusion of the gate
+        with an unchanged image, or an earlier run's rollout that finished),
+        no template write is made and the current Ready revision is verified.
+        If the template matches but its latest revision is not Ready (an
+        earlier rollout failed), the same template is deployed again under a
+        fresh explicit revision name, so a genuinely new revision is created.
+        Otherwise the changed template is deployed and Google names the
+        revision.
         """
         self.verify_execution_inventory("before deploying the new image and serving configuration")
         svc = self.recheck_service(phase=PHASE_MIGRATED)
@@ -1929,8 +2258,13 @@ class MigrationGate:
         # (allowed: the migration is verified). From here on the measured-zero
         # proof no longer describes the service.
         self.zero_proof_current = False
-        if desired.matches(svc["template"]):
+        matches = desired.matches(svc["template"])
+        latest_ok = ((svc.get("terminalCondition") or {}).get("state") == CONDITION_SUCCEEDED
+                     and svc.get("latestReadyRevision")
+                     and svc.get("latestReadyRevision") == svc.get("latestCreatedRevision"))
+        if matches and latest_ok:
             self.log("the service already has the target image and serving configuration; no new revision needed")
+            self.rollout_exempt = False
             current = self.write_service_phase(svc, PHASE_ROLLING_OUT, "service checkpoint (rolling-out)")
             self.check(current.get("latestReadyRevision") == svc.get("latestReadyRevision")
                        and current.get("latestReadyRevision") == current.get("latestCreatedRevision"),
@@ -1942,6 +2276,7 @@ class MigrationGate:
             self.verify_execution_inventory("during the rollout")
             return
 
+        forced_name = self.fresh_revision_name(svc) if matches else None
         old_latest = svc.get("latestCreatedRevision")
         body = dict(svc)
         template = json.loads(json.dumps(svc["template"]))
@@ -1952,12 +2287,22 @@ class MigrationGate:
             template.pop("encryptionKey", None)
         else:
             template["encryptionKey"] = desired.encryption_key
-        # Revision names are immutable: never reuse the current (possibly
-        # generated) name for the new template.
-        template.pop("revision", None)
+        if forced_name is None:
+            # Revision names are immutable: never reuse the current (possibly
+            # generated) name for the new template; Google names it.
+            template.pop("revision", None)
+            self.log("migration verified; deploying the new image and serving configuration while Fleet is still "
+                     "MANUAL/0")
+        else:
+            template["revision"] = forced_name
+            self.log(f"migration verified; the template already has the target configuration but its latest "
+                     f"revision is not Ready, so it is deployed again as new revision {forced_name} while Fleet is "
+                     "still MANUAL/0")
         body["template"] = template
         self.with_annotation(body, dict(self.checkpoint, phase=PHASE_ROLLING_OUT))
-        self.log("migration verified; deploying the new image and serving configuration while Fleet is still MANUAL/0")
+        # From this write on, an earlier failed rollout no longer excuses a
+        # failed or unready service: only this run's new revision counts.
+        self.rollout_exempt = False
         try:
             self.patch_service(body, "service new revision",
                                on_poll=lambda: self.verify_execution_inventory("during the rollout"))
@@ -1970,9 +2315,7 @@ class MigrationGate:
             self.fail(f"deploying the new revision did not complete ({err}); Fleet remains stopped")
         first, _ = self.get_service()
         self.check(first is not None and first["uid"] == svc["uid"], "service disappeared or was replaced")
-        cp = self.read_checkpoint(first, "service")
-        self.check(cp is not None and cp.get("run") == self.cfg.run_id and cp.get("phase") == PHASE_ROLLING_OUT,
-                   "the new revision write was not recorded as expected")
+        self.check(self.owns(first, (PHASE_ROLLING_OUT,)), "the new revision write was not recorded as expected")
         generation = first["generation"]
         deadline = self.deadline(ROLLOUT_TIMEOUT)
         current = first
@@ -1980,7 +2323,7 @@ class MigrationGate:
             # Re-check the job and its executions on every poll: Fleet must not
             # start while another execution exists.
             self.verify_execution_inventory("during the rollout")
-            if self.new_revision_ready(current, old_latest, desired):
+            if self.new_revision_ready(current, old_latest, desired, generation):
                 break
             if self.expired(deadline):
                 self.fail(f"no new Ready revision with the target configuration under MANUAL/0 within "
@@ -1994,6 +2337,8 @@ class MigrationGate:
         self.check_latest_traffic(current, current["latestReadyRevision"])
         new_rev = short_name(current["latestReadyRevision"])
         self.check(new_rev not in self.revisions, "the ready revision is not a new revision")
+        if forced_name is not None:
+            self.check(new_rev == forced_name, "the ready revision is not the revision this run deployed")
         self.verify_ready_revision(current["latestReadyRevision"], desired)
         names = self.revision_names(self.list_revisions())
         self.check(names - self.revisions == {new_rev}, "unexpected revisions appeared during the rollout")
@@ -2016,17 +2361,24 @@ class MigrationGate:
                    "the serving revision is not Ready")
         self.check_runtime_image(container.get("image"), "serving revision")
 
-    def new_revision_ready(self, svc, old_latest, desired):
-        terminal = (svc.get("terminalCondition") or {}).get("state")
-        if terminal == CONDITION_FAILED:
-            self.fail("the new revision failed to deploy; Fleet remains stopped (the old revision is not restarted)")
+    def new_revision_ready(self, svc, old_latest, desired, generation):
+        """True once this run's rollout produced a new Ready latest revision.
+
+        Status is only evaluated once the service has settled on this run's
+        own generation: while it is still reconciling (or reports an older
+        observedGeneration), a terminalCondition left by an earlier failed
+        rollout is stale and is not this rollout's outcome."""
         if svc.get("reconciling", False) is not False:
             return False
         try:
-            if proto_int(svc, "observedGeneration", default_zero=False) != proto_int(svc, "generation", default_zero=False):
+            if (proto_int(svc, "observedGeneration", default_zero=False) != proto_int(svc, "generation", default_zero=False)
+                    or svc.get("generation") != generation):
                 return False
         except ValueError:
             return False
+        terminal = (svc.get("terminalCondition") or {}).get("state")
+        if terminal == CONDITION_FAILED:
+            self.fail("the new revision failed to deploy; Fleet remains stopped (the old revision is not restarted)")
         latest_created = svc.get("latestCreatedRevision")
         if not latest_created or latest_created == old_latest or svc.get("latestReadyRevision") != latest_created:
             return False
@@ -2047,9 +2399,7 @@ class MigrationGate:
             self.validate_service(restored, expect_stopped=False)
             self.check(normalize_scaling(restored.get("scaling")) == self.checkpoint["pre_scaling"],
                        "restored scaling does not match the recorded pre-migration scaling")
-            checkpoint = self.read_checkpoint(restored, "service")
-            self.check(checkpoint and checkpoint.get("run") == self.cfg.run_id and checkpoint.get("phase") == PHASE_COMPLETED,
-                       "completion record was not written")
+            self.check(self.owns(restored, (PHASE_COMPLETED,)), "completion record was not written")
             self.check(restored.get("latestReadyRevision") == svc.get("latestReadyRevision"),
                        "the serving revision changed during the restore")
             self.check_latest_traffic(restored, restored["latestReadyRevision"])
@@ -2060,11 +2410,17 @@ class MigrationGate:
 
     def restop(self, reason):
         """Best effort: return the service to MANUAL/0 keeping the recorded
-        pre-migration scaling. The failure report re-verifies the result and
-        never claims a stop it cannot read back."""
+        pre-migration scaling. The same read whose etag is sent must still
+        carry this run's record (rolling-out, or completed if the restore was
+        applied) with the same pre-migration scaling; otherwise another run
+        owns the service and nothing is written. The failure report
+        re-verifies the result and never claims a stop it cannot read back."""
         try:
             svc, _ = self.get_service()
-            if svc is not None:
+            cp = parse_checkpoint(svc) if svc is not None else None
+            if (isinstance(cp, dict) and cp.get("run") == self.cfg.run_id
+                    and cp.get("phase") in (PHASE_ROLLING_OUT, PHASE_COMPLETED)
+                    and cp.get("pre_scaling") == self.checkpoint["pre_scaling"]):
                 body = dict(svc)
                 scaling = {"scalingMode": "MANUAL", "manualInstanceCount": 0, "minInstanceCount": 0}
                 if self.checkpoint["pre_scaling"]["maxInstanceCount"]:
@@ -2072,6 +2428,8 @@ class MigrationGate:
                 body["scaling"] = scaling
                 self.with_annotation(body, dict(self.checkpoint, phase=PHASE_FAILED, reason="restore-failed"))
                 self.patch_service(body, "service re-stop")
+            elif svc is not None:
+                self.log("not re-stopping: the service record is no longer this run's")
         except (ApiError, WriteOutcomeUnknown, GateError, ValueError, KeyError, TypeError):
             pass
         self.fail(f"the migration succeeded, but restoring the pre-migration scaling could not be verified ({reason})")
@@ -2081,15 +2439,21 @@ class MigrationGate:
 # CLI
 # --------------------------------------------------------------------------
 
+RETRY_GUIDANCE = (
+    "Next step: fix the underlying cause reported above (for example the database, the configuration or a Google "
+    "API problem) and run terraform apply again. The next apply re-checks the current state and continues "
+    "automatically: it waits for (and never overlaps) a migration that may still be running, keeps the recorded "
+    "pre-migration scaling, runs at most one fresh migration, and lets Fleet start only after that migration and "
+    f"the target revision are verified. The {CHECKPOINT_ANNOTATION} annotation is internal state, not a lock; "
+    "do not edit or remove it."
+)
+
 
 def report_failure(err, log):
     log("FAILED: " + err.message)
     log("Fleet service: " + err.fleet)
     log("Migration: " + err.migration)
-    if err.fleet not in (FLEET_UNCHANGED, FLEET_NOT_CREATED) or err.migration != MIGRATION_NOT_RUN:
-        log("Manual recovery is required. The pre-migration scaling and the run phase are recorded in the "
-            f"{CHECKPOINT_ANNOTATION} annotation. The gate refuses to run again until that record is resolved; "
-            "see the GCP README, 'Database migration gate'.")
+    log(RETRY_GUIDANCE)
 
 
 def main(argv=None, environ=None, transport=None, token_source=None, clock=None, log=None):
