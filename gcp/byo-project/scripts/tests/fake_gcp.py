@@ -1,0 +1,871 @@
+"""Offline fake of the Cloud Run Admin API v2 and Cloud Monitoring v3 subset
+used by fleet_migration_gate.py. Test fixture only: nothing here talks to a
+network, reads credentials or runs a subprocess.
+
+The fake is deliberately simple and models only the contracts the gate relies
+on. Task and completed-execution shapes follow the API format observed on a
+successful run, reproduced with synthetic identifiers and timestamps
+(fixtures/cloud_run_observed_success.json); the rest is not evidence of how
+Google behaves. It lets the tests drive every branch of the gate
+deterministically.
+"""
+
+import copy
+import email.utils
+import json
+import math
+import os
+import re
+import urllib.parse
+
+FIXTURE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
+
+
+def load_fixture(name):
+    with open(os.path.join(FIXTURE_DIR, name), encoding="utf-8") as f:
+        return json.load(f)
+
+
+# Synthetic Cloud Run v2 execution and tasks.list page in the format observed
+# on a successful migration run (see its _provenance: observed shape, fictional
+# identifiers and timestamps). The fake renders tasks in exactly this
+# shape: no uid, index or retried, ProtoJSON zeros omitted, and the task image
+# reported as configured while the execution may report a resolved digest.
+OBSERVED = load_fixture("cloud_run_observed_success.json")
+OBSERVED_TASK = OBSERVED["tasks_page"]["tasks"][0]
+
+PROJECT = "fleet-test-project"
+REGION = "us-central1"
+SERVICE = "fleet-api"
+JOB = "fleet-migration"
+OLD_IMAGE = "fleetdm/fleet:v4.92.0"
+NEW_IMAGE = "fleetdm/fleet:v4.93.0"
+# What Cloud Run reports at runtime for NEW_IMAGE (observed shape: the job and
+# the execution's task keep the configured tag; the execution reports the
+# Docker Hub tag resolved through Google's mirror to a digest, as revisions
+# may).
+NEW_DIGEST = "sha256:fc2e73a94563fe64325ceaffba04e6ca4e0557e2dfb606100d3a8d77e0a2a80f"
+OTHER_DIGEST = "sha256:" + "0123456789abcdef" * 4
+MIRROR_NEW_IMAGE = "mirror.gcr.io/fleetdm/fleet@" + NEW_DIGEST
+TOKEN = "ya29.FAKE-TOKEN-SENTINEL"
+SECRET_ENV_VALUE = "FAKE-LICENSE-SECRET-SENTINEL"
+RUN_ID = "0b6c7c55-1d5e-4c1c-9a4e-3c8f00000001"
+TRIGGER = "a" * 64
+JOB_GENERATION = "3"
+START = 1_760_000_017.25  # deliberately not aligned to a minute
+
+OLD_DB_ADDRESS = "10.20.0.5:3306"
+NEW_DB_ADDRESS = "10.20.0.9:3306"
+LOC = f"projects/{PROJECT}/locations/{REGION}"
+SVC_NAME = f"{LOC}/services/{SERVICE}"
+JOB_NAME = f"{LOC}/jobs/{JOB}"
+LATEST = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
+OK = "CONDITION_SUCCEEDED"
+FAILED = "CONDITION_FAILED"
+METRIC = "run.googleapis.com/container/instance_count"
+CHECKPOINT = "fleetdm.com/migration-gate"
+SERVICE_OUTPUT_ONLY = (
+    "uid", "generation", "createTime", "updateTime", "observedGeneration",
+    "terminalCondition", "conditions", "latestReadyRevision",
+    "latestCreatedRevision", "trafficStatuses", "uri", "reconciling",
+)
+
+
+def env(**overrides):
+    values = {
+        "FLEET_GATE_PROJECT": PROJECT,
+        "FLEET_GATE_REGION": REGION,
+        "FLEET_GATE_SERVICE": SERVICE,
+        "FLEET_GATE_JOB": JOB,
+        "FLEET_GATE_IMAGE": NEW_IMAGE,
+        "FLEET_GATE_RUN_ID": RUN_ID,
+        "FLEET_GATE_JOB_GENERATION": JOB_GENERATION,
+        "FLEET_GATE_TRIGGER": TRIGGER,
+    }
+    values.update(overrides)
+    return {k: v for k, v in values.items() if v is not None}
+
+
+def fleet_env(db_address=OLD_DB_ADDRESS):
+    """Env shared by the Fleet service and job (same Terraform locals)."""
+    return [
+        {"name": "FLEET_LICENSE_KEY", "value": SECRET_ENV_VALUE},
+        {"name": "FLEET_MYSQL_ADDRESS", "value": db_address},
+        {"name": "FLEET_REDIS_ADDRESS", "value": "10.30.0.3:6379"},
+        {"name": "FLEET_MYSQL_PASSWORD",
+         "valueSource": {"secretKeyRef": {"secret": "fleet-db-password", "version": "latest"}}},
+    ]
+
+
+def ts(seconds):
+    """RFC 3339 with nanoseconds."""
+    whole = math.floor(seconds)
+    nanos = int(round((seconds - whole) * 1e9))
+    import datetime
+    base = datetime.datetime.fromtimestamp(whole, tz=datetime.timezone.utc)
+    return base.strftime("%Y-%m-%dT%H:%M:%S") + f".{nanos:09d}Z"
+
+
+def parse_ts(value):
+    m = re.fullmatch(r"(.*T\d\d:\d\d:\d\d)(?:\.(\d+))?Z", value)
+    import datetime
+    base = datetime.datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+    frac = float("0." + m.group(2)) if m.group(2) else 0.0
+    return base.timestamp() + frac
+
+
+class FakeResponse:
+    def __init__(self, status, payload=None, headers=None, raw=None):
+        self.status = status
+        self.headers = headers or {}
+        self.body = raw if raw is not None else (json.dumps(payload).encode() if payload is not None else b"")
+
+
+class FakeClock:
+    def __init__(self, start=START):
+        self.t = start
+        self.sleeps = []
+
+    def monotonic(self):
+        return self.t
+
+    def sleep(self, seconds):
+        assert 0 < seconds <= 3600
+        self.sleeps.append(seconds)
+        self.t += seconds
+
+
+class FakeToken:
+    def __init__(self):
+        self.calls = 0
+
+    def token(self):
+        self.calls += 1
+        return TOKEN
+
+
+def error(status, rpc):
+    return FakeResponse(status, {"error": {"code": status, "status": rpc, "message": "fake " + SECRET_ENV_VALUE}})
+
+
+class FakeCloud:
+    """Stateful fake. Tests mutate attributes/faults to build scenarios."""
+
+    page_size = 2
+    latency = 0.05
+    visibility_delay = 120
+
+    def __init__(self, service=True):
+        self.clock = FakeClock()
+        self.skew = 0.0
+        self.log = []  # (method, kind, path, query)
+        self.bodies = []  # (method, kind, body) for writes
+        self.faults = []  # callables (method, kind, path, query, body) -> FakeResponse|None
+        self.op_seq = 0
+        self.ops = {}
+        self.executions = []
+        self.deleted_services = []
+        self.stop_time = None
+        self.restore_time = None
+        self.drain = 0
+        self.no_metrics_for = set()  # revisions that never emit
+        self.no_metrics_after_stop_for = set()
+        self.metric_override = None  # callable(rev, state, t, default) -> int|None
+        self.series_hook = None  # callable(list_of_series) -> list
+        self.monitoring_extra = None  # dict merged into every monitoring page
+        self.extra_series = []
+        self.bootstrap_series = []
+        # Defaults for executions created after they are set. Each execution
+        # freezes its own outcome and duration at creation, so changing these
+        # never rewrites the history of earlier executions (see
+        # set_execution_outcome to settle one explicitly).
+        self.migration_duration = 300
+        self.outcome = "success"
+        # Seconds after creation before an execution appears in
+        # executions.list (the job's latestCreatedExecution is immediate).
+        self.list_visibility_delay = 0
+        # Whether a successful :run also changes the job etag (not documented
+        # either way; both are exercised).
+        self.run_changes_job_etag = False
+        # Whether an annotation-only job PATCH bumps generation. Observed
+        # live: it does not (generation 1 with the gate's record present).
+        self.job_metadata_bumps_generation = False
+        # Name style of Job.latestCreatedExecution.name (observed: short).
+        self.pointer_full_name = False
+        # Safety invariants checked on every :run and every scaling restore.
+        self.violations = []
+        self.execution_hook = None  # callable(execution, tasks, op) mutates
+        self.new_revision_ready = True
+        self.new_revision_fail = False  # a created revision settles as failed
+        self.new_revision_image = None  # image a created revision reports (default: its template's)
+        # Image the owned execution's template reports. None reports the
+        # job's configured image string; resolve_images() sets the observed
+        # mirror.gcr.io digest.
+        self.execution_image = None
+        # Image the task reports. None keeps the observed shape: the task
+        # reports the job's configured image string even when the execution
+        # reports a resolved digest.
+        self.task_image = None
+        self.reflect_revision_name = True
+        self.new_revision_hook = None  # callable(revision) mutates a created revision
+        self.revision_seq = 2
+        self.etag_seq = 0
+        self.job = self._make_job()
+        self.revisions = [
+            self._revision("fleet-api-00001-aaa", OLD_IMAGE, deleted=False),
+            self._revision("fleet-api-00002-bbb", OLD_IMAGE, deleted=False),
+        ]
+        self.service = self._make_service() if service else None
+        self.serving = "fleet-api-00002-bbb"
+
+    # -- builders --------------------------------------------------------
+
+    def now(self):
+        return self.clock.t + self.skew
+
+    def etag(self, prefix):
+        self.etag_seq += 1
+        return f'"{prefix}-{self.etag_seq}"'
+
+    def _revision(self, short, image, deleted, template=None):
+        """A revision snapshot of a service template (default: the original)."""
+        containers = copy.deepcopy((template or {}).get("containers")) or [{"env": fleet_env()}]
+        containers[0]["image"] = image
+        rev = {
+            "name": f"{SVC_NAME}/revisions/{short}",
+            "uid": "rev-uid-" + short,
+            "generation": "1",
+            "containers": containers,
+            "conditions": [{"type": "Ready", "state": OK}],
+        }
+        if template and template.get("encryptionKey"):
+            rev["encryptionKey"] = template["encryptionKey"]
+        if deleted:
+            rev["deleteTime"] = ts(self.now())
+        return rev
+
+    def _make_service(self):
+        return {
+            "name": SVC_NAME,
+            "uid": "svc-uid-1",
+            "etag": self.etag("svc"),
+            "generation": "7",
+            "observedGeneration": "7",
+            "createTime": ts(START - 86400),
+            "updateTime": ts(START - 3600),
+            "annotations": {"example.com/owner": "platform-team"},
+            "ingress": "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER",
+            "scaling": {"minInstanceCount": 1},
+            "template": {
+                # A normal GET can reflect the generated revision name; the
+                # gate must neither treat it as a user pin nor reuse it.
+                "revision": "fleet-api-00002-bbb",
+                "scaling": {"maxInstanceCount": 5},
+                "containers": [{
+                    "image": OLD_IMAGE,
+                    "env": fleet_env(),
+                    "ports": [{"name": "http1", "containerPort": 8080}],
+                    "startupProbe": {"tcpSocket": {"port": 8080}, "initialDelaySeconds": 30},
+                }],
+            },
+            "traffic": [{"type": LATEST, "percent": 100}],
+            "trafficStatuses": [{"type": LATEST, "percent": 100}],
+            "terminalCondition": {"type": "Ready", "state": OK},
+            "latestReadyRevision": f"{SVC_NAME}/revisions/fleet-api-00002-bbb",
+            "latestCreatedRevision": f"{SVC_NAME}/revisions/fleet-api-00002-bbb",
+            "uri": "https://fleet-api-example.a.run.app",
+        }
+
+    def _make_job(self):
+        return {
+            "name": JOB_NAME,
+            "uid": "job-uid-1",
+            "etag": self.etag("job"),
+            "generation": JOB_GENERATION,
+            "observedGeneration": JOB_GENERATION,
+            "launchStage": "GA",
+            "terminalCondition": {"type": "Ready", "state": OK},
+            "template": {
+                "taskCount": 1,
+                "parallelism": 1,
+                "template": {
+                    "maxRetries": 0,
+                    "timeout": "3600s",
+                    "containers": [{
+                        "image": NEW_IMAGE,
+                        "command": ["fleet"],
+                        "args": ["prepare", "db", "--no-prompt=true"],
+                        "env": fleet_env(),
+                    }],
+                },
+            },
+        }
+
+    def resolve_images(self, image=MIRROR_NEW_IMAGE):
+        """Report runtime images the way Cloud Run does for a Docker Hub tag:
+        the execution and newly created revisions show the mirror.gcr.io
+        digest; the job and service templates and the execution's task
+        (observed) keep the configured string."""
+        self.execution_image = image
+        self.new_revision_image = image
+
+    # -- helpers for assertions -------------------------------------------
+
+    def writes(self):
+        return [(m, k) for (m, k, _, _) in self.log if m != "GET"]
+
+    def count(self, method, kind):
+        return sum(1 for (m, k, _, _) in self.log if m == method and k == kind)
+
+    def run_calls(self):
+        return self.count("POST", "run")
+
+    def service_patches(self):
+        return [b for (m, k, b) in self.bodies if m == "PATCH" and k == "service"]
+
+    def checkpoint(self):
+        if not self.service:
+            return None
+        raw = (self.service.get("annotations") or {}).get(CHECKPOINT)
+        return json.loads(raw) if raw else None
+
+    def index(self, method, kind, nth=0):
+        hits = [i for i, (m, k, _, _) in enumerate(self.log) if m == method and k == kind]
+        return hits[nth] if len(hits) > nth else None
+
+    # -- transport --------------------------------------------------------
+
+    def request(self, method, url, headers, body):
+        self.clock.t += self.latency
+        assert headers.get("Authorization") == "Bearer " + TOKEN, "missing or wrong fake auth header"
+        parts = urllib.parse.urlsplit(url)
+        assert parts.scheme == "https"
+        query = dict(urllib.parse.parse_qsl(parts.query, keep_blank_values=True))
+        data = json.loads(body.decode()) if body else None
+        kind, match = self._route(parts.netloc, parts.path, method)
+        self.log.append((method, kind, parts.path, query))
+        if method != "GET":
+            self.bodies.append((method, kind, copy.deepcopy(data)))
+        for fault in list(self.faults):
+            resp = fault(method, kind, parts.path, query, data)
+            if resp is not None:
+                return self._finish(resp)
+        handler = getattr(self, "_h_" + kind.replace("-", "_"))
+        return self._finish(handler(method, match, query, data))
+
+    def _finish(self, resp):
+        if "date" not in {k.lower() for k in resp.headers} and not getattr(resp, "no_date", False):
+            resp.headers["Date"] = email.utils.formatdate(math.floor(self.now()), usegmt=True)
+        return resp
+
+    ROUTES = [
+        ("run.googleapis.com", r"/v2/" + LOC + r"/services", "service-list"),
+        ("run.googleapis.com", r"/v2/" + SVC_NAME, "service"),
+        ("run.googleapis.com", r"/v2/" + SVC_NAME + r"/revisions", "revisions"),
+        ("run.googleapis.com", r"/v2/" + SVC_NAME + r"/revisions/([a-z0-9-]+)", "revision"),
+        ("run.googleapis.com", r"/v2/" + JOB_NAME, "job"),
+        ("run.googleapis.com", r"/v2/" + JOB_NAME + r":run", "run"),
+        ("run.googleapis.com", r"/v2/" + JOB_NAME + r"/executions", "executions"),
+        ("run.googleapis.com", r"/v2/" + JOB_NAME + r"/executions/([a-z0-9-]+)/tasks", "tasks"),
+        ("run.googleapis.com", r"/v2/" + LOC + r"/operations/([a-z0-9-]+)", "operation"),
+        ("monitoring.googleapis.com", r"/v3/projects/" + PROJECT + r"/timeSeries", "monitoring"),
+    ]
+
+    def _route(self, host, path, method):
+        for rhost, pattern, kind in self.ROUTES:
+            m = re.fullmatch(pattern, path)
+            if host == rhost and m:
+                return kind, m
+        raise AssertionError(f"unmatched fake request {method} {host}{path}")
+
+    def _page(self, items, field, query, extra=None):
+        assert query.get("showDeleted") == "true", "listings must include deleted resources"
+        offset = int(query.get("pageToken", "o0")[1:])
+        page = items[offset:offset + self.page_size]
+        out = {field: page} if page else {}
+        if offset + self.page_size < len(items):
+            out["nextPageToken"] = f"o{offset + self.page_size}"
+        if extra:
+            out.update(extra)
+        return FakeResponse(200, out)
+
+    def _new_op(self, response, done_after=1, error=None, pending=None):
+        self.op_seq += 1
+        name = f"{LOC}/operations/op-{self.op_seq}"
+        self.ops[name] = {"polls": 0, "done_after": done_after, "response": response, "error": error, "pending": pending}
+        return {"name": name, "done": False, "metadata": {"@type": "type.googleapis.com/google.cloud.run.v2.Service"}}
+
+    # -- handlers ---------------------------------------------------------
+
+    def _h_service_list(self, method, match, query, data):
+        assert method == "GET"
+        items = list(self.deleted_services)
+        if self.service:
+            items.append(self._service_view())
+        return self._page(items, "services", query)
+
+    def _service_view(self):
+        return copy.deepcopy(self.service)
+
+    def _h_service(self, method, match, query, data):
+        if self.service is None:
+            return error(404, "NOT_FOUND")
+        if method == "GET":
+            return FakeResponse(200, self._service_view())
+        assert method == "PATCH"
+        assert not query, "service PATCH must not use query parameters"
+        for field in SERVICE_OUTPUT_ONLY:
+            assert field not in data, f"output-only field {field} sent in PATCH"
+        if data.get("etag") != self.service["etag"]:
+            return error(409, "ABORTED")
+        old = self.service
+        requested = (data.get("template") or {}).get("revision")
+        # RevisionTemplate.revision is optional; a GET may reflect the
+        # current name, and resending it unchanged is not a new template.
+        # Any other provided name asks for a new revision with that name.
+        template_changed = (self._template_sans_revision(data.get("template"))
+                            != self._template_sans_revision(old.get("template"))
+                            or requested not in (None, (old.get("template") or {}).get("revision")))
+        existing = {r["name"].rsplit("/", 1)[-1] for r in self.revisions}
+        if template_changed and requested is not None:
+            # Realistic validation: a DNS label of at most 63 characters,
+            # prefixed by the service name; names are unique and immutable.
+            if (not isinstance(requested, str) or len(requested) > 63 or not requested.startswith(SERVICE + "-")
+                    or not re.fullmatch(r"[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?", requested)):
+                return error(400, "INVALID_ARGUMENT")
+            if requested in existing:
+                return error(409, "ALREADY_EXISTS")
+        new = copy.deepcopy(data)
+        for field in ("uid", "createTime", "uri"):
+            new[field] = old[field]
+        new["generation"] = str(int(old["generation"]) + 1)
+        new["observedGeneration"] = new["generation"]
+        if self.failed_reconciliation(old) and not template_changed:
+            # Documented Cloud Run semantics: after a failed reconciliation,
+            # observedGeneration, trafficStatuses and latestReadyRevision keep
+            # the state of the last serving generation. A write that does not
+            # change the template leaves the failed latest revision in place,
+            # so the service stays failed.
+            new["observedGeneration"] = old["observedGeneration"]
+        new["etag"] = self.etag("svc")
+        new["updateTime"] = ts(self.now())
+        new["terminalCondition"] = copy.deepcopy(old["terminalCondition"])
+        new["latestReadyRevision"] = old["latestReadyRevision"]
+        new["latestCreatedRevision"] = old["latestCreatedRevision"]
+        new["trafficStatuses"] = copy.deepcopy(old["trafficStatuses"])
+        stopped = self._stopped(new.get("scaling"))
+        if stopped and not self._stopped(old.get("scaling")):
+            self.stop_time = self.now()
+        if not stopped and self._stopped(old.get("scaling")):
+            self.restore_time = self.now()
+            self._check_resume_invariant(old)
+        if template_changed:
+            self.revision_seq += 1
+            short = requested or f"fleet-api-{self.revision_seq:05d}-new"
+            if self.reflect_revision_name:
+                new["template"]["revision"] = short
+            image = self.new_revision_image or new["template"]["containers"][0]["image"]
+            rev = self._revision(short, image, deleted=False, template=new["template"])
+            if self.new_revision_hook:
+                self.new_revision_hook(rev)
+            full = rev["name"]
+            new["latestCreatedRevision"] = full
+            if self.new_revision_fail:
+                rev["conditions"] = [{"type": "Ready", "state": FAILED}]
+                self.revisions.append(rev)
+                new["terminalCondition"] = {"type": "Ready", "state": FAILED}
+                # Failed reconciliation: status keeps the last serving
+                # generation (see failed_reconciliation).
+                new["observedGeneration"] = old["observedGeneration"]
+            elif self.new_revision_ready:
+                self.revisions.append(rev)
+                new["latestReadyRevision"] = full
+                new["trafficStatuses"] = [{"type": LATEST, "percent": 100, "revision": short}]
+                new["terminalCondition"] = {"type": "Ready", "state": OK}
+                self.serving = short
+            else:
+                rev["conditions"] = [{"type": "Ready", "state": "CONDITION_PENDING"}]
+                self.revisions.append(rev)
+                new["reconciling"] = True
+                # Status still describes the previous generation.
+                new["observedGeneration"] = old["observedGeneration"]
+        self.service = new
+        if template_changed and self.new_revision_fail:
+            return FakeResponse(200, self._new_op({"name": SVC_NAME}, error={"code": 9}))
+        pending = None if self.new_revision_ready or not template_changed else True
+        return FakeResponse(200, self._new_op({"name": SVC_NAME}, pending=pending))
+
+    def finish_pending_revision(self, ready=True):
+        """A rollout left reconciling by an earlier apply settles later."""
+        svc = self.service
+        full = svc["latestCreatedRevision"]
+        rev = next(r for r in self.revisions if r["name"] == full)
+        svc["reconciling"] = False
+        svc["etag"] = self.etag("svc")
+        if ready:
+            svc["observedGeneration"] = svc["generation"]
+            rev["conditions"] = [{"type": "Ready", "state": OK}]
+            svc["latestReadyRevision"] = full
+            svc["trafficStatuses"] = [{"type": LATEST, "percent": 100, "revision": full.rsplit("/", 1)[-1]}]
+            svc["terminalCondition"] = {"type": "Ready", "state": OK}
+            self.serving = full.rsplit("/", 1)[-1]
+        else:
+            # Failed reconciliation keeps the last serving observedGeneration.
+            rev["conditions"] = [{"type": "Ready", "state": FAILED}]
+            svc["terminalCondition"] = {"type": "Ready", "state": FAILED}
+
+    @staticmethod
+    def failed_reconciliation(svc):
+        return (svc.get("reconciling", False) is False
+                and (svc.get("terminalCondition") or {}).get("state") == FAILED
+                and int(svc.get("observedGeneration", "0")) < int(svc["generation"]))
+
+    def _check_resume_invariant(self, old):
+        """Scaling may only leave MANUAL/0 after the newest execution succeeded
+        and the service serves a Ready latest revision of the job's image."""
+        latest = self.executions[-1] if self.executions else None
+        ok_execution = (latest is not None and not latest.get("_prior") and self.execution_finished(latest)
+                        and latest["_outcome"] == "success")
+        ready = old.get("latestReadyRevision") == old.get("latestCreatedRevision")
+        rev = next((r for r in self.revisions if r["name"] == old.get("latestReadyRevision")), None)
+        rev_ready = rev is not None and {"type": "Ready", "state": OK} in rev.get("conditions", [])
+        image = old["template"]["containers"][0]["image"] == self.job["template"]["template"]["containers"][0]["image"]
+        if not (ok_execution and ready and rev_ready and image):
+            self.violations.append("scaling restored without a successful latest execution and a Ready target "
+                                   f"(execution={ok_execution}, ready={ready and rev_ready}, image={image})")
+
+    @staticmethod
+    def _template_sans_revision(template):
+        template = copy.deepcopy(template or {})
+        template.pop("revision", None)
+        return template
+
+    @staticmethod
+    def _stopped(scaling):
+        scaling = scaling or {}
+        return scaling.get("scalingMode") == "MANUAL" and scaling.get("manualInstanceCount", None) == 0
+
+    def _h_revisions(self, method, match, query, data):
+        return self._page(copy.deepcopy(self.revisions), "revisions", query)
+
+    def _h_revision(self, method, match, query, data):
+        for rev in self.revisions:
+            if rev["name"].endswith("/" + match.group(1)):
+                return FakeResponse(200, copy.deepcopy(rev))
+        return error(404, "NOT_FOUND")
+
+    JOB_OUTPUT_ONLY = ("uid", "generation", "observedGeneration", "terminalCondition", "createTime", "updateTime",
+                       "creator", "lastModifier", "executionCount", "latestCreatedExecution", "reconciling",
+                       "startExecutionToken", "runExecutionToken")
+
+    def job_view(self):
+        """The job as GET returns it: executionCount and
+        latestCreatedExecution reflect the executions created so far (the
+        pointer is updated at creation, independently of list visibility)."""
+        view = copy.deepcopy(self.job)
+        for field in ("executionCount", "latestCreatedExecution"):
+            view.pop(field, None)
+        if self.executions:
+            view["executionCount"] = len(self.executions)
+            latest = self.executions[-1]
+            rendered = self.render_execution(latest)[0]
+            pointer = {"name": latest["name"] if self.pointer_full_name else latest["name"].rsplit("/", 1)[-1],
+                       "createTime": rendered.get("createTime", ts(START - 7300))}
+            if rendered.get("completionTime"):
+                pointer["completionTime"] = rendered["completionTime"]
+                pointer["completionStatus"] = (
+                    "EXECUTION_SUCCEEDED" if rendered.get("succeededCount") else
+                    "EXECUTION_CANCELLED" if rendered.get("cancelledCount") else "EXECUTION_FAILED")
+            view["latestCreatedExecution"] = pointer
+        return view
+
+    def _h_job(self, method, match, query, data):
+        if method == "GET":
+            return FakeResponse(200, self.job_view())
+        assert method == "PATCH"
+        for field in self.JOB_OUTPUT_ONLY:
+            assert field not in data, f"field {field} must not be sent in a job PATCH"
+        if data.get("etag") != self.job["etag"]:
+            return error(409, "ABORTED")
+        new = copy.deepcopy(data)
+        for field in ("uid", "createTime", "creator"):
+            if field in self.job:
+                new[field] = self.job[field]
+        template_changed = new.get("template") != self.job.get("template")
+        if template_changed or self.job_metadata_bumps_generation:
+            new["generation"] = str(int(self.job["generation"]) + 1)
+        else:
+            new["generation"] = self.job["generation"]
+        new["observedGeneration"] = new["generation"]
+        new["etag"] = self.etag("job")
+        new["terminalCondition"] = copy.deepcopy(self.job["terminalCondition"])
+        self.job = new
+        return FakeResponse(200, self._new_op({"name": JOB_NAME}))
+
+    def execution_finished(self, ex):
+        if ex.get("_prior"):
+            return ex["_settled"]
+        return self.now() >= ex["_start"] + ex["_duration"] and ex["_outcome"] != "never"
+
+    def set_execution_outcome(self, ex, outcome):
+        """Settle (or change) one execution explicitly, e.g. Cloud Run ending
+        an execution at its task timeout."""
+        ex["_outcome"] = outcome
+        ex["_duration"] = min(ex["_duration"], max(0.0, self.now() - ex["_start"]))
+
+    def _h_run(self, method, match, query, data):
+        assert method == "POST"
+        if data.get("etag") != self.job["etag"]:
+            return error(409, "ABORTED")
+        active = [e["name"] for e in self.executions if not self.execution_finished(e)]
+        if active:
+            self.violations.append(f":run accepted while executions were active: {active}")
+        short = f"fleet-migration-x{len(self.executions) + 1:03d}"
+        ex = {
+            "name": f"{JOB_NAME}/executions/{short}",
+            "uid": "ex-uid-" + short,
+            "job": JOB,
+            "createTime": ts(self.now()),
+            "_start": self.now(),
+            "_outcome": self.outcome,
+            "_duration": self.migration_duration,
+            "_visible_at": self.now() + self.list_visibility_delay,
+            "_image": self.job["template"]["template"]["containers"][0]["image"],
+        }
+        self.executions.append(ex)
+        if self.run_changes_job_etag:
+            self.job["etag"] = self.etag("job")
+        self.op_seq += 1
+        op_name = f"{LOC}/operations/run-{self.op_seq}"
+        self.ops[op_name] = {"execution": ex}
+        ex["_op"] = op_name
+        return FakeResponse(200, {
+            "name": op_name,
+            "metadata": {"@type": "type.googleapis.com/google.cloud.run.v2.Execution", "name": ex["name"]},
+        })
+
+    def add_prior_execution(self, settled=True, short=None):
+        short = short or f"fleet-migration-p{len(self.executions) + 1:03d}"
+        ex = {"name": f"{JOB_NAME}/executions/{short}", "uid": "ex-uid-" + short, "job": JOB,
+              "createTime": ts(START - 7300), "_prior": True, "_settled": settled,
+              "_visible_at": self.now() + self.list_visibility_delay}
+        self.executions.append(ex)
+        return ex
+
+    def add_observed_prior_execution(self, short, create_time, completion_time):
+        """A settled successful execution in the observed native shape (the
+        sanitized fixture execution, rebound to this job and name)."""
+        view = copy.deepcopy(OBSERVED["execution"])
+        view.update({"name": f"{JOB_NAME}/executions/{short}", "createTime": create_time,
+                     "completionTime": completion_time})
+        ex = {"name": view["name"], "_prior": True, "_settled": True, "_view": view,
+              "_visible_at": self.now() + self.list_visibility_delay}
+        self.executions.append(ex)
+        return ex
+
+    def load_live_legacy_bootstrap(self):
+        """The live legacy state: the job carries an unfinished
+        bootstrap-migrating record (pre_scaling null) of a run whose single
+        execution succeeded, and no service exists. Built from the synthetic
+        fixture job in the observed legacy shape, mapped onto this fake's
+        project."""
+        assert self.service is None
+        job = copy.deepcopy(OBSERVED["job_live_legacy"])
+        job = json.loads(json.dumps(job).replace("projects/test-project/", f"projects/{PROJECT}/"))
+        pointer = job.pop("latestCreatedExecution")
+        job.pop("executionCount")
+        job["etag"] = self.etag("job")
+        self.job = job
+        self.add_observed_prior_execution(pointer["name"], pointer["createTime"], pointer["completionTime"])
+        return job
+
+    def render_execution(self, ex):
+        """Public view of an execution and its tasks at the current time."""
+        if ex.get("_view"):
+            return copy.deepcopy(ex["_view"]), [], None
+        if ex.get("_prior"):
+            view = {k: v for k, v in ex.items() if not k.startswith("_")}
+            if ex["_settled"]:
+                view.update({"completionTime": ts(START - 7200), "succeededCount": 1, "taskCount": 1})
+            else:
+                view.update({"runningCount": 1, "taskCount": 1})
+            return view, [], None
+        view = {k: v for k, v in ex.items() if not k.startswith("_")}
+        template = copy.deepcopy(self.job["template"]["template"])
+        template["containers"][0]["image"] = ex["_image"]
+        view.update({
+            "taskCount": 1,
+            "parallelism": 1,
+            "template": template,
+            "generation": "1",
+            "observedGeneration": "1",
+        })
+        configured_containers = copy.deepcopy(view["template"]["containers"])
+        if self.execution_image is not None:
+            view["template"]["containers"][0]["image"] = self.execution_image
+        ex_short = view["name"].rsplit("/", 1)[-1]
+        # Start from the observed task and rebind it to this execution. The
+        # observed in-progress fields are dropped and set per outcome below.
+        task = copy.deepcopy(OBSERVED_TASK)
+        for field in ("completionTime", "lastAttemptResult", "conditions"):
+            task.pop(field)
+        task.update({
+            "name": f"{view['name']}/tasks/{ex_short}-task0",
+            "execution": ex_short,
+            "job": JOB,
+            "containers": configured_containers,
+            "timeout": view["template"]["timeout"],
+            "createTime": ts(ex["_start"]),
+            "scheduledTime": ts(ex["_start"]),
+            "startTime": ts(ex["_start"]),
+            "updateTime": ts(self.now()),
+        })
+        if self.task_image is not None:
+            task["containers"][0]["image"] = self.task_image
+        op = {"name": ex["_op"], "metadata": {"name": view["name"]}}
+        outcome = ex["_outcome"]
+        finished = self.execution_finished(ex)
+        done_at = ts(ex["_start"] + ex["_duration"])
+        if not finished:
+            view["runningCount"] = 1
+            task["conditions"] = [{"type": "Started", "state": OK}, {"type": "Completed", "state": "CONDITION_PENDING"}]
+        elif outcome in ("success",):
+            # Observed: counts that are zero (running/failed/cancelled/
+            # retried) and reconciling=false are omitted.
+            view.update({"completionTime": done_at, "succeededCount": 1,
+                         "conditions": copy.deepcopy(OBSERVED["execution"]["conditions"])})
+            # Observed: a successful attempt is {"status": {}} (exit code,
+            # signal and status code are ProtoJSON default zeros, omitted).
+            task.update({"completionTime": done_at,
+                         "lastAttemptResult": copy.deepcopy(OBSERVED_TASK["lastAttemptResult"]),
+                         "conditions": copy.deepcopy(OBSERVED_TASK["conditions"])})
+            op.update({"done": True, "response": copy.deepcopy(view)})
+        elif outcome == "fail":
+            view.update({"completionTime": done_at, "failedCount": 1,
+                         "conditions": [{"type": "Completed", "state": FAILED}]})
+            task.update({"completionTime": done_at, "lastAttemptResult": {"exitCode": 1},
+                         "conditions": [{"type": "Completed", "state": FAILED}]})
+            op.update({"done": True, "error": {"code": 2}})
+        elif outcome == "cancel":
+            view.update({"completionTime": done_at, "cancelledCount": 1})
+            task.update({"completionTime": done_at})
+            op.update({"done": True, "error": {"code": 1}})
+        else:
+            raise AssertionError("unknown outcome")
+        tasks = [task]
+        if self.execution_hook:
+            self.execution_hook(view, tasks, op)
+        return view, tasks, op
+
+    def _h_executions(self, method, match, query, data):
+        visible = [ex for ex in self.executions if self.now() >= ex.get("_visible_at", 0)]
+        return self._page([self.render_execution(ex)[0] for ex in visible], "executions", query)
+
+    def _h_tasks(self, method, match, query, data):
+        for ex in self.executions:
+            if ex["name"].endswith("/" + match.group(1)):
+                return self._page(self.render_execution(ex)[1], "tasks", query)
+        return error(404, "NOT_FOUND")
+
+    def _h_operation(self, method, match, query, data):
+        name = f"{LOC}/operations/{match.group(1)}"
+        op = self.ops.get(name)
+        if op is None:
+            return error(404, "NOT_FOUND")
+        if "execution" in op:
+            return FakeResponse(200, self.render_execution(op["execution"])[2])
+        op["polls"] += 1
+        if op.get("pending") or op["polls"] < op["done_after"]:
+            return FakeResponse(200, {"name": name, "done": False})
+        out = {"name": name, "done": True}
+        if op["error"]:
+            out["error"] = op["error"]
+        else:
+            out["response"] = op["response"]
+        return FakeResponse(200, out)
+
+    # -- monitoring -------------------------------------------------------
+
+    def metric_value(self, rev, state, t):
+        if rev in self.no_metrics_for:
+            return None
+        after_stop = self.stop_time is not None and t > self.stop_time
+        if after_stop and rev in self.no_metrics_after_stop_for:
+            return None
+        if self.stop_time is not None and t > self.stop_time + self.drain:
+            value = 0
+        elif rev == self.serving:
+            value = 1 if state == "active" else 0
+        else:
+            value = 0
+        if self.metric_override:
+            value = self.metric_override(rev, state, t, value)
+        return value
+
+    def _h_monitoring(self, method, match, query, data):
+        assert method == "GET"
+        expected = {"filter", "interval.startTime", "interval.endTime", "view", "pageSize", "pageToken"}
+        assert set(query) <= expected, f"unexpected monitoring parameters {set(query) - expected}"
+        assert not any(k.startswith("aggregation") or k.startswith("secondaryAggregation") for k in query)
+        assert query["view"] == "FULL"
+        f = query["filter"]
+        for clause in (f'metric.type = "{METRIC}"', 'resource.type = "cloud_run_revision"',
+                       f'resource.labels.project_id = "{PROJECT}"', f'resource.labels.location = "{REGION}"',
+                       f'resource.labels.service_name = "{SERVICE}"'):
+            assert clause in f, "monitoring filter is missing " + clause
+        start = parse_ts(query["interval.startTime"])
+        end = parse_ts(query["interval.endTime"])
+        assert start <= end
+        if self.service is None and self.stop_time is None:
+            series = copy.deepcopy(self.bootstrap_series)
+        else:
+            series = self._series(start, end)
+        series.extend(copy.deepcopy(self.extra_series))
+        self.current_query = query  # lets hooks act on one whole logical query
+        if self.series_hook:
+            series = self.series_hook(series)
+        offset = int(query.get("pageToken", "o0")[1:])
+        page = series[offset:offset + self.page_size]
+        out = {"timeSeries": page} if page else {}
+        if offset + self.page_size < len(series):
+            out["nextPageToken"] = f"o{offset + self.page_size}"
+        if self.monitoring_extra:
+            out.update(self.monitoring_extra)
+        return FakeResponse(200, out)
+
+    def _series(self, start, end):
+        visible_until = self.now() - self.visibility_delay
+        series = []
+        revisions = [r["name"].rsplit("/", 1)[-1] for r in self.revisions]
+        for rev in revisions:
+            for state in ("active", "idle"):
+                points = []
+                t = math.floor(start / 60) * 60
+                while t <= min(end, visible_until):
+                    if t > start:
+                        value = self.metric_value(rev, state, t)
+                        if value is not None:
+                            points.append({"interval": {"startTime": ts(t), "endTime": ts(t)},
+                                           "value": {"int64Value": str(value)}})
+                    t += 60
+                if points:
+                    points.reverse()  # Monitoring returns newest first
+                    series.append(make_series(rev, state, points))
+        return series
+
+
+def make_series(rev, state, points, **label_overrides):
+    resource_labels = {"project_id": PROJECT, "location": REGION, "service_name": SERVICE,
+                       "configuration_name": SERVICE, "revision_name": rev}
+    resource_labels.update(label_overrides)
+    return {
+        "metric": {"type": METRIC, "labels": {"state": state}},
+        "resource": {"type": "cloud_run_revision", "labels": resource_labels},
+        "metricKind": "GAUGE",
+        "valueType": "INT64",
+        "points": points,
+    }
+
+
+def point(t, value):
+    return {"interval": {"startTime": ts(t), "endTime": ts(t)}, "value": {"int64Value": str(value)}}

@@ -1,0 +1,101 @@
+name: gcp-terraform-test
+
+# Runs the credential-free `terraform test` suites for the GCP modules.
+# Cloud-facing providers are mocked in the *.tftest.hcl files, so no cloud
+# credentials or secrets are needed and nothing is planned or applied against
+# a real GCP project. The wait-specific tests also mock the time provider.
+# The migration gate controller (gcp/byo-project/scripts) is covered by
+# offline Python unit tests with a fake API, auth and clock; network and
+# subprocess access are blocked inside those tests.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'gcp/**.tf'
+      - 'gcp/**.hcl' # *.tftest.hcl, *.tfmock.hcl, .terraform.lock.hcl
+      - 'gcp/**.py' # migration gate controller and its offline tests
+      - '.github/workflows/gcp-terraform-test.yml'
+  pull_request:
+    paths:
+      - 'gcp/**.tf'
+      - 'gcp/**.hcl' # *.tftest.hcl, *.tfmock.hcl, .terraform.lock.hcl
+      - 'gcp/**.py' # migration gate controller and its offline tests
+      - '.github/workflows/gcp-terraform-test.yml'
+  workflow_dispatch: # Manual dispatch
+
+# This allows a subsequently queued workflow run to interrupt previous runs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id}}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    # fail-fast using bash -eo pipefail. See https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#exit-codes-and-error-action-preference
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  tftest:
+    name: terraform test (${{ matrix.terraform_dir }}, TF ${{ matrix.terraform_version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        terraform_dir:
+          - gcp
+          - gcp/byo-project
+        # Run both suites on the 1.12.0 baseline and on 1.14.5 so changes in
+        # newer terraform test loading/runtime behavior are covered too.
+        terraform_version:
+          - 1.12.0
+          - 1.14.5
+    env:
+      TF_IN_AUTOMATION: 'true'
+      TF_INPUT: '0'
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@63c24ba6bd7ba022e95695ff85de572c04a18142 # v2.7.0
+        with:
+          egress-policy: audit
+
+      - name: Clone repo
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+        with:
+          persist-credentials: false
+
+      - name: Install terraform
+        uses: hashicorp/setup-terraform@633666f66e0061ca3b725c73b2ec20cd13a8fdd1 # v2.0.3
+        with:
+          terraform_version: ${{ matrix.terraform_version }}
+
+      - name: Init ${{ matrix.terraform_dir }}
+        working-directory: ${{ matrix.terraform_dir }}
+        run: terraform init -backend=false
+
+      - name: Test ${{ matrix.terraform_dir }} (mocked providers)
+        working-directory: ${{ matrix.terraform_dir }}
+        run: terraform test
+
+  controller-unittest:
+    name: migration gate controller (offline unit tests)
+    runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@63c24ba6bd7ba022e95695ff85de572c04a18142 # v2.7.0
+        with:
+          egress-policy: audit
+
+      - name: Clone repo
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+        with:
+          persist-credentials: false
+
+      # Standard library only; no credentials, no gcloud, no network.
+      - name: Run controller unit tests
+        run: python3 -m unittest discover -s gcp/byo-project/scripts/tests -v
