@@ -28,6 +28,11 @@ Upgrade path (the Cloud Run service exists):
  4. Exactly one job execution (:run with the job etag, never retried), polled
     to verified success: operation, execution counts and conditions, and the
     single task's completion and exit code.
+    Image identity: the job and service templates must carry the configured
+    image string exactly; the execution, task and serving revision may report
+    it as Google resolved it (same canonical repository, configured tag or a
+    sha256 digest), and every digest reported in the run must be the same
+    (see "Image references" below).
  5. Resume: while still MANUAL/0, deploy the new image together with the
     serving env (MySQL/Redis addresses, secret references) and CMEK key taken
     from the migration job, which Terraform built from the same locals as the
@@ -356,6 +361,126 @@ def single_container(template, what):
     return containers[0]
 
 
+# --------------------------------------------------------------------------
+# Image references: configured vs runtime
+# --------------------------------------------------------------------------
+#
+# Configuration (the job template, the service template) is always compared
+# with the configured FLEET_GATE_IMAGE string exactly. Runtime objects that
+# Cloud Run creates from that configuration (the execution, its task, a
+# revision) may instead report the image as Google resolved it, for example a
+# Docker Hub tag reported as mirror.gcr.io/<namespace>/<repo>@sha256:<digest>.
+# Runtime images are accepted only when they name the same canonical
+# repository and either the configured tag or a sha256 digest (which must equal
+# a configured digest, if any). The gate does not contact any registry: it
+# trusts Google's tag -> digest resolution only for objects already tied to the
+# exact configured, generation-pinned job (the owned :run operation, execution
+# and task) or service template. The first digest reported in a run is pinned,
+# and every later runtime digest (execution, task, serving revision) must
+# equal it.
+
+DOCKER_HUB = "docker.io"
+# Exact registry hosts that name Docker Hub repositories. mirror.gcr.io is
+# Google's Docker Hub pull-through cache, which Cloud Run reports for Docker
+# Hub images it resolved. Only these exact host strings are aliases: there is
+# no prefix or suffix matching, and gcr.io or any other host is a different
+# registry.
+DOCKER_HUB_HOSTS = frozenset({"docker.io", "index.docker.io", "registry-1.docker.io", "mirror.gcr.io"})
+
+_REF_DOMAIN_COMPONENT = r"(?:[a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])"
+_REF_DOMAIN = rf"{_REF_DOMAIN_COMPONENT}(?:\.{_REF_DOMAIN_COMPONENT})*(?::[0-9]+)?"
+_REF_PATH_COMPONENT = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
+_REF_TAG = r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}"
+_REF_DIGEST = r"sha256:[0-9a-f]{64}"
+
+
+class ImageRef:
+    """A parsed, canonical container image reference."""
+
+    __slots__ = ("host", "path", "tag", "digest")
+
+    def __init__(self, host, path, tag, digest):
+        self.host = host
+        self.path = path
+        self.tag = tag
+        self.digest = digest
+
+    @property
+    def repository(self):
+        return (self.host, self.path)
+
+
+def parse_image_ref(value):
+    """Parse a Docker/OCI image reference into its canonical form.
+
+    Follows the distribution reference grammar: [host/]path[:tag][@digest].
+    The first component is a host only if it contains '.' or ':' or is
+    'localhost'; otherwise the image is on Docker Hub. The exact Docker Hub
+    host aliases map to docker.io, where a single-component path gets the
+    implicit 'library/' namespace. Every other host and path is kept exactly.
+    A digest must be sha256 with 64 lowercase hex digits. With neither tag nor
+    digest the tag is 'latest'. Raises ValueError for anything else.
+    """
+    if not isinstance(value, str) or not value or len(value) > 512 or any(c.isspace() for c in value):
+        raise ValueError("not an image reference")
+    name, sep, digest = value.partition("@")
+    if sep:
+        if not re.fullmatch(_REF_DIGEST, digest):
+            raise ValueError("digest is not sha256 with 64 lowercase hex digits")
+    else:
+        digest = None
+    tag = None
+    colon = name.rfind(":")
+    if colon > name.rfind("/"):
+        name, tag = name[:colon], name[colon + 1:]
+        if not re.fullmatch(_REF_TAG, tag):
+            raise ValueError("tag is malformed")
+    if not name or len(name) > 255:
+        raise ValueError("repository name is malformed")
+    parts = name.split("/")
+    if len(parts) > 1 and ("." in parts[0] or ":" in parts[0] or parts[0] == "localhost"):
+        host, path = parts[0], parts[1:]
+        if not re.fullmatch(_REF_DOMAIN, host):
+            raise ValueError("registry host is malformed")
+    else:
+        host, path = DOCKER_HUB, parts
+    if not all(re.fullmatch(_REF_PATH_COMPONENT, p) for p in path):
+        raise ValueError("repository path is malformed")
+    if host in DOCKER_HUB_HOSTS:
+        host = DOCKER_HUB
+        if len(path) == 1:
+            path = ["library"] + path
+    if tag is None and digest is None:
+        tag = "latest"
+    return ImageRef(host, "/".join(path), tag, digest)
+
+
+def runtime_image_mismatch(configured, observed):
+    """Why a runtime image is not the configured image; None if it is.
+
+    `configured` and `observed` are ImageRefs. The observed image must name
+    the same canonical repository. Without a digest it must carry the
+    configured tag (and the configuration must not pin a digest). With a
+    digest, that digest must equal the configured digest when one is
+    configured; otherwise it is accepted as Google's resolution of the
+    configured tag (the caller pins it). An observed tag that differs from a
+    configured tag is a contradiction. Pure; never contacts a registry.
+    """
+    if observed.repository != configured.repository:
+        return "a different registry or repository"
+    if observed.digest is None:
+        if configured.digest is not None:
+            return "no digest to compare with the configured digest"
+        if observed.tag != configured.tag:
+            return "a different tag"
+        return None
+    if configured.digest is not None and observed.digest != configured.digest:
+        return "a different digest than the configured digest"
+    if observed.tag is not None and configured.tag is not None and observed.tag != configured.tag:
+        return "a different tag"
+    return None
+
+
 def normalize_env(env):
     """Order-insensitive canonical form of a container env list.
 
@@ -412,17 +537,28 @@ class ServingConfig:
         self.env_norm = normalize_env(env)
         self.encryption_key = encryption_key
 
-    def matches(self, obj):
-        """True when a service template or revision runs this configuration."""
+    def serving_container(self, obj):
+        """The single container of a service template or revision when its env
+        and CMEK key are this configuration's; None otherwise. The image is
+        NOT compared here (see matches and verify_ready_revision)."""
         containers = obj.get("containers") if isinstance(obj, dict) else None
         if not isinstance(containers, list) or len(containers) != 1 or not isinstance(containers[0], dict):
-            return False
+            return None
         try:
             env = normalize_env(containers[0].get("env"))
         except ValueError:
-            return False
-        return (containers[0].get("image") == self.image and env == self.env_norm
-                and obj.get("encryptionKey") == self.encryption_key)
+            return None
+        if env != self.env_norm or obj.get("encryptionKey") != self.encryption_key:
+            return None
+        return containers[0]
+
+    def matches(self, obj):
+        """True when a service TEMPLATE (configuration) is exactly this
+        configuration, including the exact configured image string. A
+        revision's runtime image is checked separately, because Cloud Run may
+        report it resolved to a digest."""
+        container = self.serving_container(obj)
+        return container is not None and container.get("image") == self.image
 
 
 # --------------------------------------------------------------------------
@@ -832,6 +968,10 @@ class Config:
             if not isinstance(value, str) or not re.fullmatch(pattern, value):
                 raise GateError(f"invalid or missing {self.ENV[key]}")
             setattr(self, key, value)
+        try:
+            self.image_ref = parse_image_ref(self.image)
+        except ValueError as err:
+            raise GateError(f"{self.ENV['image']} is not a valid image reference ({err})") from None
         self.location_name = f"projects/{self.project}/locations/{self.region}"
         self.service_name = f"{self.location_name}/services/{self.service}"
         self.job_name = f"{self.location_name}/jobs/{self.job}"
@@ -867,6 +1007,9 @@ class MigrationGate:
         self.job_generation = None
         self.executions_before = None
         self.execution_name = None
+        # First runtime image digest reported in this run (owned execution,
+        # its task or the serving revision); every later one must equal it.
+        self.image_digest = None
 
     # -- error helpers ---------------------------------------------------
 
@@ -1133,7 +1276,12 @@ class MigrationGate:
         self.check_execution_template(template, "job")
         return generation
 
-    def check_execution_template(self, template, what):
+    def check_execution_template(self, template, what, runtime=False):
+        """Single-task, single-attempt template on the target image.
+
+        The job template (runtime=False) is configuration and must carry the
+        exact configured image string. An execution (runtime=True) may report
+        the image as Cloud Run resolved it (see check_runtime_image)."""
         try:
             task_count = proto_int(template, "taskCount", default_zero=False)
             parallelism = proto_int(template, "parallelism", default_zero=False)
@@ -1150,8 +1298,38 @@ class MigrationGate:
         self.check(max_retries == 0, f"{what} must have an explicit maxRetries=0 (single attempt)")
         self.check(0 < timeout <= 86400, f"{what} task timeout is out of range")
         container = single_container(task_template, f"{what} task template")
-        self.check(container.get("image") == self.cfg.image, f"{what} image does not match the target Fleet image")
+        if runtime:
+            self.check_runtime_image(container.get("image"), what)
+        else:
+            self.check(container.get("image") == self.cfg.image, f"{what} image does not match the target Fleet image")
         return timeout
+
+    def check_runtime_image(self, image, what):
+        """A runtime image (owned execution, its task, the serving revision)
+        must be the configured image or Google's digest resolution of it, and
+        every digest reported in this run must be the same.
+
+        Callers verify the object's identity and provenance first: the owned
+        execution of the exact configured, generation-pinned job, its task,
+        or the Ready revision of a service template that matches the
+        configured image exactly. No registry is contacted. The reported
+        image text is never echoed (it is response data); a validated digest
+        is logged for the audit trail."""
+        try:
+            observed = parse_image_ref(image)
+        except ValueError as err:
+            self.fail(f"{what} image is not a valid image reference ({err})")
+        reason = runtime_image_mismatch(self.cfg.image_ref, observed)
+        self.check(reason is None, f"{what} image does not match the target Fleet image ({reason})")
+        if observed.digest is None:
+            return
+        if self.image_digest is None:
+            self.image_digest = observed.digest
+            self.log(f"{what} reports image digest {observed.digest} for the configured image; "
+                     "every later execution, task and revision digest must match it")
+        self.check(observed.digest == self.image_digest,
+                   f"{what} image digest differs from the digest already reported in this run "
+                   "(for example a mutable tag, or an image index vs platform manifest digest)")
 
     def check_executions_settled(self, executions):
         names = set()
@@ -1282,6 +1460,7 @@ class MigrationGate:
                 or not isinstance(op_name, str) or not op_name.startswith(self.cfg.location_name + "/operations/")):
             self.fail("the :run response does not identify the execution; outcome is ambiguous")
         self.execution_name = name
+        self.check_embedded_execution_image(metadata, "the :run operation metadata")
         timeout = self.migration_timeout
         deadline = self.deadline(timeout)
         while True:
@@ -1309,9 +1488,15 @@ class MigrationGate:
             if self.expired(deadline):
                 self.fail(f"migration execution {short_name(name)} did not reach a verified outcome within {timeout}s")
 
-    def verify_execution_inventory(self, when):
+    def verify_execution_inventory(self, when, current_run=True):
         """The job is unchanged and its executions are exactly the prior
         (settled) ones plus our verified-successful execution.
+
+        For this run's own execution (current_run=True) its template and
+        runtime image are re-verified too, against the digest pinned in this
+        run. A completed bootstrap record from an earlier run
+        (current_run=False) may name an execution of an earlier image; only
+        its inventory and success are re-verified, as before.
 
         Called after task verification and immediately before every write
         that lets Fleet start (new image, scaling restore, bootstrap
@@ -1338,6 +1523,8 @@ class MigrationGate:
                        and owned.get("reconciling", False) is False
                        and has_condition(owned, "Completed", CONDITION_SUCCEEDED),
                        f"the migration execution no longer reports success {when}")
+            if current_run:
+                self.check_owned_execution_image(owned)
         except GateError:
             self.migration = MIGRATION_UNKNOWN
             raise
@@ -1379,7 +1566,10 @@ class MigrationGate:
             return "failed"
         if op.get("done") and "error" in op:
             return "failed"
+        for field in ("metadata", "response"):
+            self.check_embedded_execution_image(op.get(field), f"the run operation {field}")
         if not execution.get("completionTime") or not op.get("done"):
+            self.check_pending_execution_image(execution)
             return "pending"
         response = op.get("response")
         self.check(isinstance(response, dict) and response.get("name") == self.execution_name,
@@ -1388,13 +1578,50 @@ class MigrationGate:
                    "execution identity is missing")
         self.check(execution.get("job") == self.cfg.job, "execution belongs to another job")
         self.check(execution.get("reconciling", False) is False, "execution is still reconciling")
-        self.check_execution_template(
-            {"taskCount": execution.get("taskCount"), "parallelism": execution.get("parallelism"),
-             "template": execution.get("template")}, "execution")
+        self.check_owned_execution_image(execution)
         self.check(succeeded == 1 and running == 0, "execution did not report exactly one succeeded task")
         self.check(has_condition(execution, "Completed", CONDITION_SUCCEEDED),
                    "execution has no Completed=CONDITION_SUCCEEDED condition")
         return "succeeded"
+
+    def check_pending_execution_image(self, execution):
+        """While the owned execution is still running, any image it already
+        reports must be the target (and agree with any digest already seen),
+        so a digest reported while pending cannot silently change by
+        completion. An execution that reports no template yet is checked at
+        completion, where the template is required."""
+        if "template" not in execution:
+            return
+        self.check(execution.get("name") == self.execution_name and execution.get("uid")
+                   and execution.get("job") == self.cfg.job,
+                   "execution identity is missing or belongs to another job")
+        # Execution.template is the TaskTemplate.
+        container = single_container(execution.get("template"), "execution task template")
+        self.check_runtime_image(container.get("image"), "execution")
+
+    def check_embedded_execution_image(self, embedded, where):
+        """The :run operation's metadata and response may embed the owned
+        Execution, including its image. Any such image must pass the same
+        runtime check (and agree with the pinned digest). A payload without a
+        template (for example name-only metadata) has nothing to check. The
+        operation is the one returned by this run's :run; an embedded
+        execution must still name the owned execution (and this job, if it
+        says), or it is not trusted."""
+        if not isinstance(embedded, dict) or "template" not in embedded:
+            return
+        self.check(embedded.get("name") == self.execution_name
+                   and embedded.get("job", self.cfg.job) == self.cfg.job,
+                   f"{where} embeds an execution other than this run's")
+        # Execution.template is the TaskTemplate.
+        container = single_container(embedded.get("template"), "execution task template")
+        self.check_runtime_image(container.get("image"), "execution")
+
+    def check_owned_execution_image(self, execution):
+        """Re-verify the owned execution's template, including its runtime
+        image against the digest pinned in this run."""
+        self.check_execution_template(
+            {"taskCount": execution.get("taskCount"), "parallelism": execution.get("parallelism"),
+             "template": execution.get("template")}, "execution", runtime=True)
 
     def verify_tasks(self, tasks):
         self.check(len(tasks) == 1, "the execution must have exactly one task")
@@ -1436,7 +1663,7 @@ class MigrationGate:
         self.check(exit_code == 0 and signal == 0 and code == 0,
                    "task did not report a successful normal exit")
         container = single_container(task, "task")
-        self.check(container.get("image") == self.cfg.image, "task image does not match the target image")
+        self.check_runtime_image(container.get("image"), "task")
 
     # -- protocol: entry point -------------------------------------------
 
@@ -1482,7 +1709,7 @@ class MigrationGate:
         self.executions_before = set(names) - {owned}
         self.execution_name = owned
         try:
-            self.verify_execution_inventory("before retrying a completed bootstrap")
+            self.verify_execution_inventory("before retrying a completed bootstrap", current_run=False)
         finally:
             self.executions_before = current_inventory
             self.execution_name = None
@@ -1757,12 +1984,20 @@ class MigrationGate:
         self.expected_service = (current["etag"], current["generation"])
 
     def verify_ready_revision(self, name, desired):
+        """The serving revision runs the desired env/CMEK key and the target
+        image. Callers have already checked that the generation-pinned
+        service template matches the configured image exactly and that this
+        is its latest Ready revision. Cloud Run v2 may report the revision
+        image as configured (a tag) or resolved (a digest); a digest must
+        equal the one the migration execution reported."""
         revision, _ = self.api.get(self.run_url(name), "serving revision")
         self.check(revision.get("name") == name, "serving revision identity mismatch")
-        self.check(desired.matches(revision),
+        container = desired.serving_container(revision)
+        self.check(container is not None,
                    "the serving revision does not run the target image and serving configuration")
         self.check(revision.get("reconciling", False) is False and has_condition(revision, "Ready", CONDITION_SUCCEEDED),
                    "the serving revision is not Ready")
+        self.check_runtime_image(container.get("image"), "serving revision")
 
     def new_revision_ready(self, svc, old_latest, desired):
         terminal = (svc.get("terminalCondition") or {}).get("state")

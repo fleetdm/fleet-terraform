@@ -20,6 +20,12 @@ SERVICE = "fleet-api"
 JOB = "fleet-migration"
 OLD_IMAGE = "fleetdm/fleet:v4.92.0"
 NEW_IMAGE = "fleetdm/fleet:v4.93.0"
+# What Cloud Run reports at runtime for NEW_IMAGE (observed shape: the job
+# keeps the configured tag; the execution, its task and revisions report the
+# Docker Hub tag resolved through Google's mirror to a digest).
+NEW_DIGEST = "sha256:fc2e73a94563fe64325ceaffba04e6ca4e0557e2dfb606100d3a8d77e0a2a80f"
+OTHER_DIGEST = "sha256:" + "0123456789abcdef" * 4
+MIRROR_NEW_IMAGE = "mirror.gcr.io/fleetdm/fleet@" + NEW_DIGEST
 TOKEN = "ya29.FAKE-TOKEN-SENTINEL"
 SECRET_ENV_VALUE = "FAKE-LICENSE-SECRET-SENTINEL"
 RUN_ID = "0b6c7c55-1d5e-4c1c-9a4e-3c8f00000001"
@@ -152,7 +158,11 @@ class FakeCloud:
         self.outcome = "success"
         self.execution_hook = None  # callable(execution, tasks, op) mutates
         self.new_revision_ready = True
-        self.new_revision_image = None
+        self.new_revision_image = None  # image a created revision reports (default: its template's)
+        # Images the owned execution's template and its task report. None
+        # keeps the old fixture shape (the job's configured image string).
+        self.execution_image = None
+        self.task_image = None  # default: the execution's image
         self.reflect_revision_name = True
         self.new_revision_hook = None  # callable(revision) mutates a created revision
         self.revision_seq = 2
@@ -246,6 +256,14 @@ class FakeCloud:
                 },
             },
         }
+
+    def resolve_images(self, image=MIRROR_NEW_IMAGE):
+        """Report runtime images the way Cloud Run does for a Docker Hub tag:
+        the execution, its task and newly created revisions show the
+        mirror.gcr.io digest; the job and service templates keep the
+        configured string."""
+        self.execution_image = image
+        self.new_revision_image = image
 
     # -- helpers for assertions -------------------------------------------
 
@@ -489,6 +507,8 @@ class FakeCloud:
             "generation": "1",
             "observedGeneration": "1",
         })
+        if self.execution_image is not None:
+            view["template"]["containers"][0]["image"] = self.execution_image
         task_short = view["name"].rsplit("/", 1)[-1] + "-0"
         task = {
             "name": f"{view['name']}/tasks/{task_short}",
@@ -498,6 +518,8 @@ class FakeCloud:
             "containers": copy.deepcopy(view["template"]["containers"]),
             "maxRetries": 0,
         }
+        if self.task_image is not None:
+            task["containers"][0]["image"] = self.task_image
         op = {"name": ex["_op"], "metadata": {"name": view["name"]}}
         finished = self.now() >= ex["_start"] + self.migration_duration and self.outcome != "never"
         if not finished:

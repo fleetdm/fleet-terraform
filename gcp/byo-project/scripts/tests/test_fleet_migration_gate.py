@@ -1724,3 +1724,582 @@ class BootstrapListingIdentity(OfflineTestCase):
         ]
         self.assertEqual(self.run_gate(), 0, self.text())
         self.assertEqual(self.cloud.run_calls(), 1)
+
+
+# ---------------------------------------------------------------------------
+# Image identity: configured reference vs Cloud Run's runtime resolution
+# ---------------------------------------------------------------------------
+
+AR_IMAGE = "us-central1-docker.pkg.dev/fleet-test-project/fleet/fleet:v4.93.0"
+AR_RESOLVED = "us-central1-docker.pkg.dev/fleet-test-project/fleet/fleet@" + fg.NEW_DIGEST
+
+
+def _with_configured_image(cloud, image):
+    """Terraform sets the same configured string on the job (and passes it as
+    FLEET_GATE_IMAGE); runtime objects may report it resolved."""
+    cloud.job["template"]["template"]["containers"][0]["image"] = image
+    return fg.env(FLEET_GATE_IMAGE=image)
+
+
+class ImageReferenceParsing(unittest.TestCase):
+    def canon(self, value):
+        ref = gate.parse_image_ref(value)
+        return ref.host, ref.path, ref.tag, ref.digest
+
+    def test_docker_hub_canonicalization(self):
+        expected = ("docker.io", "fleetdm/fleet", "v4.93.0", None)
+        for value in ("fleetdm/fleet:v4.93.0", "docker.io/fleetdm/fleet:v4.93.0",
+                      "index.docker.io/fleetdm/fleet:v4.93.0", "registry-1.docker.io/fleetdm/fleet:v4.93.0",
+                      "mirror.gcr.io/fleetdm/fleet:v4.93.0"):
+            with self.subTest(value=value):
+                self.assertEqual(self.canon(value), expected)
+        self.assertEqual(self.canon("mirror.gcr.io/fleetdm/fleet@" + fg.NEW_DIGEST),
+                         ("docker.io", "fleetdm/fleet", None, fg.NEW_DIGEST))
+        self.assertEqual(self.canon("busybox"), ("docker.io", "library/busybox", "latest", None))
+        self.assertEqual(self.canon("docker.io/library/busybox:1"), ("docker.io", "library/busybox", "1", None))
+        self.assertEqual(self.canon("fleetdm/fleet:v4.93.0@" + fg.NEW_DIGEST),
+                         ("docker.io", "fleetdm/fleet", "v4.93.0", fg.NEW_DIGEST))
+
+    def test_other_registries_keep_exact_host_and_path(self):
+        self.assertEqual(self.canon(AR_IMAGE),
+                         ("us-central1-docker.pkg.dev", "fleet-test-project/fleet/fleet", "v4.93.0", None))
+        self.assertEqual(self.canon("localhost:5000/fleet"), ("localhost:5000", "fleet", "latest", None))
+        for value in ("gcr.io/fleetdm/fleet:v4.93.0", "mirror.gcr.io.evil/fleetdm/fleet:v4.93.0",
+                      "evilmirror.gcr.io/fleetdm/fleet:v4.93.0", "docker.io.evil/fleetdm/fleet:v4.93.0",
+                      "mirror.gcr.io:443/fleetdm/fleet:v4.93.0"):
+            with self.subTest(value=value):
+                self.assertNotEqual(self.canon(value)[0], "docker.io")
+
+    def test_malformed_references_are_rejected(self):
+        for value in (None, "", " fleetdm/fleet", "fleetdm/fleet:v1 ", "FleetDM/fleet:v1",
+                      "fleetdm/fleet@sha256:" + "A" * 64, "fleetdm/fleet@sha256:" + "a" * 63,
+                      "fleetdm/fleet@sha256:" + "a" * 65, "fleetdm/fleet@sha512:" + "a" * 128,
+                      "fleetdm/fleet@", "fleetdm/fleet@sha256:", "fleetdm/fleet@@" + fg.NEW_DIGEST,
+                      "fleetdm/fleet:", "fleetdm/fleet:-bad", "fleetdm//fleet", "/fleetdm/fleet",
+                      "fleetdm/fleet/", "-bad.host/fleet", "mirror.gcr.io/", "x" * 600):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    gate.parse_image_ref(value)
+
+    def test_runtime_compatibility_rules(self):
+        def mismatch(configured, observed):
+            return gate.runtime_image_mismatch(gate.parse_image_ref(configured), gate.parse_image_ref(observed))
+
+        tag, digest = "fleetdm/fleet:v4.93.0", "fleetdm/fleet@" + fg.NEW_DIGEST
+        both = "fleetdm/fleet:v4.93.0@" + fg.NEW_DIGEST
+        ok = [
+            (tag, tag), (tag, "docker.io/fleetdm/fleet:v4.93.0"), (tag, fg.MIRROR_NEW_IMAGE),
+            (tag, "mirror.gcr.io/fleetdm/fleet:v4.93.0@" + fg.NEW_DIGEST),
+            (digest, digest), (digest, fg.MIRROR_NEW_IMAGE), (both, fg.MIRROR_NEW_IMAGE), (both, both),
+            (AR_IMAGE, AR_RESOLVED), (AR_IMAGE, AR_IMAGE),
+        ]
+        bad = [
+            (tag, "fleetdm/fleet:v4.92.0"), (tag, "mirror.gcr.io/fleetdm/fleet:v4.92.0@" + fg.NEW_DIGEST),
+            (tag, "mirror.gcr.io/otherns/fleet@" + fg.NEW_DIGEST), (tag, "mirror.gcr.io/fleet@" + fg.NEW_DIGEST),
+            (tag, "mirror.gcr.io/fleetdm/fleet-other@" + fg.NEW_DIGEST),
+            (tag, "mirror.gcr.io.evil/fleetdm/fleet@" + fg.NEW_DIGEST),
+            (tag, "gcr.io/fleetdm/fleet@" + fg.NEW_DIGEST), (tag, "fleetdm/fleet"),
+            (digest, "mirror.gcr.io/fleetdm/fleet@" + fg.OTHER_DIGEST), (digest, tag),
+            (both, "mirror.gcr.io/fleetdm/fleet@" + fg.OTHER_DIGEST), (both, tag),
+            (both, "fleetdm/fleet:v4.92.0@" + fg.NEW_DIGEST),
+            (AR_IMAGE, "us-docker.pkg.dev/fleet-test-project/fleet/fleet@" + fg.NEW_DIGEST),
+            (AR_IMAGE, "us-central1-docker.pkg.dev/other-project/fleet/fleet@" + fg.NEW_DIGEST),
+            (AR_IMAGE, "mirror.gcr.io/fleet-test-project/fleet/fleet@" + fg.NEW_DIGEST),
+            ("fleetdm/fleet:v4.93.0", "us-central1-docker.pkg.dev/fleetdm/fleet@" + fg.NEW_DIGEST),
+        ]
+        for configured, observed in ok:
+            with self.subTest(configured=configured, observed=observed):
+                self.assertIsNone(mismatch(configured, observed))
+        for configured, observed in bad:
+            with self.subTest(configured=configured, observed=observed):
+                self.assertIsNotNone(mismatch(configured, observed))
+
+
+class ImageIdentityHappyPath(OfflineTestCase):
+    def test_upgrade_with_mirror_digest_execution_task_and_revision(self):
+        c = self.cloud
+        c.resolve_images()
+        self.assertEqual(self.run_gate(), 0, self.text())
+        self.assertEqual(c.writes(), [("PATCH", "service"), ("PATCH", "service"), ("POST", "run"),
+                                      ("PATCH", "service"), ("PATCH", "service"), ("PATCH", "service")])
+        self.assertEqual(c.run_calls(), 1)
+        # The realistic shape: the job keeps the tag; runtime objects report the digest.
+        self.assertEqual(c.job["template"]["template"]["containers"][0]["image"], fg.NEW_IMAGE)
+        view, tasks, _ = c.render_execution(c.executions[0])
+        self.assertEqual(view["template"]["containers"][0]["image"], fg.MIRROR_NEW_IMAGE)
+        self.assertEqual(tasks[0]["containers"][0]["image"], fg.MIRROR_NEW_IMAGE)
+        new_rev = next(r for r in c.revisions if r["name"] == c.service["latestReadyRevision"])
+        self.assertEqual(new_rev["containers"][0]["image"], fg.MIRROR_NEW_IMAGE)
+        # Configuration written by the gate stays the configured tag, so the
+        # provider does not later revert a digest to the tag.
+        image = c.service_patches()[3]
+        self.assertEqual(image["template"]["containers"][0]["image"], fg.NEW_IMAGE)
+        self.assertEqual(c.service["template"]["containers"][0]["image"], fg.NEW_IMAGE)
+        for body in c.service_patches():
+            self.assertNotIn(fg.NEW_DIGEST, json.dumps(body))
+        self.assertEqual(c.service["scaling"], {"scalingMode": "AUTOMATIC", "minInstanceCount": 1})
+        self.assertIn(fg.NEW_DIGEST, self.text())
+        self.assert_no_old_image_restart()
+
+    def test_upgrade_with_digest_execution_and_tag_only_revision(self):
+        # Cloud Run v2 may report the revision image as configured (a tag):
+        # accepted under the documented immutable-tag assumption.
+        c = self.cloud
+        c.execution_image = fg.MIRROR_NEW_IMAGE
+        self.assertEqual(self.run_gate(), 0, self.text())
+        new_rev = next(r for r in c.revisions if r["name"] == c.service["latestReadyRevision"])
+        self.assertEqual(new_rev["containers"][0]["image"], fg.NEW_IMAGE)
+        self.assertEqual(c.run_calls(), 1)
+
+    def test_upgrade_with_tag_only_execution_and_digest_revision(self):
+        c = self.cloud
+        c.new_revision_image = fg.MIRROR_NEW_IMAGE
+        self.assertEqual(self.run_gate(), 0, self.text())
+
+    def test_bootstrap_with_mirror_digest_execution_and_task(self):
+        c = self.cloud = fg.FakeCloud(service=False)
+        c.resolve_images()
+        self.assertEqual(self.run_gate(), 0, self.text())
+        self.assertEqual(c.writes(), [("PATCH", "job"), ("POST", "run"), ("PATCH", "job")])
+        self.assertEqual(c.run_calls(), 1)
+        self.assertEqual(json.loads(c.job["annotations"][fg.CHECKPOINT])["phase"], "completed")
+        self.assertEqual(c.job["template"]["template"]["containers"][0]["image"], fg.NEW_IMAGE)
+
+    def test_same_image_adoption_with_digest_revision(self):
+        c = self.cloud
+        c.resolve_images()
+        _same_image(c)
+        for rev in c.revisions:
+            rev["containers"][0]["image"] = fg.MIRROR_NEW_IMAGE
+        revisions_before = len(c.revisions)
+        self.assertEqual(self.run_gate(), 0, self.text())
+        self.assertIn("no new revision needed", self.text())
+        self.assertEqual(len(c.revisions), revisions_before)
+        for body in c.service_patches():
+            self.assertEqual(body["template"]["containers"][0]["image"], fg.NEW_IMAGE)
+
+    def test_same_image_adoption_with_tag_only_revision(self):
+        c = self.cloud
+        c.execution_image = fg.MIRROR_NEW_IMAGE
+        _same_image(c)
+        self.assertEqual(self.run_gate(), 0, self.text())
+        self.assertIn("no new revision needed", self.text())
+
+    def test_configured_digest(self):
+        for configured in ("fleetdm/fleet@" + fg.NEW_DIGEST, "fleetdm/fleet:v4.93.0@" + fg.NEW_DIGEST):
+            for bootstrap in (False, True):
+                with self.subTest(configured=configured, bootstrap=bootstrap):
+                    self.cloud = fg.FakeCloud(service=not bootstrap)
+                    self.logs = []
+                    environ = _with_configured_image(self.cloud, configured)
+                    self.cloud.resolve_images()
+                    self.assertEqual(self.run_gate(environ=environ), 0, self.text())
+                    self.assertEqual(self.cloud.run_calls(), 1)
+                    if not bootstrap:
+                        self.assertEqual(self.cloud.service["template"]["containers"][0]["image"], configured)
+
+    def test_artifact_registry_same_path_resolution(self):
+        for bootstrap in (False, True):
+            with self.subTest(bootstrap=bootstrap):
+                self.cloud = fg.FakeCloud(service=not bootstrap)
+                self.logs = []
+                environ = _with_configured_image(self.cloud, AR_IMAGE)
+                self.cloud.resolve_images(AR_RESOLVED)
+                self.assertEqual(self.run_gate(environ=environ), 0, self.text())
+                if not bootstrap:
+                    self.assertEqual(self.cloud.service["template"]["containers"][0]["image"], AR_IMAGE)
+
+
+BAD_RUNTIME_IMAGES = {
+    "wrong_namespace": "mirror.gcr.io/otherns/fleet@" + fg.NEW_DIGEST,
+    "wrong_repository": "mirror.gcr.io/fleetdm/fleet-other@" + fg.NEW_DIGEST,
+    "library_namespace": "mirror.gcr.io/fleet@" + fg.NEW_DIGEST,
+    "host_suffix_lookalike": "mirror.gcr.io.evil/fleetdm/fleet@" + fg.NEW_DIGEST,
+    "host_prefix_lookalike": "evilmirror.gcr.io/fleetdm/fleet@" + fg.NEW_DIGEST,
+    "gcr_io_is_not_docker_hub": "gcr.io/fleetdm/fleet@" + fg.NEW_DIGEST,
+    "other_registry": "us-docker.pkg.dev/fleetdm/fleet@" + fg.NEW_DIGEST,
+    "wrong_version_tag": "fleetdm/fleet:v4.92.0",
+    "contradicting_tag_with_digest": "mirror.gcr.io/fleetdm/fleet:v4.92.0@" + fg.NEW_DIGEST,
+    "uppercase_digest": "mirror.gcr.io/fleetdm/fleet@sha256:" + fg.NEW_DIGEST[7:].upper(),
+    "short_digest": "mirror.gcr.io/fleetdm/fleet@" + fg.NEW_DIGEST[:-1],
+    "sha512_digest": "mirror.gcr.io/fleetdm/fleet@sha512:" + "a" * 128,
+    "empty_digest": "mirror.gcr.io/fleetdm/fleet@",
+    "uppercase_repository": "mirror.gcr.io/FleetDM/fleet@" + fg.NEW_DIGEST,
+    "empty": "",
+    "not_a_string": 42,
+}
+
+
+def _make_bad_execution_image_test(image, task_only):
+    def test(self):
+        c = self.cloud
+        if task_only:
+            c.execution_image = fg.MIRROR_NEW_IMAGE
+            c.task_image = image
+        else:
+            c.execution_image = image
+        self.assertEqual(self.run_gate(), 1, self.text())
+        self.assertEqual(c.run_calls(), 1)
+        self.assertIn("Migration: " + gate.MIGRATION_UNKNOWN, self.text())
+        self.assertIn("image", self.text())
+        self.assert_not_resumed()
+        self.assertTrue(gate.is_stopped_scaling(c.service["scaling"]))
+        if isinstance(image, str) and image:
+            self.assertNotIn(image, self.text(), "reported image text is never echoed")
+    return test
+
+
+class ImageIdentityRefusals(OfflineTestCase):
+    def assert_migrated_but_not_resumed(self):
+        self.assertEqual(self.run_gate(), 1, self.text())
+        self.assertEqual(self.cloud.run_calls(), 1)
+        self.assertIn("Migration: " + gate.MIGRATION_SUCCEEDED, self.text())
+        self.assertTrue(gate.is_stopped_scaling(self.cloud.service["scaling"]))
+        restores = [b for b in self.cloud.service_patches() if b["scaling"].get("scalingMode") != "MANUAL"]
+        self.assertEqual(restores, [], "scaling is never restored")
+        self.assert_no_old_image_restart()
+        self.assert_not_claimed_measured_zero()
+
+    def test_task_digest_conflicts_with_execution_digest(self):
+        # For example an image index digest vs a platform manifest digest:
+        # no mapping is attempted, the outcome is UNKNOWN.
+        c = self.cloud
+        c.execution_image = fg.MIRROR_NEW_IMAGE
+        c.task_image = "mirror.gcr.io/fleetdm/fleet@" + fg.OTHER_DIGEST
+        self.assertEqual(self.run_gate(), 1, self.text())
+        self.assertIn("digest differs", self.text())
+        self.assertIn("Migration: " + gate.MIGRATION_UNKNOWN, self.text())
+        self.assert_not_resumed()
+
+    def test_bootstrap_wrong_execution_repository_never_completes(self):
+        c = self.cloud = fg.FakeCloud(service=False)
+        c.execution_image = "mirror.gcr.io/otherns/fleet@" + fg.NEW_DIGEST
+        self.assertEqual(self.run_gate(), 1, self.text())
+        self.assertEqual(c.run_calls(), 1)
+        self.assertIn("Migration: " + gate.MIGRATION_UNKNOWN, self.text())
+        self.assertEqual(json.loads(c.job["annotations"][fg.CHECKPOINT])["phase"], "bootstrap-migrating")
+
+    def test_bootstrap_task_digest_conflict_never_completes(self):
+        c = self.cloud = fg.FakeCloud(service=False)
+        c.execution_image = fg.MIRROR_NEW_IMAGE
+        c.task_image = "mirror.gcr.io/fleetdm/fleet@" + fg.OTHER_DIGEST
+        self.assertEqual(self.run_gate(), 1, self.text())
+        self.assertIn("Migration: " + gate.MIGRATION_UNKNOWN, self.text())
+        self.assertEqual(json.loads(c.job["annotations"][fg.CHECKPOINT])["phase"], "bootstrap-migrating")
+
+    def test_configured_digest_mismatch_fails(self):
+        for configured in ("fleetdm/fleet@" + fg.NEW_DIGEST, "fleetdm/fleet:v4.93.0@" + fg.NEW_DIGEST):
+            for observed in ("mirror.gcr.io/fleetdm/fleet@" + fg.OTHER_DIGEST, fg.NEW_IMAGE):
+                with self.subTest(configured=configured, observed=observed):
+                    self.cloud = fg.FakeCloud()
+                    self.logs = []
+                    environ = _with_configured_image(self.cloud, configured)
+                    self.cloud.execution_image = observed
+                    self.assertEqual(self.run_gate(environ=environ), 1, self.text())
+                    self.assertEqual(self.cloud.run_calls(), 1)
+                    self.assertIn("Migration: " + gate.MIGRATION_UNKNOWN, self.text())
+                    self.assertTrue(gate.is_stopped_scaling(self.cloud.service["scaling"]))
+                    self.assertNotIn(configured, [b["template"]["containers"][0]["image"]
+                                                  for b in self.cloud.service_patches()])
+
+    def test_artifact_registry_other_location_or_project_fails(self):
+        for observed in ("us-docker.pkg.dev/fleet-test-project/fleet/fleet@" + fg.NEW_DIGEST,
+                         "us-central1-docker.pkg.dev/other-project/fleet/fleet@" + fg.NEW_DIGEST,
+                         "mirror.gcr.io/fleet-test-project/fleet/fleet@" + fg.NEW_DIGEST):
+            with self.subTest(observed=observed):
+                self.cloud = fg.FakeCloud()
+                self.logs = []
+                environ = _with_configured_image(self.cloud, AR_IMAGE)
+                self.cloud.execution_image = observed
+                self.assertEqual(self.run_gate(environ=environ), 1, self.text())
+                self.assertIn("Migration: " + gate.MIGRATION_UNKNOWN, self.text())
+                self.assertTrue(gate.is_stopped_scaling(self.cloud.service["scaling"]))
+
+    def test_revision_digest_conflicts_with_execution_digest(self):
+        c = self.cloud
+        c.execution_image = fg.MIRROR_NEW_IMAGE
+        c.new_revision_image = "mirror.gcr.io/fleetdm/fleet@" + fg.OTHER_DIGEST
+        self.assert_migrated_but_not_resumed()
+        self.assertIn("digest differs", self.text())
+
+    def test_revision_wrong_repository_digest(self):
+        c = self.cloud
+        c.execution_image = fg.MIRROR_NEW_IMAGE
+        c.new_revision_image = "mirror.gcr.io/otherns/fleet@" + fg.NEW_DIGEST
+        self.assert_migrated_but_not_resumed()
+
+    def test_revision_wrong_tag(self):
+        c = self.cloud
+        c.execution_image = fg.MIRROR_NEW_IMAGE
+        c.new_revision_image = "fleetdm/fleet:v4.92.0"
+        self.assert_migrated_but_not_resumed()
+
+    def test_same_image_adoption_revision_digest_conflict(self):
+        # The existing Ready revision was resolved from the same tag earlier,
+        # but to another digest (a mutable tag): never adopted.
+        c = self.cloud
+        c.resolve_images()
+        _same_image(c)
+        for rev in c.revisions:
+            rev["containers"][0]["image"] = "mirror.gcr.io/fleetdm/fleet@" + fg.OTHER_DIGEST
+        self.assert_migrated_but_not_resumed()
+        self.assertIn("digest differs", self.text())
+
+    def test_service_template_reading_back_a_digest_is_never_ready(self):
+        # Configuration must stay the exact configured string: a template that
+        # reads back as a digest (another writer) is not the target.
+        c = self.cloud
+        c.resolve_images()
+
+        def rewrite(method, kind, path, query, body):
+            cp = c.checkpoint() or {}
+            if method == "GET" and kind == "service" and cp.get("phase") == "rolling-out":
+                c.service["template"]["containers"][0]["image"] = fg.MIRROR_NEW_IMAGE
+            return None
+        c.faults.append(rewrite)
+        self.assert_migrated_but_not_resumed()
+
+    def test_invalid_configured_reference_makes_no_requests(self):
+        for image in ("fleetdm/fleet@sha256:" + "A" * 64, "fleetdm/fleet@sha256:abc",
+                      "fleetdm/fleet@sha512:" + "a" * 128, "FleetDM/fleet:v1", "fleetdm//fleet:v1"):
+            with self.subTest(image=image):
+                self.cloud.log.clear()
+                self.logs.clear()
+                self.assertEqual(self.run_gate(environ=fg.env(FLEET_GATE_IMAGE=image)), 1)
+                self.assertEqual(self.cloud.log, [])
+                self.assertIn("not a valid image reference", self.text())
+
+
+for _name, _image in BAD_RUNTIME_IMAGES.items():
+    setattr(ImageIdentityRefusals, "test_execution_image_" + _name, _make_bad_execution_image_test(_image, False))
+    setattr(ImageIdentityRefusals, "test_task_image_" + _name, _make_bad_execution_image_test(_image, True))
+
+
+PREFLIGHT_CASES_IMAGE = {
+    # The job is configuration: a resolved digest there is drift, not the target.
+    "job_image_resolved_digest": job_mutation(
+        lambda j: j["template"]["template"]["containers"][0].update(image=fg.MIRROR_NEW_IMAGE)),
+    "job_image_docker_io_spelling": job_mutation(
+        lambda j: j["template"]["template"]["containers"][0].update(image="docker.io/fleetdm/fleet:v4.93.0")),
+}
+for _name, _setup in PREFLIGHT_CASES_IMAGE.items():
+    setattr(PreflightRefusals, "test_refuses_" + _name, _make_preflight_test(_name, _setup))
+
+
+def _set_execution_image(view, tasks, image):
+    view["template"]["containers"][0]["image"] = image
+    for task in tasks:
+        task["containers"][0]["image"] = image
+
+
+class OwnedExecutionImageRechecks(OfflineTestCase):
+    """Every image the owned execution reports in this run is checked: while
+    pending, at completion, and in every later inventory re-verification."""
+
+    OTHER = "mirror.gcr.io/fleetdm/fleet@" + fg.OTHER_DIGEST
+
+    def pending_then_completed(self, pending, completed):
+        polls = {"pending": 0}
+
+        def hook(view, tasks, op):
+            if view.get("completionTime"):
+                _set_execution_image(view, tasks, completed)
+            else:
+                polls["pending"] += 1
+                _set_execution_image(view, tasks, pending)
+        self.cloud.execution_hook = hook
+        return polls
+
+    def assert_unknown_not_resumed(self, needle):
+        self.assertEqual(self.run_gate(), 1, self.text())
+        self.assertEqual(self.cloud.run_calls(), 1)
+        self.assertIn(needle, self.text())
+        self.assertIn("Migration: " + gate.MIGRATION_UNKNOWN, self.text())
+        if self.cloud.service is not None:
+            self.assertTrue(gate.is_stopped_scaling(self.cloud.service["scaling"]))
+            restores = [b for b in self.cloud.service_patches() if b["scaling"].get("scalingMode") != "MANUAL"]
+            self.assertEqual(restores, [], "scaling is never restored")
+            self.assert_no_old_image_restart()
+        else:
+            self.assertEqual(json.loads(self.cloud.job["annotations"][fg.CHECKPOINT])["phase"], "bootstrap-migrating")
+
+    def test_pending_digest_then_other_digest_at_completion(self):
+        for bootstrap in (False, True):
+            with self.subTest(bootstrap=bootstrap):
+                self.cloud = fg.FakeCloud(service=not bootstrap)
+                self.logs = []
+                polls = self.pending_then_completed(fg.MIRROR_NEW_IMAGE, self.OTHER)
+                self.assert_unknown_not_resumed("execution image digest differs")
+                self.assertGreater(polls["pending"], 0)
+                self.assert_not_resumed()
+
+    def test_pending_wrong_repository_fails_before_completion(self):
+        c = self.cloud
+        polls = self.pending_then_completed("mirror.gcr.io/otherns/fleet@" + fg.NEW_DIGEST, fg.MIRROR_NEW_IMAGE)
+        self.assert_unknown_not_resumed("execution image does not match the target Fleet image")
+        self.assertGreater(polls["pending"], 0)
+        self.assertIsNone(c.index("GET", "tasks"), "the gate fails on the pending poll, before completion")
+        self.assertNotIn("FAILED: task", self.text())
+        self.assert_not_resumed()
+
+    def test_pending_same_digest_then_completion_succeeds(self):
+        self.pending_then_completed(fg.MIRROR_NEW_IMAGE, fg.MIRROR_NEW_IMAGE)
+        self.cloud.new_revision_image = fg.MIRROR_NEW_IMAGE
+        self.assertEqual(self.run_gate(), 0, self.text())
+
+    def changes_in_phase(self, phase):
+        c = self.cloud
+        c.resolve_images()
+
+        def hook(view, tasks, op):
+            if (c.checkpoint() or {}).get("phase") == phase:
+                _set_execution_image(view, tasks, self.OTHER)
+        c.execution_hook = hook
+
+    def test_execution_digest_changes_before_new_image_write(self):
+        self.changes_in_phase("migrated")
+        self.assert_unknown_not_resumed("execution image digest differs")
+        self.assert_not_resumed()
+
+    def test_execution_digest_changes_during_rollout(self):
+        self.changes_in_phase("rolling-out")
+        self.assert_unknown_not_resumed("execution image digest differs")
+
+    def test_execution_wrong_repository_during_rollout(self):
+        c = self.cloud
+        c.resolve_images()
+
+        def hook(view, tasks, op):
+            if (c.checkpoint() or {}).get("phase") == "rolling-out":
+                _set_execution_image(view, tasks, "mirror.gcr.io/otherns/fleet@" + fg.NEW_DIGEST)
+        c.execution_hook = hook
+        self.assert_unknown_not_resumed("execution image does not match the target Fleet image")
+
+    def test_bootstrap_execution_digest_changes_before_completion_record(self):
+        c = self.cloud = fg.FakeCloud(service=False)
+        c.resolve_images()
+        state = {"tasks_read": False}
+
+        def hook(view, tasks, op):
+            # Only the execution changes, after its task was verified.
+            if state["tasks_read"]:
+                view["template"]["containers"][0]["image"] = self.OTHER
+
+        def mark(method, kind, path, query, body):
+            if method == "GET" and kind == "tasks":
+                state["tasks_read"] = True
+            return None
+        c.execution_hook = hook
+        c.faults.append(mark)
+        self.assert_unknown_not_resumed("execution image digest differs")
+        self.assertEqual(c.writes(), [("PATCH", "job"), ("POST", "run")])
+
+    def test_completed_bootstrap_record_from_an_earlier_image_is_revalidated(self):
+        # A completed record names an execution of an earlier image (another
+        # digest). Revalidating that record keeps its old behavior (inventory
+        # and success only); this run's own execution is still pinned and
+        # checked on its own digest.
+        c = self.cloud = fg.FakeCloud(service=False)
+        first = fg.MIRROR_NEW_IMAGE
+        second = self.OTHER
+
+        def hook(view, tasks, op):
+            _set_execution_image(view, tasks, first if view["name"].endswith("x001") else second)
+        c.execution_hook = hook
+        self.assertEqual(self.run_gate(), 0, self.text())
+        newer = "fleetdm/fleet:v4.94.0"
+        generation = str(int(c.job["generation"]) + 1)
+        c.job.update(generation=generation, observedGeneration=generation, etag=c.etag("job"))
+        c.job["template"]["template"]["containers"][0]["image"] = newer
+        c.log.clear()
+        c.bodies.clear()
+        self.logs = []
+        self.assertEqual(self.run_gate(environ=fg.env(FLEET_GATE_RUN_ID="next-run", FLEET_GATE_IMAGE=newer,
+                                                      FLEET_GATE_JOB_GENERATION=generation)), 0, self.text())
+        self.assertEqual(c.run_calls(), 1)
+        self.assertIn(fg.OTHER_DIGEST, self.text())
+        self.assertNotIn(fg.NEW_DIGEST, self.text())
+
+
+def _embedded_execution(view, image, **overrides):
+    embedded = json.loads(json.dumps(view))
+    embedded["template"]["containers"][0]["image"] = image
+    embedded.update(overrides)
+    return {k: v for k, v in embedded.items() if v is not None}
+
+
+def _embed_in_operation(test, source, make):
+    """Embed an Execution (built by make(view)) in the initial :run metadata,
+    the polled operation metadata, or the successful operation response."""
+    c = test.cloud
+    if source == "initial":
+        original = c._h_run
+
+        def run(method, match, query, data):
+            response = original(method, match, query, data)
+            payload = json.loads(response.body)
+            view, _, _ = c.render_execution(c.executions[-1])
+            payload["metadata"] = make(view)
+            return fg.FakeResponse(200, payload)
+        c._h_run = run
+    else:
+        def hook(view, tasks, op):
+            if source == "metadata" or "response" in op:
+                op[source] = make(view)
+        c.execution_hook = hook
+
+
+class OperationEmbeddedExecutionImage(OwnedExecutionImageRechecks.__bases__[0]):
+    OTHER = OwnedExecutionImageRechecks.OTHER
+    assert_unknown_not_resumed = OwnedExecutionImageRechecks.assert_unknown_not_resumed
+
+    def test_operation_embedded_execution_digest_conflicts(self):
+        for bootstrap in (False, True):
+            for source in ("initial", "metadata", "response"):
+                with self.subTest(bootstrap=bootstrap, source=source):
+                    self.cloud = fg.FakeCloud(service=not bootstrap)
+                    self.logs = []
+                    self.cloud.resolve_images()
+                    _embed_in_operation(self, source, lambda v: _embedded_execution(v, self.OTHER))
+                    self.assert_unknown_not_resumed("execution image digest differs")
+                    self.assert_not_resumed()
+
+    def test_operation_embedded_execution_wrong_repository(self):
+        for source in ("initial", "metadata", "response"):
+            with self.subTest(source=source):
+                self.cloud = fg.FakeCloud()
+                self.logs = []
+                self.cloud.resolve_images()
+                _embed_in_operation(self, source, lambda v: _embedded_execution(
+                    v, "mirror.gcr.io/otherns/fleet@" + fg.NEW_DIGEST))
+                self.assert_unknown_not_resumed("execution image does not match the target Fleet image")
+                self.assert_not_resumed()
+
+    def test_operation_embedding_another_execution_is_not_trusted(self):
+        for source in ("initial", "metadata", "response"):
+            with self.subTest(source=source):
+                self.cloud = fg.FakeCloud()
+                self.logs = []
+                self.cloud.resolve_images()
+                _embed_in_operation(self, source, lambda v: _embedded_execution(
+                    v, fg.MIRROR_NEW_IMAGE, name=fg.JOB_NAME + "/executions/other"))
+                # The initial metadata name defines the owned execution, so a
+                # different name there is an unknown execution; later payloads
+                # must embed the owned one.
+                self.assert_unknown_not_resumed("unexpected job executions appeared" if source == "initial"
+                                                else "embeds an execution other than this run's")
+                self.assert_not_resumed()
+
+    def test_operation_embedded_matching_execution_is_compatible(self):
+        # Same digest; an embedded copy may omit uid/job. Name-only metadata
+        # (the default fake) stays compatible too.
+        for bootstrap in (False, True):
+            for source in ("initial", "metadata", "response"):
+                with self.subTest(bootstrap=bootstrap, source=source):
+                    self.cloud = fg.FakeCloud(service=not bootstrap)
+                    self.logs = []
+                    self.cloud.resolve_images()
+                    _embed_in_operation(self, source, lambda v: _embedded_execution(
+                        v, fg.MIRROR_NEW_IMAGE, uid=None, job=None))
+                    self.assertEqual(self.run_gate(), 0, self.text())
+                    self.assertEqual(self.cloud.run_calls(), 1)
