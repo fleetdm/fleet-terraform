@@ -9,6 +9,7 @@ access, subprocesses and the gcloud CLI are blocked for the whole run, so an
 unmatched call fails the test instead of reaching Google.
 """
 
+import copy
 import json
 import math
 import os
@@ -1816,18 +1817,19 @@ class ImageReferenceParsing(unittest.TestCase):
 
 
 class ImageIdentityHappyPath(OfflineTestCase):
-    def test_upgrade_with_mirror_digest_execution_task_and_revision(self):
+    def test_upgrade_with_mirror_digest_execution_and_revision(self):
         c = self.cloud
         c.resolve_images()
         self.assertEqual(self.run_gate(), 0, self.text())
         self.assertEqual(c.writes(), [("PATCH", "service"), ("PATCH", "service"), ("POST", "run"),
                                       ("PATCH", "service"), ("PATCH", "service"), ("PATCH", "service")])
         self.assertEqual(c.run_calls(), 1)
-        # The realistic shape: the job keeps the tag; runtime objects report the digest.
+        # The observed shape: the job and the task keep the configured tag;
+        # the execution (and here the revision) report the digest.
         self.assertEqual(c.job["template"]["template"]["containers"][0]["image"], fg.NEW_IMAGE)
         view, tasks, _ = c.render_execution(c.executions[0])
         self.assertEqual(view["template"]["containers"][0]["image"], fg.MIRROR_NEW_IMAGE)
-        self.assertEqual(tasks[0]["containers"][0]["image"], fg.MIRROR_NEW_IMAGE)
+        self.assertEqual(tasks[0]["containers"][0]["image"], fg.NEW_IMAGE)
         new_rev = next(r for r in c.revisions if r["name"] == c.service["latestReadyRevision"])
         self.assertEqual(new_rev["containers"][0]["image"], fg.MIRROR_NEW_IMAGE)
         # Configuration written by the gate stays the configured tag, so the
@@ -2303,3 +2305,278 @@ class OperationEmbeddedExecutionImage(OwnedExecutionImageRechecks.__bases__[0]):
                         v, fg.MIRROR_NEW_IMAGE, uid=None, job=None))
                     self.assertEqual(self.run_gate(), 0, self.text())
                     self.assertEqual(self.cloud.run_calls(), 1)
+
+
+
+# ---------------------------------------------------------------------------
+# Observed Cloud Run task shape (sanitized real tasks.list response)
+# ---------------------------------------------------------------------------
+#
+# A real successful migration task has no uid, index, retried or reconciling,
+# and lastAttemptResult is {"status": {}} (ProtoJSON omits the zero exit code,
+# signal and status code). Its image is the configured tag while the execution
+# reports the mirror.gcr.io digest. The gate binds the task by its resource
+# name under the owned execution and its execution and job fields.
+
+OBSERVED_TASK_ABSENT = ("uid", "index", "retried", "reconciling")
+OBSERVED_EXECUTION_ABSENT = ("runningCount", "failedCount", "cancelledCount", "retriedCount", "reconciling")
+
+
+def _observed_gate(logs):
+    cfg = gate.Config(project="test-project", region="us-central1", service="fleet-api", job="fleet-migration",
+                      image=fg.NEW_IMAGE, run_id=fg.RUN_ID, job_generation="1", trigger=fg.TRIGGER)
+    g = gate.MigrationGate(cfg, api=None, clock=None, log=logs.append)
+    g.execution_name = fg.OBSERVED["execution"]["name"]
+    return g
+
+
+class ObservedTaskShape(OfflineTestCase):
+    def test_fixture_is_the_observed_shape(self):
+        execution = fg.OBSERVED["execution"]
+        page = fg.OBSERVED["tasks_page"]
+        self.assertEqual(set(page), {"tasks"}, "one page, no nextPageToken")
+        self.assertEqual(len(page["tasks"]), 1)
+        task = page["tasks"][0]
+        self.assertEqual(set(task), {
+            "completionTime", "conditions", "containers", "createTime", "etag", "execution", "generation", "job",
+            "lastAttemptResult", "name", "observedGeneration", "scheduledTime", "serviceAccount", "startTime",
+            "timeout", "updateTime", "vpcAccess"})
+        for field in OBSERVED_TASK_ABSENT:
+            self.assertNotIn(field, task)
+        for field in OBSERVED_EXECUTION_ABSENT:
+            self.assertNotIn(field, execution)
+        self.assertEqual(task["lastAttemptResult"], {"status": {}})
+        self.assertEqual(task["containers"][0]["image"], fg.NEW_IMAGE)
+        self.assertEqual(execution["template"]["containers"][0]["image"], fg.MIRROR_NEW_IMAGE)
+
+    def test_fixture_execution_and_task_verify(self):
+        logs = []
+        g = _observed_gate(logs)
+        execution = copy.deepcopy(fg.OBSERVED["execution"])
+        tasks = copy.deepcopy(fg.OBSERVED["tasks_page"]["tasks"])
+        op = {"name": "projects/test-project/locations/us-central1/operations/x", "done": True,
+              "response": copy.deepcopy(execution)}
+        self.assertEqual(g.evaluate_execution(op, execution), "succeeded")
+        self.assertEqual(g.image_digest, fg.NEW_DIGEST)
+        g.verify_tasks(tasks)
+        # The task's configured tag did not replace or weaken the pinned digest.
+        self.assertEqual(g.image_digest, fg.NEW_DIGEST)
+
+    def test_fixture_task_with_a_well_formed_uid_still_verifies(self):
+        g = _observed_gate([])
+        g.image_digest = fg.NEW_DIGEST
+        task = copy.deepcopy(fg.OBSERVED_TASK)
+        task["uid"] = "0f3c2b1a-0000-4000-8000-000000000000"
+        g.verify_tasks([task])
+
+    def test_fixture_task_refusals(self):
+        exec_name = fg.OBSERVED["execution"]["name"]
+        job_name = exec_name.split("/executions/")[0]
+        cases = {
+            "name_missing": lambda t: t.pop("name"),
+            "name_not_string": lambda t: t.update(name=7),
+            "name_empty_id": lambda t: t.update(name=exec_name + "/tasks/"),
+            "name_nested_id": lambda t: t.update(name=exec_name + "/tasks/a/b"),
+            "name_other_execution": lambda t: t.update(name=job_name + "/executions/other/tasks/other-task0"),
+            "name_execution_prefix_lookalike": lambda t: t.update(name=exec_name + "x/tasks/x-task0"),
+            "name_other_job": lambda t: t.update(name=exec_name.replace("/jobs/fleet-migration/", "/jobs/other/")),
+            "name_short_form": lambda t: t.update(name="fleet-migration-real-task0"),
+            "execution_missing": lambda t: t.pop("execution"),
+            "execution_other": lambda t: t.update(execution="other"),
+            "execution_full_name": lambda t: t.update(execution=exec_name),
+            "job_missing": lambda t: t.pop("job"),
+            "job_other": lambda t: t.update(job="other"),
+            "index_nonzero": lambda t: t.update(index=1),
+            "index_malformed": lambda t: t.update(index="x"),
+            "retried": lambda t: t.update(retried="1"),
+            "reconciling": lambda t: t.update(reconciling=True),
+            "not_completed": lambda t: t.pop("completionTime"),
+            "completed_condition_missing": lambda t: t.update(conditions=[t["conditions"][0]]),
+            "completed_condition_pending": lambda t: t["conditions"][1].update(state="CONDITION_PENDING"),
+            "other_condition_failed": lambda t: t["conditions"][0].update(state="CONDITION_FAILED"),
+            "conditions_malformed": lambda t: t.update(conditions={"type": "Completed"}),
+            "attempt_result_missing": lambda t: t.pop("lastAttemptResult"),
+            "attempt_result_null": lambda t: t.update(lastAttemptResult=None),
+            "exit_code_nonzero": lambda t: t["lastAttemptResult"].update(exitCode=1),
+            "term_signal": lambda t: t["lastAttemptResult"].update(termSignal=15),
+            "status_code_nonzero": lambda t: t["lastAttemptResult"]["status"].update(code=4),
+            "image_other_tag": lambda t: t["containers"][0].update(image=fg.OLD_IMAGE),
+            "image_other_digest": lambda t: t["containers"][0].update(
+                image="mirror.gcr.io/fleetdm/fleet@" + fg.OTHER_DIGEST),
+            "image_other_repository": lambda t: t["containers"][0].update(image="fleetdm/other:v4.93.0"),
+            "image_missing": lambda t: t["containers"][0].pop("image"),
+            "containers_missing": lambda t: t.pop("containers"),
+            "two_containers": lambda t: t["containers"].append({"image": fg.NEW_IMAGE}),
+        }
+        for name, mutate in cases.items():
+            with self.subTest(name=name):
+                g = _observed_gate([])
+                g.image_digest = fg.NEW_DIGEST
+                task = copy.deepcopy(fg.OBSERVED_TASK)
+                mutate(task)
+                with self.assertRaises(gate.GateError):
+                    g.verify_tasks([task])
+        with self.subTest(name="no_task"):
+            with self.assertRaises(gate.GateError):
+                _observed_gate([]).verify_tasks([])
+        with self.subTest(name="extra_task"):
+            second = copy.deepcopy(fg.OBSERVED_TASK)
+            second["name"] = exec_name + "/tasks/fleet-migration-real-task1"
+            second["index"] = 1
+            with self.assertRaises(gate.GateError):
+                _observed_gate([]).verify_tasks([copy.deepcopy(fg.OBSERVED_TASK), second])
+
+    def test_fake_renders_the_observed_task_shape(self):
+        c = self.cloud
+        c.resolve_images()
+        self.assertEqual(self.run_gate(), 0, self.text())
+        view, tasks, _ = c.render_execution(c.executions[0])
+        self.assertEqual(len(tasks), 1)
+        task = tasks[0]
+        self.assertEqual(set(task), set(fg.OBSERVED_TASK))
+        for field in OBSERVED_TASK_ABSENT:
+            self.assertNotIn(field, task)
+        for field in OBSERVED_EXECUTION_ABSENT:
+            self.assertNotIn(field, view)
+        self.assertEqual(task["lastAttemptResult"], {"status": {}})
+        self.assertEqual(task["name"], view["name"] + "/tasks/" + view["name"].rsplit("/", 1)[-1] + "-task0")
+        self.assertEqual(task["containers"][0]["image"], fg.NEW_IMAGE)
+        self.assertEqual(view["template"]["containers"][0]["image"], fg.MIRROR_NEW_IMAGE)
+
+    def test_upgrade_with_observed_task_shape(self):
+        c = self.cloud
+        c.resolve_images()
+        self.assertEqual(self.run_gate(), 0, self.text())
+        self.assertEqual(c.writes(), [("PATCH", "service"), ("PATCH", "service"), ("POST", "run"),
+                                      ("PATCH", "service"), ("PATCH", "service"), ("PATCH", "service")])
+        self.assertEqual(c.run_calls(), 1)
+        self.assertIn("verified successful", self.text())
+        self.assertEqual(c.checkpoint()["phase"], "completed")
+        self.assertEqual(c.service["scaling"], {"scalingMode": "AUTOMATIC", "minInstanceCount": 1})
+        self.assertEqual(c.service["template"]["containers"][0]["image"], fg.NEW_IMAGE)
+        self.assertIn(fg.NEW_DIGEST, self.text())
+        self.assert_no_old_image_restart()
+
+    def test_upgrade_with_observed_task_shape_and_tag_only_revision(self):
+        c = self.cloud
+        c.execution_image = fg.MIRROR_NEW_IMAGE
+        self.assertEqual(self.run_gate(), 0, self.text())
+        self.assertEqual(c.checkpoint()["phase"], "completed")
+        self.assertEqual(c.service["scaling"], {"scalingMode": "AUTOMATIC", "minInstanceCount": 1})
+
+    def test_bootstrap_with_observed_task_shape(self):
+        c = self.cloud = fg.FakeCloud(service=False)
+        c.resolve_images()
+        self.assertEqual(self.run_gate(), 0, self.text())
+        self.assertEqual(c.writes(), [("PATCH", "job"), ("POST", "run"), ("PATCH", "job")])
+        self.assertEqual(c.run_calls(), 1)
+        cp = json.loads(c.job["annotations"][fg.CHECKPOINT])
+        self.assertEqual(cp["phase"], "completed")
+        self.assertEqual(cp["execution"], c.executions[0]["name"])
+        self.assertIsNone(c.service, "the gate never creates the service; Terraform does after it succeeds")
+        self.assertIn("verified successful", self.text())
+
+    def test_task_reporting_the_resolved_digest_still_verifies(self):
+        # Legitimate variant: the task reports the same digest the execution
+        # reported (pinned), instead of the configured tag.
+        for bootstrap in (False, True):
+            with self.subTest(bootstrap=bootstrap):
+                c = self.cloud = fg.FakeCloud(service=not bootstrap)
+                self.logs = []
+                c.resolve_images()
+                c.task_image = fg.MIRROR_NEW_IMAGE
+                self.assertEqual(self.run_gate(), 0, self.text())
+                self.assertEqual(c.run_calls(), 1)
+                _, tasks, _ = c.render_execution(c.executions[0])
+                self.assertEqual(tasks[0]["containers"][0]["image"], fg.MIRROR_NEW_IMAGE)
+                if bootstrap:
+                    self.assertEqual(json.loads(c.job["annotations"][fg.CHECKPOINT])["phase"], "completed")
+                else:
+                    self.assertEqual(c.checkpoint()["phase"], "completed")
+                    self.assert_no_old_image_restart()
+
+    def test_configured_digest_still_requires_the_task_to_report_it(self):
+        # With a configured digest, a task that reports only a tag cannot be
+        # compared with it and fails closed (the digest pin is not weakened).
+        configured = "fleetdm/fleet:v4.93.0@" + fg.NEW_DIGEST
+        environ = _with_configured_image(self.cloud, configured)
+        self.cloud.resolve_images()
+        self.cloud.task_image = fg.NEW_IMAGE
+        self.assertEqual(self.run_gate(environ=environ), 1, self.text())
+        self.assertIn("Migration: " + gate.MIGRATION_UNKNOWN, self.text())
+        self.assert_not_resumed()
+
+
+def _task_mutation(fn):
+    return _ex_hook(_completed_only(lambda v, t, o: fn(v, t)))
+
+
+def _rename_task(name_fn):
+    return _task_mutation(lambda v, t: t[0].update(name=name_fn(v)))
+
+
+TASK_IDENTITY_CASES = {
+    "task_name_missing": _task_mutation(lambda v, t: t[0].pop("name")),
+    "task_name_malformed": _task_mutation(lambda v, t: t[0].update(name=["x"])),
+    "task_name_empty_id": _rename_task(lambda v: v["name"] + "/tasks/"),
+    "task_name_nested_id": _rename_task(lambda v: v["name"] + "/tasks/x/y"),
+    "task_name_other_execution": _rename_task(lambda v: fg.JOB_NAME + "/executions/other/tasks/other-task0"),
+    "task_name_execution_prefix_lookalike": _rename_task(lambda v: v["name"] + "0/tasks/x-task0"),
+    "task_name_other_job_namespace": _rename_task(
+        lambda v: v["name"].replace("/jobs/" + fg.JOB + "/", "/jobs/other/") + "/tasks/x-task0"),
+    "task_execution_missing": _task_mutation(lambda v, t: t[0].pop("execution")),
+    "task_execution_other": _task_mutation(lambda v, t: t[0].update(execution="fleet-migration-other")),
+    "task_job_missing": _task_mutation(lambda v, t: t[0].pop("job")),
+    "task_job_other": _task_mutation(lambda v, t: t[0].update(job="other-job")),
+    "task_missing": _task_mutation(lambda v, t: t.clear()),
+    "task_extra": _task_mutation(lambda v, t: t.append(dict(copy.deepcopy(t[0]), index=1,
+                                                            name=t[0]["name"][:-1] + "1"))),
+    "task_index_nonzero": _task_mutation(lambda v, t: t[0].update(index=1)),
+    "task_retried_string": _task_mutation(lambda v, t: t[0].update(retried="2")),
+    "task_not_completed": _task_mutation(lambda v, t: t[0].pop("completionTime")),
+    "task_reconciling": _task_mutation(lambda v, t: t[0].update(reconciling=True)),
+    "task_completed_failed": _task_mutation(lambda v, t: t[0].update(conditions=[
+        {"type": "Started", "state": fg.OK}, {"type": "Completed", "state": fg.FAILED}])),
+    "task_completed_missing": _task_mutation(lambda v, t: t[0].update(conditions=[{"type": "Started", "state": fg.OK}])),
+    "task_attempt_result_missing": _task_mutation(lambda v, t: t[0].pop("lastAttemptResult")),
+    "task_exit_code_nonzero_observed_shape": _task_mutation(
+        lambda v, t: t[0].update(lastAttemptResult={"status": {}, "exitCode": 3})),
+    "task_term_signal_observed_shape": _task_mutation(
+        lambda v, t: t[0].update(lastAttemptResult={"status": {}, "termSignal": 9})),
+    "task_status_code_observed_shape": _task_mutation(
+        lambda v, t: t[0].update(lastAttemptResult={"status": {"code": 10}})),
+}
+
+
+class TaskIdentityFailures(OfflineTestCase):
+    def setUp(self):
+        super().setUp()
+        self.cloud.resolve_images()  # observed mixed digest/tag shape
+
+
+for _name, _setup in TASK_IDENTITY_CASES.items():
+    setattr(TaskIdentityFailures, "test_no_resume_" + _name, _make_migration_test(_setup, gate.MIGRATION_UNKNOWN))
+
+
+def _make_bootstrap_task_test(setup):
+    def test(self):
+        c = self.cloud = fg.FakeCloud(service=False)
+        c.resolve_images()
+        setup(self)
+        self.assertEqual(self.run_gate(), 1, self.text())
+        self.assertEqual(c.run_calls(), 1)
+        self.assertIn("Migration: " + gate.MIGRATION_UNKNOWN, self.text())
+        self.assertEqual(json.loads(c.job["annotations"][fg.CHECKPOINT])["phase"], "bootstrap-migrating")
+        self.assertIsNone(c.service)
+    return test
+
+
+class BootstrapTaskIdentityFailures(OfflineTestCase):
+    pass
+
+
+for _name in ("task_name_missing", "task_name_other_execution", "task_execution_other", "task_job_other",
+              "task_missing", "task_extra", "task_index_nonzero", "task_not_completed", "task_attempt_result_missing",
+              "task_exit_code_nonzero_observed_shape"):
+    setattr(BootstrapTaskIdentityFailures, "test_never_completes_" + _name,
+            _make_bootstrap_task_test(TASK_IDENTITY_CASES[_name]))

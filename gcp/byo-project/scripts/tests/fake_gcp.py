@@ -2,17 +2,35 @@
 used by fleet_migration_gate.py. Test fixture only: nothing here talks to a
 network, reads credentials or runs a subprocess.
 
-The fake is deliberately simple and models only the documented contracts the
-gate relies on. It is not evidence of how Google behaves; it lets the tests
-drive every branch of the gate deterministically.
+The fake is deliberately simple and models only the contracts the gate relies
+on. Task and completed-execution shapes are rendered from a sanitized capture
+of a real successful run (fixtures/cloud_run_observed_success.json); the rest
+is not evidence of how Google behaves. It lets the tests drive every branch of
+the gate deterministically.
 """
 
 import copy
 import email.utils
 import json
 import math
+import os
 import re
 import urllib.parse
+
+FIXTURE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
+
+
+def load_fixture(name):
+    with open(os.path.join(FIXTURE_DIR, name), encoding="utf-8") as f:
+        return json.load(f)
+
+
+# Sanitized Cloud Run v2 execution and tasks.list page of a real successful
+# migration run (see its _provenance). The fake renders tasks in exactly this
+# shape: no uid, index or retried, ProtoJSON zeros omitted, and the task image
+# reported as configured while the execution may report a resolved digest.
+OBSERVED = load_fixture("cloud_run_observed_success.json")
+OBSERVED_TASK = OBSERVED["tasks_page"]["tasks"][0]
 
 PROJECT = "fleet-test-project"
 REGION = "us-central1"
@@ -20,9 +38,10 @@ SERVICE = "fleet-api"
 JOB = "fleet-migration"
 OLD_IMAGE = "fleetdm/fleet:v4.92.0"
 NEW_IMAGE = "fleetdm/fleet:v4.93.0"
-# What Cloud Run reports at runtime for NEW_IMAGE (observed shape: the job
-# keeps the configured tag; the execution, its task and revisions report the
-# Docker Hub tag resolved through Google's mirror to a digest).
+# What Cloud Run reports at runtime for NEW_IMAGE (observed shape: the job and
+# the execution's task keep the configured tag; the execution reports the
+# Docker Hub tag resolved through Google's mirror to a digest, as revisions
+# may).
 NEW_DIGEST = "sha256:fc2e73a94563fe64325ceaffba04e6ca4e0557e2dfb606100d3a8d77e0a2a80f"
 OTHER_DIGEST = "sha256:" + "0123456789abcdef" * 4
 MIRROR_NEW_IMAGE = "mirror.gcr.io/fleetdm/fleet@" + NEW_DIGEST
@@ -159,10 +178,14 @@ class FakeCloud:
         self.execution_hook = None  # callable(execution, tasks, op) mutates
         self.new_revision_ready = True
         self.new_revision_image = None  # image a created revision reports (default: its template's)
-        # Images the owned execution's template and its task report. None
-        # keeps the old fixture shape (the job's configured image string).
+        # Image the owned execution's template reports. None reports the
+        # job's configured image string; resolve_images() sets the observed
+        # mirror.gcr.io digest.
         self.execution_image = None
-        self.task_image = None  # default: the execution's image
+        # Image the task reports. None keeps the observed shape: the task
+        # reports the job's configured image string even when the execution
+        # reports a resolved digest.
+        self.task_image = None
         self.reflect_revision_name = True
         self.new_revision_hook = None  # callable(revision) mutates a created revision
         self.revision_seq = 2
@@ -259,9 +282,9 @@ class FakeCloud:
 
     def resolve_images(self, image=MIRROR_NEW_IMAGE):
         """Report runtime images the way Cloud Run does for a Docker Hub tag:
-        the execution, its task and newly created revisions show the
-        mirror.gcr.io digest; the job and service templates keep the
-        configured string."""
+        the execution and newly created revisions show the mirror.gcr.io
+        digest; the job and service templates and the execution's task
+        (observed) keep the configured string."""
         self.execution_image = image
         self.new_revision_image = image
 
@@ -507,30 +530,43 @@ class FakeCloud:
             "generation": "1",
             "observedGeneration": "1",
         })
+        configured_containers = copy.deepcopy(view["template"]["containers"])
         if self.execution_image is not None:
             view["template"]["containers"][0]["image"] = self.execution_image
-        task_short = view["name"].rsplit("/", 1)[-1] + "-0"
-        task = {
-            "name": f"{view['name']}/tasks/{task_short}",
-            "uid": "task-uid",
+        ex_short = view["name"].rsplit("/", 1)[-1]
+        # Start from the observed task and rebind it to this execution. The
+        # observed in-progress fields are dropped and set per outcome below.
+        task = copy.deepcopy(OBSERVED_TASK)
+        for field in ("completionTime", "lastAttemptResult", "conditions"):
+            task.pop(field)
+        task.update({
+            "name": f"{view['name']}/tasks/{ex_short}-task0",
+            "execution": ex_short,
             "job": JOB,
-            "execution": view["name"].rsplit("/", 1)[-1],
-            "containers": copy.deepcopy(view["template"]["containers"]),
-            "maxRetries": 0,
-        }
+            "containers": configured_containers,
+            "timeout": view["template"]["timeout"],
+            "createTime": ts(ex["_start"]),
+            "scheduledTime": ts(ex["_start"]),
+            "startTime": ts(ex["_start"]),
+            "updateTime": ts(self.now()),
+        })
         if self.task_image is not None:
             task["containers"][0]["image"] = self.task_image
         op = {"name": ex["_op"], "metadata": {"name": view["name"]}}
         finished = self.now() >= ex["_start"] + self.migration_duration and self.outcome != "never"
         if not finished:
             view["runningCount"] = 1
-            task["conditions"] = [{"type": "Completed", "state": "CONDITION_PENDING"}]
+            task["conditions"] = [{"type": "Started", "state": OK}, {"type": "Completed", "state": "CONDITION_PENDING"}]
         elif self.outcome in ("success",):
+            # Observed: counts that are zero (running/failed/cancelled/
+            # retried) and reconciling=false are omitted.
             view.update({"completionTime": ts(self.now()), "succeededCount": 1,
-                         "conditions": [{"type": "Completed", "state": OK}, {"type": "ResourcesAvailable", "state": OK}]})
-            # Standard ProtoJSON omits default int32 zeros from a successful result.
-            task.update({"completionTime": ts(self.now()), "lastAttemptResult": {"status": {}},
-                         "conditions": [{"type": "Completed", "state": OK}]})
+                         "conditions": copy.deepcopy(OBSERVED["execution"]["conditions"])})
+            # Observed: a successful attempt is {"status": {}} (exit code,
+            # signal and status code are ProtoJSON default zeros, omitted).
+            task.update({"completionTime": ts(self.now()),
+                         "lastAttemptResult": copy.deepcopy(OBSERVED_TASK["lastAttemptResult"]),
+                         "conditions": copy.deepcopy(OBSERVED_TASK["conditions"])})
             op.update({"done": True, "response": copy.deepcopy(view)})
         elif self.outcome == "fail":
             view.update({"completionTime": ts(self.now()), "failedCount": 1,

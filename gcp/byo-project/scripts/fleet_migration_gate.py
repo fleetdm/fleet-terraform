@@ -1624,17 +1624,34 @@ class MigrationGate:
              "template": execution.get("template")}, "execution", runtime=True)
 
     def verify_tasks(self, tasks):
+        """The owned execution's single task completed one successful attempt.
+
+        Identity: Cloud Run v2 may omit Task.uid (the field is documented
+        but absent from observed tasks.list responses),
+        so the task is bound by what the API does return: its full resource
+        name, which must be exactly one task-id segment under this run's own
+        execution (itself bound by the :run operation, its uid, the pinned
+        job generation and the execution inventory), and its execution and
+        job fields, which must name that execution and this job. The listing
+        is the owned execution's own tasks collection and must hold exactly
+        one task. A uid is neither required nor used.
+        """
         self.check(len(tasks) == 1, "the execution must have exactly one task")
         task = tasks[0]
         try:
+            # Task.index and Task.retried are plain proto3 int32 fields:
+            # ProtoJSON omits them when they are 0.
             index = proto_int(task, "index")
             retried = proto_int(task, "retried")
             conditions_of(task)
         except ValueError:
             self.fail("task status is malformed")
-        self.check(isinstance(task.get("name"), str) and task["name"].startswith(self.execution_name + "/tasks/")
-                   and task.get("uid"), "task identity is missing")
+        name = task.get("name")
+        self.check(isinstance(name, str)
+                   and re.fullmatch(re.escape(self.execution_name) + r"/tasks/[^/]+", name),
+                   "task name is missing or is not a task of this run's execution")
         self.check(task.get("execution") == short_name(self.execution_name), "task belongs to another execution")
+        self.check(task.get("job") == self.cfg.job, "task belongs to another job")
         self.check(index == 0 and retried == 0, "task was retried or is not the only task")
         self.check(task.get("completionTime") and task.get("reconciling", False) is False, "task has not completed")
         self.check(has_condition(task, "Completed", CONDITION_SUCCEEDED) and not any_failed_condition(task),

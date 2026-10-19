@@ -1,0 +1,90 @@
+{
+  "_provenance": [
+    "Synthetic fixture modelled on Cloud Run Admin API v2 responses for a migration job execution that completed successfully (one task). It reproduces the OBSERVED legacy API format and shape with FICTIONAL data; it is not a copy of any live payload and none of its identifiers or timestamps identify a real resource or run.",
+    "Observed (structure only): every key present in the task object (and only those) and in the execution object; field types (generation/observedGeneration as strings, counts as numbers); the condition types and completion states; lastAttemptResult carrying an empty status; the task image in configured-tag form while the execution image is in mirror.gcr.io digest form.",
+    "Observed absent from the task: uid, index, retried, reconciling, lastAttemptResult.exitCode, lastAttemptResult.termSignal, lastAttemptResult.status.code. Observed absent from the execution: runningCount, failedCount, cancelledCount, retriedCount, reconciling.",
+    "The tasks.list page held one task and no nextPageToken.",
+    "Fictional (synthetic placeholders, not observed values): the project id; the execution and task names and short-name suffixes; the execution uid; every timestamp (all dates are a synthetic 2025-01-01 and only their relative ordering and RFC 3339 format matter); etags; serviceAccount; vpcAccess and other address/network settings; timeout values. The task container's env and resources were stripped. The job and container image references are the module's generic default job name and public Fleet image references.",
+    "execution.parallelism, execution.template.maxRetries and execution.template.timeout are included because the gate's execution checks require them; their values here are the module's configured values."
+  ],
+  "execution": {
+    "name": "projects/test-project/locations/us-central1/jobs/fleet-migration/executions/fleet-migration-real",
+    "uid": "00000000-0000-4000-8000-0000000000e1",
+    "job": "fleet-migration",
+    "generation": "1",
+    "observedGeneration": "1",
+    "taskCount": 1,
+    "parallelism": 1,
+    "succeededCount": 1,
+    "createTime": "2025-01-01T12:00:00.000000Z",
+    "startTime": "2025-01-01T12:00:01.000000Z",
+    "completionTime": "2025-01-01T12:02:56.000000Z",
+    "conditions": [
+      {
+        "type": "ResourcesAvailable",
+        "state": "CONDITION_SUCCEEDED"
+      },
+      {
+        "type": "Started",
+        "state": "CONDITION_SUCCEEDED"
+      },
+      {
+        "type": "ContainerReady",
+        "state": "CONDITION_SUCCEEDED"
+      },
+      {
+        "type": "Completed",
+        "state": "CONDITION_SUCCEEDED"
+      }
+    ],
+    "template": {
+      "maxRetries": 0,
+      "timeout": "3600s",
+      "containers": [
+        {
+          "image": "mirror.gcr.io/fleetdm/fleet@sha256:fc2e73a94563fe64325ceaffba04e6ca4e0557e2dfb606100d3a8d77e0a2a80f"
+        }
+      ]
+    }
+  },
+  "tasks_page": {
+    "tasks": [
+      {
+        "name": "projects/test-project/locations/us-central1/jobs/fleet-migration/executions/fleet-migration-real/tasks/fleet-migration-real-task0",
+        "execution": "fleet-migration-real",
+        "job": "fleet-migration",
+        "generation": "1",
+        "observedGeneration": "1",
+        "createTime": "2025-01-01T12:00:00.500000Z",
+        "scheduledTime": "2025-01-01T12:00:00.600000Z",
+        "startTime": "2025-01-01T12:00:01.000000Z",
+        "completionTime": "2025-01-01T12:02:56.000000Z",
+        "updateTime": "2025-01-01T12:02:56.100000Z",
+        "etag": "\"sanitized-task-etag\"",
+        "conditions": [
+          {
+            "type": "Started",
+            "state": "CONDITION_SUCCEEDED"
+          },
+          {
+            "type": "Completed",
+            "state": "CONDITION_SUCCEEDED"
+          }
+        ],
+        "lastAttemptResult": {
+          "status": {}
+        },
+        "containers": [
+          {
+            "image": "fleetdm/fleet:v4.93.0"
+          }
+        ],
+        "serviceAccount": "sanitized@test-project.iam.gserviceaccount.com",
+        "timeout": "3600s",
+        "vpcAccess": {
+          "egress": "PRIVATE_RANGES_ONLY"
+        }
+      }
+    ]
+  }
+}
