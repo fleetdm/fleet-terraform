@@ -117,7 +117,7 @@ jobs:
           branch: update-go-${{ steps.check.outputs.new_version }}
           delete-branch: true
           title: Update Go to ${{ steps.check.outputs.new_version }} in Lambda modules [automated]
-          assignees: lucasmrod,getvictor,JordanMontgomery,cdcme
+          assignees: georgekarrv,lukeheath,rfairburn
           commit-message: |
             Update Go to ${{ steps.check.outputs.new_version }} in Lambda modules [automated]
 
