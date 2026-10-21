@@ -326,13 +326,20 @@ variable "allow_destroy" {
 }
 
 variable "load_balancer_config" {
-  description = "Load balancer configuration"
+  description = <<-EOT
+    Load balancer configuration.
+
+    create_static_ip is a legacy input with no effect (no-op) on either load
+    balancer path: the regional load balancer always reserves one shared static
+    IP address for HTTP and HTTPS, and the global load balancer's lb-http module
+    already creates its global address. Setting it changes nothing.
+  EOT
   type = object({
     enable              = optional(bool, true)
     use_regional_lb     = optional(bool, false)
     https_redirect      = optional(bool, true)
     create_managed_cert = optional(bool, true)
-    create_static_ip    = optional(bool, false)
+    create_static_ip    = optional(bool, false) # Legacy no-op; see description.
     backend_timeout_sec = optional(number, 30)
     log_sample_rate     = optional(number, 1.0)
     proxy_subnet_cidr   = optional(string, "10.129.0.0/23")

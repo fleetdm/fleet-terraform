@@ -4,6 +4,9 @@ name: gcp-terraform-test
 # Cloud-facing providers are mocked in the *.tftest.hcl files, so no cloud
 # credentials or secrets are needed and nothing is planned or applied against
 # a real GCP project. The wait-specific tests also mock the time provider.
+# Each tftest job pins hashicorp/google and hashicorp/google-beta to one exact
+# version with a CI-only override file (never committed), then checks the
+# versions Terraform actually selected before running the suite.
 # The migration gate controller (gcp/byo-project/scripts) is covered by
 # offline Python unit tests with a fake API, auth and clock; network and
 # subprocess access are blocked inside those tests.
@@ -40,7 +43,7 @@ permissions:
 
 jobs:
   tftest:
-    name: terraform test (${{ matrix.terraform_dir }}, TF ${{ matrix.terraform_version }})
+    name: terraform test (${{ matrix.terraform_dir }}, TF ${{ matrix.terraform_version }}, google ${{ matrix.google_provider_version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -53,9 +56,16 @@ jobs:
         terraform_version:
           - 1.12.0
           - 1.14.5
+        # Exact hashicorp/google and hashicorp/google-beta versions (both are
+        # pinned to the same value). 6.35.0 is the minimum allowed by the
+        # modules' ">= 6.35.0" constraints; 6.50.0 is the newer tested baseline.
+        google_provider_version:
+          - 6.35.0
+          - 6.50.0
     env:
       TF_IN_AUTOMATION: 'true'
       TF_INPUT: '0'
+      GOOGLE_PROVIDER_VERSION: ${{ matrix.google_provider_version }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@63c24ba6bd7ba022e95695ff85de572c04a18142 # v2.7.0
@@ -72,9 +82,70 @@ jobs:
         with:
           terraform_version: ${{ matrix.terraform_version }}
 
+      # CI-only pin. Terraform merges required_providers in *_override.tf files
+      # entry by entry, so only google and google-beta get the exact version.
+      # The delivered ">= 6.35.0" constraints, terracurl (devops-rob/terracurl)
+      # and time are untouched. No lock file is committed, so init resolves the
+      # pin from scratch.
+      - name: Pin google/google-beta ${{ matrix.google_provider_version }} (CI-only override)
+        working-directory: ${{ matrix.terraform_dir }}
+        run: |
+          cat > zz_ci_google_provider_pin_override.tf <<EOF
+          terraform {
+            required_providers {
+              google = {
+                source  = "hashicorp/google"
+                version = "${GOOGLE_PROVIDER_VERSION}"
+              }
+              google-beta = {
+                source  = "hashicorp/google-beta"
+                version = "${GOOGLE_PROVIDER_VERSION}"
+              }
+            }
+          }
+          EOF
+          cat zz_ci_google_provider_pin_override.tf
+
       - name: Init ${{ matrix.terraform_dir }}
         working-directory: ${{ matrix.terraform_dir }}
         run: terraform init -backend=false
+
+      # Fails the job unless init selected exactly the pinned google and
+      # google-beta versions (per `terraform version -json` and the lock file
+      # init wrote), with terracurl and time still resolved from their sources.
+      - name: Verify selected provider versions
+        working-directory: ${{ matrix.terraform_dir }}
+        run: |
+          terraform version -json > "${RUNNER_TEMP}/tf-version.json"
+          python3 - "${RUNNER_TEMP}/tf-version.json" .terraform.lock.hcl <<'PY'
+          import json, os, re, sys
+
+          want = os.environ["GOOGLE_PROVIDER_VERSION"]
+          sel = json.load(open(sys.argv[1]))["provider_selections"]
+          lock = dict(re.findall(
+              r'^provider "([^"]+)" \{\s*\n\s*version\s*=\s*"([^"]+)"',
+              open(sys.argv[2]).read(),
+              re.MULTILINE,
+          ))
+          print(json.dumps(sel, indent=2, sort_keys=True))
+          errors = []
+          for addr in (
+              "registry.terraform.io/hashicorp/google",
+              "registry.terraform.io/hashicorp/google-beta",
+          ):
+              for where, got in (("selected", sel.get(addr)), ("locked", lock.get(addr))):
+                  if got != want:
+                      errors.append(f"{addr}: {where} {got!r}, expected {want!r}")
+          for addr in (
+              "registry.terraform.io/devops-rob/terracurl",
+              "registry.terraform.io/hashicorp/time",
+          ):
+              if addr not in sel or addr not in lock:
+                  errors.append(f"{addr}: not selected")
+          if errors:
+              sys.exit("Provider selection check failed:\n" + "\n".join(errors))
+          print(f"OK: google and google-beta {want}")
+          PY
 
       - name: Test ${{ matrix.terraform_dir }} (mocked providers)
         working-directory: ${{ matrix.terraform_dir }}
