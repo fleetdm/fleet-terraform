@@ -25,7 +25,7 @@ locals {
     FLEET_MYSQL_DATABASE   = var.database_config.database_name
     FLEET_REDIS_ADDRESS    = "${module.memstore.host}:${module.memstore.port}"
     FLEET_REDIS_USE_TLS    = "false"
-    #FLEET_UPGRADES_ALLOW_MISSING_MIGRATIONS          = "1"
+    FLEET_UPGRADES_ALLOW_MISSING_MIGRATIONS          = "1"
     FLEET_LOGGING_JSON                               = "true"
     FLEET_LOGGING_DEBUG                              = var.fleet_config.debug_logging
     FLEET_SERVER_TLS                                 = "false"
@@ -120,6 +120,7 @@ module "fleet-service" {
 
 # --- Cloud Run Job (Migrations) ---
 resource "google_cloud_run_v2_job" "fleet_migration_job" {
+  deletion_protection = false
 
   name     = "fleet-migration"
   location = var.region
@@ -200,6 +201,11 @@ resource "terracurl_request" "exec" {
   destroy_headers = {
     Authorization = "Bearer ${data.google_client_config.default.access_token}"
     Content-Type  = "application/json",
+  }
+
+  lifecycle {
+    # Bearer token rotates each apply, ignore to prevent spurious replacements
+    ignore_changes = [headers, destroy_headers]
   }
 }
 
