@@ -1,0 +1,9 @@
+---
+- name: Configure Fleet host
+  hosts: localhost
+  become: true
+  connection: local
+  gather_facts: false
+  roles:
+    - fleet
+    - nginx
