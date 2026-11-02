@@ -538,6 +538,8 @@ def scenario_restore_lro_error(r):
     r.save_events("s13-fail", evs)
     r.check(sc, "apply FAILS (not silent success)", rc != 0, "rc=%d" % rc)
     r.check(sc, "failure names the restore read-back", "Restore did not take effect" in out)
+    r.check(sc, "failed restore diagnostic is static and sensitivity-safe (sensitive min input)", no_sensitive_diagnostic(out),
+            flat(out)[-400:])
     r.check(sc, "the failed restore LRO was actually returned", any(e["kind"] == "service_masked_patch_failed_lro" for e in evs))
     r.check(sc, "migration ran exactly once and succeeded",
             sum(e["kind"] == "execution_finished" and e["details"]["outcome"] == "success" for e in evs) == 1)
@@ -562,6 +564,18 @@ def scenario_restore_lro_error(r):
 def flat(out):
     """Terraform wraps diagnostics; compare messages on collapsed whitespace."""
     return " ".join(out.split())
+
+
+def no_sensitive_diagnostic(out):
+    """Terraform refuses an error_message that interpolates sensitive values:
+    it prints 'Error message refers to sensitive values' plus 'invalid error
+    message' instead of the intended diagnostic. A static message must never
+    produce either (the fixture passes a sensitive min_instance_count, like the
+    real GCP root's sensitive fleet_config)."""
+    low = flat(out).lower()
+    return ("error message refers to sensitive values" not in low
+            and "invalid error message" not in low
+            and "sensitive values" not in low)
 
 
 def tf_line(out, needle):
@@ -591,6 +605,8 @@ def scenario_image_contract(r):
         rc, out = r.apply("s14b-fail", "-var", "image=" + image)
         r.save_events("s14b-fail", r.events_since(s0))
         r.check(sc2, "restore LRO error fails the apply", rc != 0 and "Restore did not take effect" in out, "rc=%d" % rc)
+        r.check(sc2, "failed restore diagnostic is static and sensitivity-safe (sensitive min input)", no_sensitive_diagnostic(out),
+                flat(out)[-400:])
         s1 = r.seq()
         rc2, _ = r.apply("s14b-retry", "-var", "image=" + image)
         evs2 = r.events_since(s1)
@@ -613,6 +629,8 @@ def scenario_restore_settlement(r, mode, image, label, settle_before_retry):
     evs = r.events_since(s0)
     r.save_events("%s-fail" % label, evs)
     r.check(sc, "first apply FAILS (desired fields alone are not a restore)", rc != 0 and "has not settled" in flat(out), "rc=%d" % rc)
+    r.check(sc, "failed restore diagnostic is static and sensitivity-safe (sensitive min input)", no_sensitive_diagnostic(out),
+            flat(out)[-400:])
     r.check(sc, "migration ran exactly once and succeeded",
             sum(e["kind"] == "execution_finished" and e["details"]["outcome"] == "success" for e in evs) == 1)
     st = r.get("/_state")["services"][SVC]
@@ -640,6 +658,54 @@ def scenario_restore_settlement(r, mode, image, label, settle_before_retry):
             and st.get("observedGeneration") == st.get("generation") and st["terminalCondition"]["state"] == "CONDITION_SUCCEEDED",
             json.dumps([st["scaling"], st.get("generation"), st.get("observedGeneration"), st["terminalCondition"]]))
     noop_checks(r, sc, label, "-var", "image=" + image)
+
+
+def scenario_transient_restore_settles(r):
+    """A healthy restore must wait through the normal transient RECONCILING
+    state inside ONE apply. The fake reports the desired marker + AUTOMATIC/min
+    but an unsettled observed side for several successive reads, then settles
+    by itself, with no new PATCH and no new revision."""
+    sc = "S18 healthy transient restore settles within one apply"
+    image = "fleetdm/fleet:v5.5.0"
+    r.control(restore_settle_outcomes=["pending_then_settle"], restore_settle_reads=3)
+    s0 = r.seq()
+    rc, out = r.apply("s18-transient", "-var", "image=" + image)
+    evs = r.events_since(s0)
+    r.save_events("s18-transient", evs)
+    r.check(sc, "apply succeeded (one apply, no manual retry)", rc == 0, "rc=%d" % rc)
+    r.check(sc, "successful restore diagnostic path is sensitivity-safe (sensitive min input)", no_sensitive_diagnostic(out),
+            flat(out)[-400:])
+    r.check(sc, "migration ran exactly once",
+            sum(e["kind"] == "execution_finished" and e["details"]["outcome"] == "success" for e in evs) == 1)
+    restores = [e for e in evs if masked("AUTOMATIC")(e)]
+    r.check(sc, "exactly one restore PATCH", len(restores) == 1, "n=%d" % len(restores))
+    if restores:
+        after = evs[evs.index(restores[-1]) + 1:]
+        # The restore's own best-effort operations.wait (a POST) is expected;
+        # everything after it must be read-only.
+        waits = [i for i, e in enumerate(after) if e["kind"] == "operation_wait"]
+        after_wait = after[waits[-1] + 1:] if waits else after
+        r.check(sc, "no further writes, revision or execution after the restore's operation wait",
+                not writes(after_wait)
+                and not any(e["kind"] in ("revision_created", "job_created", "execution_started") for e in after_wait),
+                json.dumps([e["kind"] for e in after_wait if e["kind"] != "http"])[:600])
+        pending = [e for e in after_wait if e["kind"] == "restore_settle_read"
+                   and e["details"]["observedGeneration"] != e["details"]["generation"]]
+        r.check(sc, "control plane was pending on several successive reads before it settled",
+                len(pending) >= 3 and pending[0]["details"]["observedGeneration"] != pending[0]["details"]["generation"],
+                json.dumps([e["details"] for e in pending])[:600])
+        r.check(sc, "the read that settled the service needed no new PATCH or revision",
+                any(e["kind"] == "restore_settled_on_read" for e in after_wait),
+                json.dumps([e["kind"] for e in after_wait if e["kind"] != "http"])[:600])
+    st = r.get("/_state")["services"][SVC]
+    r.check(sc, "settled automatically: observed generation, Ready SUCCEEDED, marker, AUTOMATIC/min, nothing held",
+            st["scaling"] == {"scalingMode": "AUTOMATIC", "minInstanceCount": 1}
+            and not st.get("_held") and st.get("observedGeneration") == st.get("generation")
+            and st["terminalCondition"]["state"] == "CONDITION_SUCCEEDED"
+            and "fleetdm.com/lifecycle-restored" in st.get("annotations", {}),
+            json.dumps([st["scaling"], st.get("_held"), st.get("generation"), st.get("observedGeneration"), st["terminalCondition"]]))
+    r.control(restore_settle_outcomes=[], restore_settle_reads=3)
+    noop_checks(r, sc, "s18", "-var", "image=" + image)
 
 
 def scenario_fresh_stop_fresh_drain(r):
@@ -850,6 +916,8 @@ def scenario_proven_job_recreated_unsettled_restore(r):
     r.save_events("s11b-fail", evs)
     r.check(sc, "restore re-sent for the new job UID; unsettled read-back FAILS the apply (no pre-apply snapshot shortcut)",
             rc != 0 and "has not settled" in flat(out) and any(masked("AUTOMATIC")(e) for e in evs), "rc=%d" % rc)
+    r.check(sc, "failed restore diagnostic is static and sensitivity-safe (sensitive min input)", no_sensitive_diagnostic(out),
+            flat(out)[-400:])
     jc = [e for e in evs if e["kind"] == "job_created"]
     r.check(sc, "deleted job re-created WITHOUT run_execution_token; no execution, no stop",
             len(jc) == 1 and not jc[0]["details"]["token"] and not any(e["kind"] == "execution_started" for e in evs)
@@ -889,6 +957,7 @@ SCENARIOS = [
     ("s15c", lambda r: scenario_restore_settlement(r, "cp_failed", "fleetdm/fleet:v5.1.2", "s15c", False)),
     ("s16", scenario_fresh_stop_fresh_drain),
     ("s17", scenario_earlier_executions),
+    ("s18", scenario_transient_restore_settles),
     ("s12", scenario_hard_kill),
 ]
 

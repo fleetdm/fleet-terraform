@@ -25,7 +25,12 @@ not knowledge of Google behaviour:
     annotations) always stores the desired fields and bumps generation; per
     control "restore_settle_outcomes" the observed side may lag
     (observedGeneration held back, reconciling, or Ready FAILED) until
-    /_inject settle_service or the next provider PATCH.
+    /_inject settle_service or the next provider PATCH. The value
+    "pending_then_settle" behaves like "pending" but settles automatically
+    after control "restore_settle_reads" (default 3) reads whose `fields` mask
+    is the module's restore read-back (annotations,scaling,...), with no new
+    PATCH or revision: a healthy transient restore for the module's bounded
+    settlement checks. Other service GETs do not move that counter.
   * image reporting: control "image_report" (as_sent | alias | absent)
     rewrites/omits template.containers[].image in masked (`fields`) service
     GETs, i.e. what the lifecycle module's own REST reads would see if they
@@ -72,9 +77,12 @@ CONTROL = {
     "restore_patch_outcomes": [],
     # per APPLIED restore PATCH: "settled" | "lag_success" (desired stored,
     # Ready SUCCEEDED, observedGeneration held back) | "pending" (also
-    # reconciling, Ready RECONCILING, LRO not done) | "cp_failed" (observed,
-    # Ready FAILED)
+    # reconciling, Ready RECONCILING, LRO not done) | "pending_then_settle"
+    # (same as pending, but the observed side catches up automatically after
+    # control "restore_settle_reads" masked service GETs, with no new PATCH or
+    # revision) | "cp_failed" (observed, Ready FAILED)
     "restore_settle_outcomes": [],
+    "restore_settle_reads": 3,
     "executions_list_mode": "ok",      # ok | truncated | malformed | forbidden
     "image_report": "as_sent",         # as_sent | alias | absent (masked service GETs only)
 }
@@ -264,11 +272,28 @@ def complete_execution(ex, ok=True):
 def settle_service(svc):
     """Observed side catches up with the desired spec."""
     held = svc.pop("_held", None)
+    svc.pop("_settle_reads", None)
     svc["observedGeneration"] = svc["generation"]
     svc["reconciling"] = False
-    if held in ("lag_success", "pending"):
+    if held in ("lag_success", "pending", "pending_then_settle"):
         svc["terminalCondition"] = {"type": "Ready", "state": "CONDITION_SUCCEEDED", "lastTransitionTime": now()}
     return held
+
+
+def maybe_settle_on_read(svc):
+    """pending_then_settle: catch up after N service reads, no PATCH/revision."""
+    if not svc or svc.get("_held") != "pending_then_settle":
+        return None
+    left = int(svc.get("_settle_reads", 0)) - 1
+    svc["_settle_reads"] = left
+    event("restore_settle_read", service=svc["name"], generation=svc.get("generation"),
+          observedGeneration=svc.get("observedGeneration"), reconciling=svc.get("reconciling"),
+          remaining_until_settle=max(left, 0))
+    if left > 0:
+        return None
+    settle_service(svc)
+    event("restore_settled_on_read", service=svc["name"])
+    return svc.get("generation")
 
 
 def deploy_revision(svc):
@@ -418,6 +443,10 @@ class Handler(BaseHTTPRequestHandler):
         if method == "GET":
             if not svc:
                 return self._err(404, "NOT_FOUND", "fake: service not found")
+            # Only the module's restore read-back counts as a settlement read;
+            # provider/other status GETs must not move the fake clock.
+            if "fields" in qs and qs["fields"][0].startswith("annotations,scaling,"):
+                maybe_settle_on_read(svc)
             obj = public(svc)
             if "fields" in qs:
                 if "image" in qs["fields"][0]:
@@ -479,6 +508,12 @@ class Handler(BaseHTTPRequestHandler):
                     svc["_held"] = settle  # observedGeneration stays at the previous value
                 elif settle == "pending":
                     svc["_held"] = settle
+                    svc["reconciling"] = True
+                    svc["terminalCondition"] = {"type": "Ready", "state": "CONDITION_RECONCILING",
+                                                "lastTransitionTime": now()}
+                elif settle == "pending_then_settle":
+                    svc["_held"] = settle
+                    svc["_settle_reads"] = int(CONTROL["restore_settle_reads"])
                     svc["reconciling"] = True
                     svc["terminalCondition"] = {"type": "Ready", "state": "CONDITION_RECONCILING",
                                                 "lastTransitionTime": now()}
@@ -630,7 +665,7 @@ class Handler(BaseHTTPRequestHandler):
         p = entry["pending"]
         if p and "service_done" in p and not entry["op"]["done"]:
             held = STATE["services"].get(p.get("service"), {}).get("_held")
-            if held != "pending":
+            if held not in ("pending", "pending_then_settle"):
                 entry["op"]["done"] = True
                 entry["op"]["response"] = p["service_done"]
         elif p and "job" in p:

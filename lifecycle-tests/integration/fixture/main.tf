@@ -29,6 +29,23 @@ variable "extra_env" {
   default = {}
 }
 
+# Mirrors the real GCP root: fleet_config is sensitive as a whole, so the min
+# instance count it forwards carries a sensitivity mark. The module must not
+# interpolate it into lifecycle error diagnostics (Terraform then refuses the
+# message and emits a warning instead of the real failure).
+variable "min_instance_count" {
+  type      = number
+  sensitive = true
+  default   = 1
+}
+
+# Short backoff for the module's bounded control-plane settlement checks: the
+# real default is 30s (30 + 60 + 120); tests must not wait minutes.
+variable "restore_settle_interval_seconds" {
+  type    = number
+  default = 1
+}
+
 variable "drain_seconds" {
   type    = number
   default = 2
@@ -64,7 +81,7 @@ module "lifecycle" {
   vpc_subnetwork        = "fleet-subnet"
   cpu                   = "1000m"
   memory                = "4096Mi"
-  min_instance_count    = 1
+  min_instance_count    = var.min_instance_count
   max_instance_count    = 5
   env = merge({
     FLEET_LICENSE_KEY    = "fake-license-not-real"
@@ -83,6 +100,8 @@ module "lifecycle" {
   drain_seconds          = var.drain_seconds
   operation_wait_seconds = 5
   job_create_timeout     = "10m"
+
+  restore_settle_interval_seconds = var.restore_settle_interval_seconds
 }
 
 output "identity" {

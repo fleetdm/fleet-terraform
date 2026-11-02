@@ -11,6 +11,7 @@
 #   -> Service update/create still MANUAL/0 with the target template
 #      (provider waits for the Ready revision)
 #   -> restore PATCH (AUTOMATIC/min + success marker = identity UUID)
+#   -> bounded, read-only control-plane settlement checks (restore_settlement.tf)
 #   -> restore read-back: marker + AUTOMATIC/min AND a settled control plane.
 #
 # Image contract: var.image (the caller's literal fleet_config.image_tag, e.g.

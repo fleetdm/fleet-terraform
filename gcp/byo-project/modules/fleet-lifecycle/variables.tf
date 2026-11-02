@@ -184,6 +184,22 @@ variable "operation_wait_seconds" {
   default     = 120
 }
 
+variable "restore_settle_interval_seconds" {
+  description = <<-EOT
+    Base interval of the bounded, read-only control-plane checks after the
+    restore PATCH. The checks wait at most 1x, 2x and 4x this interval (default
+    30 => 210s total) and skip a wait as soon as the service is settled.
+    Test fixtures shorten it; 0 keeps the checks but removes the waits.
+  EOT
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = var.restore_settle_interval_seconds >= 0 && floor(var.restore_settle_interval_seconds) == var.restore_settle_interval_seconds
+    error_message = "restore_settle_interval_seconds must be a non-negative integer."
+  }
+}
+
 variable "run_api_base_url" {
   description = "Cloud Run Admin API v2 base URL used by the terracurl requests. Test fixtures point this (and the google-beta cloud_run_v2_custom_endpoint) at a loopback fake."
   type        = string

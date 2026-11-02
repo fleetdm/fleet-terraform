@@ -9,11 +9,16 @@
 # HTTP 200 only means the PATCH was accepted: the LRO may still complete with
 # an error, and a service can show the desired fields (marker, AUTOMATIC/min)
 # while the control plane has not yet observed, or has failed to reconcile,
-# that spec. data.terracurl_request.restore_verify therefore reads the service
-# back after the (best-effort) wait and fails the apply unless the marker,
-# AUTOMATIC/min AND a settled control plane (observedGeneration == generation,
-# not reconciling, Ready succeeded, latest created revision ready) are
-# visible. Plain retries converge without another migration:
+# that spec. A single immediate read is not enough either: a normal restore is
+# transiently RECONCILING with observedGeneration trailing generation and
+# settles on its own. restore_settlement.tf therefore performs a bounded,
+# provider-only backoff of read-only GETs (default 30s + 60s + 120s, skipping
+# waits as soon as the control plane is settled) and
+# data.terracurl_request.restore_verify then reads the service once more and
+# fails the apply unless the marker, AUTOMATIC/min AND a settled control plane
+# (observedGeneration == generation, not reconciling, Ready succeeded, latest
+# created revision ready) are visible. Plain retries converge without another
+# migration:
 #   * marker missing (LRO error): the next plan sees "attempt deployed and
 #     settled but not restored" and plans a fresh restore key (main.tf), so a
 #     plain apply re-sends the restore;
@@ -150,12 +155,13 @@ resource "terracurl_request" "restore_wait" {
   }
 }
 
-# Read-back of the restore. A data source: re-read every plan, deferred to
-# apply whenever a restore or a service change is pending (so a failed
-# restore never poisons later plans: the retry plan replaces restore_wait).
-# Detects an LRO that answered HTTP 200 but completed with an error, a
-# restore that otherwise did not take, and desired fields that the control
-# plane has not (yet) settled: the apply fails instead of reporting success.
+# Read-back of the restore, after the bounded settlement checks in
+# restore_settlement.tf. A data source: re-read every plan, deferred to apply
+# whenever a restore or a service change is pending (so a failed restore never
+# poisons later plans: the retry plan replaces restore_wait). Detects an LRO
+# that answered HTTP 200 but completed with an error, a restore that otherwise
+# did not take, and desired fields that the control plane has not (yet)
+# settled: the apply fails instead of reporting success.
 #
 # The response itself is always validated, also for an already-proven
 # identity (e.g. a proven identity's job re-created out of band gets a new
@@ -180,7 +186,7 @@ data "terracurl_request" "restore_verify" {
   max_retry      = 2
   retry_interval = 10
 
-  depends_on = [terracurl_request.restore_wait, google_cloud_run_v2_service.fleet]
+  depends_on = [time_sleep.restore_settle_3, terracurl_request.restore_wait, google_cloud_run_v2_service.fleet]
 
   lifecycle {
     postcondition {
@@ -194,7 +200,13 @@ data "terracurl_request" "restore_verify" {
         jsondecode(self.response).latestReadyRevision != "",
         jsondecode(self.response).latestReadyRevision == jsondecode(self.response).latestCreatedRevision,
       ]), false)
-      error_message = "Restore did not take effect or has not settled: the service must show the marker, AUTOMATIC/${var.min_instance_count}, observedGeneration == generation, reconciling=false, a succeeded Ready condition and latest created == latest ready revision (the PATCH being accepted, or the best-effort operation wait returning, is not completion). Run `terraform apply` again: the migration does not re-run; the restore is re-sent if its marker is missing, and a still-unsettled service gets a fresh revision of this attempt. Live: ${self.response}"
+      # STATIC on purpose: a caller may pass min_instance_count from a
+      # sensitive whole-config object (the GCP root does), and interpolating
+      # it (or the raw response) here would make Terraform reject this very
+      # diagnostic with "Error message refers to sensitive values". No live
+      # value is included, so neither a success nor a failure depends on
+      # sensitivity marks or declassifies anything.
+      error_message = "Restore did not take effect or has not settled within the bounded control-plane checks: the service must show the migration marker, AUTOMATIC scaling with the configured minimum, observedGeneration == generation, reconciling=false, a succeeded Ready condition and latest created == latest ready revision. The PATCH being accepted (or the best-effort operation wait returning) is not completion. Run `terraform apply` again: the migration does not re-run; the restore is re-sent if its marker is missing, and a still-unsettled service gets a fresh revision of this attempt."
     }
   }
 }

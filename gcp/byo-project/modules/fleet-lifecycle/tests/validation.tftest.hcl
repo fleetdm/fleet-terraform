@@ -55,6 +55,12 @@ run "migration_disabled_static_zero_cardinality" {
       length(terracurl_request.stop) == 0 && length(terracurl_request.restore) == 0 &&
       length(data.terracurl_request.service_live) == 0 &&
       length(data.terracurl_request.executions_live) == 0 &&
+      # The restore settlement chain has static cardinality too (no count/
+      # for_each decided by an API response).
+      length(data.terracurl_request.restore_probe_wait) == 0 &&
+      length(time_sleep.restore_settle_1) == 0 && length(data.terracurl_request.restore_probe_1) == 0 &&
+      length(time_sleep.restore_settle_2) == 0 && length(data.terracurl_request.restore_probe_2) == 0 &&
+      length(time_sleep.restore_settle_3) == 0 &&
       google_cloud_run_v2_service.fleet.scaling[0].scaling_mode == "AUTOMATIC" &&
       google_cloud_run_v2_service.fleet.scaling[0].min_instance_count == 1 &&
       length(google_cloud_run_v2_service.fleet.template[0].annotations) == 0
