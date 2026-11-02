@@ -12,7 +12,7 @@
 # IPv4/IPv6 addresses (forwarded unchanged, syntax-checked as /32 or /128) or
 # "*", and
 # allow_public_paths entries must be valid RE2 (they need not match ""); the
-# byo-project module mirrors the root tier/regional-LB requirements.
+# byo-project module mirrors the root regional-LB requirement.
 #
 # Every provider is mocked and module.fleet is overridden, so these runs never
 # contact Google Cloud. Rule rendering (priorities, CEL escaping) is covered by
@@ -465,28 +465,6 @@ run "byo_project_cloud_armor_enabled_with_lb_disabled_rejected" {
     }
     cloud_armor = {
       enable            = true
-      allowed_ip_ranges = ["203.0.113.0/24"]
-    }
-  }
-
-  expect_failures = [var.cloud_armor]
-}
-
-run "byo_project_cloud_armor_enterprise_tier_rejected" {
-  command = plan
-
-  module {
-    source = "./byo-project"
-  }
-
-  variables {
-    project_id = "my-existing-project"
-    load_balancer_config = {
-      use_regional_lb = true
-    }
-    cloud_armor = {
-      enable            = true
-      tier              = "ENTERPRISE"
       allowed_ip_ranges = ["203.0.113.0/24"]
     }
   }

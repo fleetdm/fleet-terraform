@@ -96,7 +96,7 @@ run "defaults_create_no_cmek_resources" {
   }
 
   assert {
-    condition     = google_cloud_run_v2_job.fleet_migration_job.template[0].template[0].encryption_key == null
+    condition     = nonsensitive(module.fleet_lifecycle.migration_job.template[0].template[0].encryption_key) == null
     error_message = "Default migration job must stay Google-managed."
   }
 
@@ -171,7 +171,7 @@ run "legacy_enable_is_gcs_only" {
       local.cmek_cloud_sql_key_id == null &&
       local.cmek_redis_key_id == null &&
       local.cmek_cloud_run_key_id == null &&
-      google_cloud_run_v2_job.fleet_migration_job.template[0].template[0].encryption_key == null &&
+      nonsensitive(module.fleet_lifecycle.migration_job.template[0].template[0].encryption_key) == null &&
       length(google_secret_manager_secret.database_password.replication[0].auto[0].customer_managed_encryption) == 0
     )
     error_message = "Legacy enable must leave Cloud SQL, Memorystore, Cloud Run and secrets Google-managed."
@@ -290,7 +290,7 @@ run "all_consumers_automatic_replication_gcs_off" {
   }
 
   assert {
-    condition     = google_cloud_run_v2_job.fleet_migration_job.template[0].template[0].encryption_key == "projects/kms-proj/locations/us-central1/keyRings/r/cryptoKeys/run"
+    condition     = nonsensitive(module.fleet_lifecycle.migration_job.template[0].template[0].encryption_key) == "projects/kms-proj/locations/us-central1/keyRings/r/cryptoKeys/run"
     error_message = "Migration job must use the Cloud Run key."
   }
 

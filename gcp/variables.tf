@@ -326,21 +326,12 @@ variable "allow_destroy" {
 }
 
 variable "load_balancer_config" {
-  description = <<-EOT
-    Load balancer configuration.
-
-    create_static_ip is a legacy input with no effect (no-op) on either load
-    balancer path: the regional load balancer always reserves one shared static
-    IP address for HTTP and HTTPS, and the global load balancer's lb-http module
-    already creates its global address. Setting it changes nothing.
-  EOT
+  description = "Load balancer configuration."
   type = object({
     enable              = optional(bool, true)
     use_regional_lb     = optional(bool, false)
     https_redirect      = optional(bool, true)
     create_managed_cert = optional(bool, true)
-    create_static_ip    = optional(bool, false) # Legacy no-op; see description.
-    backend_timeout_sec = optional(number, 30)
     log_sample_rate     = optional(number, 1.0)
     proxy_subnet_cidr   = optional(string, "10.129.0.0/23")
   })
@@ -349,8 +340,6 @@ variable "load_balancer_config" {
     use_regional_lb     = false
     https_redirect      = true
     create_managed_cert = true
-    create_static_ip    = false
-    backend_timeout_sec = 30
     log_sample_rate     = 1.0
     proxy_subnet_cidr   = "10.129.0.0/23"
   }
@@ -370,29 +359,16 @@ variable "cloud_armor" {
     at least one of allowed_ip_ranges or allow_public_paths must be non-empty when enabled.
     Requires load_balancer_config.enable = true and use_regional_lb = true.
     Attachment is managed natively with google-beta; no gcloud CLI is required.
-    Only tier = STANDARD is implemented; the legacy tier field is retained for compatibility.
   EOT
   type = object({
     enable             = optional(bool, false)
-    tier               = optional(string, "STANDARD")
     allowed_ip_ranges  = optional(list(string), [])
     allow_public_paths = optional(list(string), [])
   })
   default = {
     enable             = false
-    tier               = "STANDARD"
     allowed_ip_ranges  = []
     allow_public_paths = []
-  }
-
-  validation {
-    condition     = contains(["STANDARD", "ENTERPRISE"], var.cloud_armor.tier)
-    error_message = "cloud_armor.tier must be one of: STANDARD, ENTERPRISE."
-  }
-
-  validation {
-    condition     = var.cloud_armor.tier != "ENTERPRISE" || !var.cloud_armor.enable
-    error_message = "cloud_armor.tier = ENTERPRISE is not yet implemented in this module. Set tier = STANDARD or leave cloud_armor.enable = false."
   }
 
   validation {

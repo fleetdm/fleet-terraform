@@ -33,12 +33,12 @@ output "serverless_neg_id" {
 
 output "cloud_run_service_name" {
   description = "The name of the deployed Fleet Cloud Run service."
-  value       = module.fleet-service.service_name
+  value       = module.fleet_lifecycle.service_name
 }
 
 output "cloud_run_service_location" {
   description = "The location of the deployed Fleet Cloud Run service."
-  value       = module.fleet-service.location // Check the actual output name
+  value       = module.fleet_lifecycle.service_location
 }
 
 output "mysql_instance_name" {

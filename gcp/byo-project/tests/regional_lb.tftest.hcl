@@ -131,7 +131,7 @@ run "redirect_disabled_serves_http" {
   }
 }
 
-run "shared_address_without_create_static_ip" {
+run "shared_address_for_http_and_https" {
   command = plan
 
   providers = {
@@ -144,7 +144,7 @@ run "shared_address_without_create_static_ip" {
 
   assert {
     condition     = length(google_compute_address.regional_ip) == 1
-    error_message = "The regional LB must reserve exactly one address even when create_static_ip is false (default)."
+    error_message = "The regional LB must reserve exactly one address shared by HTTP and HTTPS."
   }
 
   assert {
@@ -163,34 +163,6 @@ run "shared_address_without_create_static_ip" {
   assert {
     condition     = output.load_balancer_ip_address == google_compute_address.regional_ip[0].address
     error_message = "load_balancer_ip_address output must report the shared regional address."
-  }
-}
-
-run "shared_address_with_create_static_ip" {
-  command = plan
-
-  providers = {
-    google      = google
-    google-beta = google-beta
-    null        = null
-    random      = random
-    terracurl   = terracurl
-  }
-
-  variables {
-    load_balancer_config = {
-      use_regional_lb  = true
-      create_static_ip = true
-    }
-  }
-
-  assert {
-    condition = (
-      length(google_compute_address.regional_ip) == 1 &&
-      google_compute_forwarding_rule.regional_main[0].ip_address == google_compute_address.regional_ip[0].address &&
-      google_compute_forwarding_rule.regional_https[0].ip_address == google_compute_address.regional_ip[0].address
-    )
-    error_message = "create_static_ip = true must keep the single shared regional address."
   }
 }
 

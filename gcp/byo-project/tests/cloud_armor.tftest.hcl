@@ -14,8 +14,8 @@
 //   * enabled entries are syntax-checked: IPv4/IPv6 CIDRs, bare IPv4/IPv6
 //     addresses (checked as /32 or /128, rendered unchanged) or "*" for
 //     allowed_ip_ranges, valid RE2 (match not required) for allow_public_paths
-//   * enabled policies require an enabled regional LB and tier = STANDARD,
-//     mirroring the root module; disabled configs are not format-checked
+//   * enabled policies require an enabled regional LB, mirroring the root
+//     module; disabled configs are not format-checked
 //   * public path regexes are embedded as escaped CEL string literals
 //
 // google-beta is required by child registry modules and the regional backend
@@ -714,53 +714,6 @@ run "enabled_with_lb_disabled_is_rejected" {
     cloud_armor = {
       enable            = true
       allowed_ip_ranges = ["203.0.113.0/24"]
-    }
-  }
-
-  expect_failures = [
-    var.cloud_armor,
-  ]
-}
-
-run "enabled_enterprise_tier_is_rejected" {
-  command = plan
-
-  providers = {
-    google      = google
-    google-beta = google-beta
-    null        = null
-    random      = random
-    terracurl   = terracurl
-  }
-
-  variables {
-    cloud_armor = {
-      enable            = true
-      tier              = "ENTERPRISE"
-      allowed_ip_ranges = ["203.0.113.0/24"]
-    }
-  }
-
-  expect_failures = [
-    var.cloud_armor,
-  ]
-}
-
-run "unknown_tier_is_rejected" {
-  command = plan
-
-  providers = {
-    google      = google
-    google-beta = google-beta
-    null        = null
-    random      = random
-    terracurl   = terracurl
-  }
-
-  variables {
-    cloud_armor = {
-      enable = false
-      tier   = "PREMIUM"
     }
   }
 

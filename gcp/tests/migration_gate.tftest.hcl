@@ -1,11 +1,10 @@
 # No-cloud checks that the full stack (module.fleet is NOT overridden) plans
-# with the database migration gate enabled and disabled. The gate's triggers
-# and job settings are asserted in byo-project/tests/migration_gate.tftest.hcl,
-# since a root test cannot address child-module resources.
+# with the database migration gate enabled and disabled. The lifecycle
+# identity triggers and job settings are asserted in
+# byo-project/tests/lifecycle_wiring.tftest.hcl, since a root test cannot
+# address child-module resources.
 #
-# These runs MUST stay `command = plan`: the gate is a local-exec provisioner,
-# which mock providers cannot intercept. Every provider is mocked. Run from
-# the gcp/ directory:
+# Every provider is mocked. Run from the gcp/ directory:
 #
 #   terraform init -backend=false
 #   terraform test

@@ -1,0 +1,8 @@
+# Workspace-local Terraform CLI config for lifecycle test runs: NO shared plugin cache.
+# Reason: re-initialising against the user's ~/.terraform.d/plugin-cache
+# rewrote the cached terracurl binary in place; macOS then SIGKILLs (137) any
+# new exec of that cached file ("Unrecognized remote plugin message"). Each
+# .terraform dir gets its own provider copies instead.
+provider_installation {
+  direct {}
+}

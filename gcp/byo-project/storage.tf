@@ -50,22 +50,3 @@ resource "google_storage_bucket_iam_member" "hmac_sa_storage_admin" {
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.fleet_run_sa.email}"
 }
-
-# The unused packages mirror existed only in an earlier draft, not on main.
-# Stop creating it; forget any draft deployment's ownership without deleting
-# a bucket or grant that an operator may have started using outside Fleet.
-removed {
-  from = google_storage_bucket.packages_mirror
-
-  lifecycle {
-    destroy = false
-  }
-}
-
-removed {
-  from = google_storage_bucket_iam_member.fleet_read_packages_mirror
-
-  lifecycle {
-    destroy = false
-  }
-}

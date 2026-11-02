@@ -24,33 +24,19 @@ resource "google_compute_region_network_endpoint_group" "regional_neg" {
   network_endpoint_type = "SERVERLESS"
 
   cloud_run {
-    service = module.fleet-service.service_name
+    service = module.fleet_lifecycle.service_name
   }
 
-  depends_on = [module.fleet-service]
 }
 
 # The load balancer's run.invoker/allUsers binding is owned solely by the
 # unconditional google_cloud_run_v2_service_iam_member.allow_lb_invoker in
-# cloud_run.tf. An earlier draft of this file declared an identical
-# regional_lb_invoker member; because both resources manage the same
-# (role, member) pair, destroying the duplicate would revoke the shared
-# binding. Forget it from state instead so no remote IAM change occurs.
-removed {
-  from = google_cloud_run_v2_service_iam_member.regional_lb_invoker
-
-  lifecycle {
-    destroy = false
-  }
-}
+# cloud_run.tf; do not declare a second member for the same (role, member).
 
 # Regional Backend Service
 #
 # Uses google-beta because security_policy on google_compute_region_backend_service
-# is only exposed by the beta provider (hashicorp/google 6.x lacks it). Moving
-# this existing resource from google to google-beta does not replace it: both
-# providers share the resource type, schema and ID format, so Terraform just
-# records the new provider address on the next apply.
+# is only exposed by the beta provider (hashicorp/google 6.x lacks it).
 resource "google_compute_region_backend_service" "regional_backend" {
   provider = google-beta
 
@@ -99,15 +85,9 @@ resource "google_compute_region_backend_service" "regional_backend" {
 # delete, a policy that is still attached (GCP rejects deleting it).
 # A create_before_destroy resource forces create_before_destroy onto everything
 # it depends on, so depending on the policy and its rules makes Terraform
-# detach the backend first, then delete the rules, then the policy: the same
-# order as the old gcloud destroy provisioner. A renamed policy (new name from
-# var.prefix) is likewise swapped in before the old one is deleted; rule
-# priorities are fixed per key, so replacement never collides.
-#
-# Terraform takes this setting for a pure destroy from the state written when
-# the policy was last planned with Cloud Armor enabled. A policy created by the
-# earlier gcloud-based draft has no such state, so that deployment must be
-# upgraded once with cloud_armor unchanged before disabling it.
+# detach the backend first, then delete the rules, then the policy. A renamed
+# policy (new name from var.prefix) is likewise swapped in before the old one
+# is deleted; rule priorities are fixed per key, so replacement never collides.
 resource "terraform_data" "cloud_armor_detach_before_destroy" {
   count = local.lb_config.enable && local.lb_config.use_regional_lb && var.cloud_armor.enable ? 1 : 0
   input = google_compute_region_security_policy.regional_security_policy[0].id
@@ -121,19 +101,6 @@ resource "terraform_data" "cloud_armor_detach_before_destroy" {
     google_compute_region_security_policy_rule.allow_admin_ips,
     google_compute_region_security_policy_rule.default_deny,
   ]
-}
-
-# An earlier draft attached the Cloud Armor policy with a null_resource running
-# gcloud local-exec. Attachment is now the native security_policy argument
-# above. Forget the old resource from state instead of destroying it: its
-# destroy-time provisioner would run gcloud and detach the policy that the
-# backend service now manages natively.
-removed {
-  from = null_resource.attach_security_policy
-
-  lifecycle {
-    destroy = false
-  }
 }
 
 # Regional URL Map
@@ -219,11 +186,11 @@ resource "google_compute_forwarding_rule" "regional_https" {
 }
 
 # Static IP address (Regional)
-# Always reserved for the regional LB, independent of create_static_ip.
-# Regional forwarding rules without an explicit address each receive their own
-# ephemeral IP, so ports 80 and 443 would land on different IPs while the DNS
-# A record (and load_balancer_ip_address output) can only point at one of
-# them. Sharing a single reserved address keeps HTTP, HTTPS and DNS aligned.
+# Always reserved for the regional LB. Regional forwarding rules without an
+# explicit address each receive their own ephemeral IP, so ports 80 and 443
+# would land on different IPs while the DNS A record (and
+# load_balancer_ip_address output) can only point at one of them. Sharing a
+# single reserved address keeps HTTP, HTTPS and DNS aligned.
 resource "google_compute_address" "regional_ip" {
   count        = local.lb_config.enable && local.lb_config.use_regional_lb ? 1 : 0
   name         = "${var.prefix}-regional-ip"
