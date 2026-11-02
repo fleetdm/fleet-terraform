@@ -8,6 +8,21 @@ output "load_balancer_ip_address" {
   value       = module.fleet.load_balancer_ip_address
 }
 
+output "load_balancer_type" {
+  description = "The type of load balancer deployed (global, regional, or none)."
+  value       = module.fleet.load_balancer_type
+}
+
+output "regional_cert_dns_authorization_record" {
+  description = "CNAME record to publish at your external DNS provider when using a regional managed certificate with dns_config.enable = false."
+  value       = module.fleet.regional_cert_dns_authorization_record
+}
+
+output "serverless_neg_id" {
+  description = "ID of the existing regional serverless network endpoint group (NEG) for the Fleet Cloud Run service. Always available, whether or not the module-managed load balancer is enabled. Use it as the backend of a caller-owned Application Load Balancer when load_balancer_config.enable = false."
+  value       = module.fleet.serverless_neg_id
+}
+
 output "cloud_run_service_name" {
   description = "The name of the deployed Fleet Cloud Run service."
   value       = module.fleet.cloud_run_service_name

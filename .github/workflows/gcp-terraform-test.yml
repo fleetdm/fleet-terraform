@@ -1,0 +1,231 @@
+name: gcp-terraform-test
+
+# Credential-free tests for the GCP modules. Nothing in this workflow uses
+# cloud credentials, gcloud or ADC, and nothing is planned or applied against a
+# real GCP project.
+#
+# tftest: `terraform test` suites with mocked cloud-facing providers (the
+#   wait-specific tests also mock the time provider). `terraform test` only
+#   runs the tests of the directory it is invoked in, so the standalone
+#   gcp/byo-project/modules/fleet-lifecycle suite is its own matrix entry.
+#   Each job pins the hashicorp/google* providers that directory requires to
+#   one exact version with a CI-only override file (never committed), then
+#   checks the versions Terraform actually selected before running the suite.
+#
+# lifecycle-integration: drives the fleet-lifecycle module with the REAL
+#   google-beta, terracurl and time providers against a loopback fake Cloud
+#   Run API (lifecycle-tests/integration, test-only Python standard library).
+#   The runner strips GOOGLE_*/CLOUDSDK_*/GCLOUD* variables, uses a literal
+#   fake token and points HTTP(S) proxies at a dead loopback port. Only
+#   `terraform init` reaches the network, to download public providers.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'gcp/**.tf'
+      - 'gcp/**.hcl' # *.tftest.hcl, *.tfmock.hcl, .terraform.lock.hcl
+      - 'lifecycle-tests/**' # loopback integration runner, fake API, fixture
+      - '.github/workflows/gcp-terraform-test.yml'
+  pull_request:
+    paths:
+      - 'gcp/**.tf'
+      - 'gcp/**.hcl' # *.tftest.hcl, *.tfmock.hcl, .terraform.lock.hcl
+      - 'lifecycle-tests/**' # loopback integration runner, fake API, fixture
+      - '.github/workflows/gcp-terraform-test.yml'
+  workflow_dispatch: # Manual dispatch
+
+# This allows a subsequently queued workflow run to interrupt previous runs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id}}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    # fail-fast using bash -eo pipefail. See https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#exit-codes-and-error-action-preference
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  tftest:
+    name: terraform test (${{ matrix.terraform_dir }}, TF ${{ matrix.terraform_version }}, google ${{ matrix.google_provider_version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        terraform_dir:
+          - gcp
+          - gcp/byo-project
+          - gcp/byo-project/modules/fleet-lifecycle
+        # Run every suite on the 1.12.0 baseline and on 1.14.5 so changes in
+        # newer terraform test loading/runtime behavior are covered too.
+        terraform_version:
+          - 1.12.0
+          - 1.14.5
+        # Exact hashicorp/google and hashicorp/google-beta versions (every
+        # pinned provider gets the same value). 6.35.0 is the minimum allowed
+        # by the modules' ">= 6.35.0" constraints; 6.50.0 is the newer tested
+        # baseline.
+        google_provider_version:
+          - 6.35.0
+          - 6.50.0
+        # hashicorp/google* providers each directory requires, and therefore
+        # pins. fleet-lifecycle is google-beta only.
+        include:
+          - terraform_dir: gcp
+            pinned_providers: google google-beta
+          - terraform_dir: gcp/byo-project
+            pinned_providers: google google-beta
+          - terraform_dir: gcp/byo-project/modules/fleet-lifecycle
+            pinned_providers: google-beta
+    env:
+      TF_IN_AUTOMATION: 'true'
+      TF_INPUT: '0'
+      GOOGLE_PROVIDER_VERSION: ${{ matrix.google_provider_version }}
+      PINNED_PROVIDERS: ${{ matrix.pinned_providers }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@63c24ba6bd7ba022e95695ff85de572c04a18142 # v2.7.0
+        with:
+          egress-policy: audit
+
+      - name: Clone repo
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+        with:
+          persist-credentials: false
+
+      - name: Install terraform
+        uses: hashicorp/setup-terraform@633666f66e0061ca3b725c73b2ec20cd13a8fdd1 # v2.0.3
+        with:
+          terraform_version: ${{ matrix.terraform_version }}
+          # Keep version -json free of wrapper command/log output.
+          terraform_wrapper: false
+
+      # CI-only pin. Terraform merges required_providers in *_override.tf files
+      # entry by entry, so only the listed hashicorp/google* providers get the
+      # exact version. The delivered constraints, terracurl
+      # (devops-rob/terracurl) and time are untouched. No lock file is
+      # committed, so init resolves the pin from scratch.
+      - name: Pin ${{ matrix.pinned_providers }} ${{ matrix.google_provider_version }} (CI-only override)
+        working-directory: ${{ matrix.terraform_dir }}
+        run: |
+          {
+            echo 'terraform {'
+            echo '  required_providers {'
+            for p in ${PINNED_PROVIDERS}; do
+              echo "    ${p} = {"
+              echo "      source  = \"hashicorp/${p}\""
+              echo "      version = \"${GOOGLE_PROVIDER_VERSION}\""
+              echo '    }'
+            done
+            echo '  }'
+            echo '}'
+          } > zz_ci_google_provider_pin_override.tf
+          cat zz_ci_google_provider_pin_override.tf
+
+      - name: Init ${{ matrix.terraform_dir }}
+        working-directory: ${{ matrix.terraform_dir }}
+        run: terraform init -backend=false
+
+      # Fails the job unless init selected exactly the pinned provider versions
+      # (per `terraform version -json` and the lock file init wrote), no
+      # unpinned hashicorp/google* provider was selected, and terracurl and time
+      # are still resolved from their sources.
+      - name: Verify selected provider versions
+        working-directory: ${{ matrix.terraform_dir }}
+        run: |
+          terraform version -json > "${RUNNER_TEMP}/tf-version.json"
+          python3 - "${RUNNER_TEMP}/tf-version.json" .terraform.lock.hcl <<'PY'
+          import json, os, re, sys
+
+          want = os.environ["GOOGLE_PROVIDER_VERSION"]
+          pinned = os.environ["PINNED_PROVIDERS"].split()
+          sel = json.load(open(sys.argv[1]))["provider_selections"]
+          lock = dict(re.findall(
+              r'^provider "([^"]+)" \{\s*\n\s*version\s*=\s*"([^"]+)"',
+              open(sys.argv[2]).read(),
+              re.MULTILINE,
+          ))
+          print(json.dumps(sel, indent=2, sort_keys=True))
+          errors = []
+          if not pinned:
+              errors.append("PINNED_PROVIDERS is empty")
+          for name in pinned:
+              addr = f"registry.terraform.io/hashicorp/{name}"
+              for where, got in (("selected", sel.get(addr)), ("locked", lock.get(addr))):
+                  if got != want:
+                      errors.append(f"{addr}: {where} {got!r}, expected {want!r}")
+          for name in ("google", "google-beta"):
+              addr = f"registry.terraform.io/hashicorp/{name}"
+              if name not in pinned and (addr in sel or addr in lock):
+                  errors.append(f"{addr}: selected but not pinned; add it to pinned_providers")
+          for addr in (
+              "registry.terraform.io/devops-rob/terracurl",
+              "registry.terraform.io/hashicorp/time",
+          ):
+              if addr not in sel or addr not in lock:
+                  errors.append(f"{addr}: not selected")
+          if errors:
+              sys.exit("Provider selection check failed:\n" + "\n".join(errors))
+          print(f"OK: {' and '.join(pinned)} {want}")
+          PY
+
+      - name: Test ${{ matrix.terraform_dir }} (mocked providers)
+        working-directory: ${{ matrix.terraform_dir }}
+        run: terraform test
+
+  lifecycle-integration:
+    name: lifecycle integration (loopback fake API, TF ${{ matrix.terraform_version }}, google-beta ${{ matrix.google_beta_version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        terraform_version:
+          - 1.12.0
+        # Exact hashicorp/google-beta version; the runner pins it (plus
+        # terracurl and time) in the fixture it initializes.
+        google_beta_version:
+          - 6.35.0
+          - 6.50.0
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      GOOGLE_BETA_VERSION: ${{ matrix.google_beta_version }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@63c24ba6bd7ba022e95695ff85de572c04a18142 # v2.7.0
+        with:
+          egress-policy: audit
+
+      - name: Clone repo
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+        with:
+          persist-credentials: false
+
+      # The runner spawns terraform in its own process group, signals it and
+      # parses its output, so it needs the real binary, not the wrapper script.
+      - name: Install terraform
+        uses: hashicorp/setup-terraform@633666f66e0061ca3b725c73b2ec20cd13a8fdd1 # v2.0.3
+        with:
+          terraform_version: ${{ matrix.terraform_version }}
+          terraform_wrapper: false
+
+      # Python standard library only. The runner sets TF_CLI_CONFIG_FILE to
+      # lifecycle-tests/terraformrc-nocache itself (no shared plugin cache).
+      - name: Run lifecycle scenarios
+        run: |
+          unset TF_PLUGIN_CACHE_DIR
+          python3 -I lifecycle-tests/integration/run_scenarios.py \
+            --provider-version "${GOOGLE_BETA_VERSION}" \
+            --terraform "$(command -v terraform)"
+
+      - name: Publish scenario summary
+        if: always()
+        run: |
+          shopt -s nullglob
+          for f in lifecycle-tests/integration/artifacts/*/SUMMARY.md; do
+            cat "$f" >> "${GITHUB_STEP_SUMMARY}"
+          done
