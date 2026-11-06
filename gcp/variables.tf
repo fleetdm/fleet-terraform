@@ -117,6 +117,12 @@ variable "vpc_config" {
   }
 }
 
+variable "pubsub_to_bigquery_image" {
+  description = "Full Artifact Registry image URL for the fleet-pubsub-bq Cloud Run service. Set to enable the pubsub→BigQuery pipeline."
+  type        = string
+  default     = null
+}
+
 variable "fleet_config" {
   description = "Configuration for the Fleet application deployment."
   type = object({
