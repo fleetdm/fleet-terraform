@@ -50,14 +50,16 @@ module "project_factory" {
 }
 
 module "fleet" {
-  source          = "./byo-project"
-  project_id      = module.project_factory.project_id
-  dns_record_name = var.dns_record_name
-  dns_zone_name   = var.dns_zone_name
-  vpc_config      = var.vpc_config
-  fleet_config    = var.fleet_config
-  cache_config    = var.cache_config
-  database_config = var.database_config
-  region          = var.region
-  location        = var.location
+  source                = "./byo-project"
+  project_id            = module.project_factory.project_id
+  dns_record_name       = var.dns_record_name
+  dns_zone_name         = var.dns_zone_name
+  vpc_config            = var.vpc_config
+  fleet_config          = var.fleet_config
+  cache_config          = var.cache_config
+  database_config       = var.database_config
+  region                = var.region
+  location              = var.location
+  sidecar_containers    = var.sidecar_containers
+  service_only_env_vars = var.service_only_env_vars
 }

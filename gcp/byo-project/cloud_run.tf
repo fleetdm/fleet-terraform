@@ -37,9 +37,18 @@ locals {
     FLEET_S3_SOFTWARE_INSTALLERS_REGION              = var.region
   })
 
+  # fleet_env_vars is the safe baseline that works in any execution context.
+  # The migration job (Cloud Run Job, no sidecars) uses it directly. The
+  # Cloud Run service layers var.service_only_env_vars on top — that's where
+  # things like OTel exporter endpoints live, since the job can't reach a
+  # localhost OTLP receiver that only exists in the service context.
+  fleet_service_env_vars = merge(local.fleet_env_vars, var.service_only_env_vars)
+
   fleet_vpc_network_id = module.vpc.network_id
   # Use the direct construction for the subnet ID key as discussed
   fleet_vpc_subnet_id = "fleet-subnet"
+
+  sidecar_container_names = [for c in var.sidecar_containers : c.container_name]
 }
 
 module "fleet-service" {
@@ -73,9 +82,11 @@ module "fleet-service" {
     max_instance_count = var.fleet_config.max_instance_count
   }
 
-  containers = [
+  containers = concat([
     {
-      container_image = local.fleet_image_tag
+      container_name       = "fleet"
+      container_image      = local.fleet_image_tag
+      depends_on_container = local.sidecar_container_names
       ports = {
         name           = var.fleet_config.use_h2c ? "h2c" : "http1"
         container_port = 8080
@@ -112,10 +123,10 @@ module "fleet-service" {
         limits = local.fleet_resources_limits
       }
 
-      env_vars        = local.fleet_env_vars
+      env_vars        = local.fleet_service_env_vars
       env_secret_vars = local.fleet_secrets_env_vars
     }
-  ]
+  ], var.sidecar_containers)
 }
 
 # --- Cloud Run Job (Migrations) ---

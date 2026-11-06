@@ -150,3 +150,15 @@ variable "fleet_config" {
     extra_secret_env_vars  = {}
   }
 }
+
+variable "sidecar_containers" {
+  description = "Optional sidecar containers to run alongside Fleet in the fleet-api Cloud Run service. See byo-project/variables.tf for the full schema and addons/gcp/otel-sidecar/README.md for example collector configs."
+  type        = any
+  default     = []
+}
+
+variable "service_only_env_vars" {
+  description = "Extra env vars applied only to the fleet-api Cloud Run service, not the migration job. Use for vars that depend on a sidecar (e.g. OTEL_EXPORTER_OTLP_ENDPOINT)."
+  type        = map(string)
+  default     = {}
+}
