@@ -1,11 +1,11 @@
 # -----------------------------------------------------------------------------
 # The single owner of the Fleet Cloud Run service (replaces
-# module.fleet-service.google_cloud_run_v2_service.main of cloud-run v0.17.2;
-# moved in byo-project/cloud_run.tf). Same template as the module rendered
+# main's module.fleet-service.google_cloud_run_v2_service.main;
+# moved in byo-project/cloud_run.tf). Same template as main rendered
 # for Fleet, plus:
 #   * scaling_mode declared explicitly: MANUAL/0 until the current migration
-#     identity is proven restored (marker), AUTOMATIC/min afterwards. The
-#     module could not express scaling_mode.
+#     identity is migrated (`migrated` in main.tf), AUTOMATIC/min afterwards.
+#     The module could not express scaling_mode.
 #   * a revision-template attempt annotation (Job UID) so every migration
 #     attempt deploys a fresh revision while still MANUAL/0 and the provider
 #     waits for it to become Ready ("staged" restore).
@@ -47,7 +47,7 @@ resource "google_cloud_run_v2_service" "fleet" {
     execution_environment = "EXECUTION_ENVIRONMENT_GEN2"
     encryption_key        = var.encryption_key
 
-    annotations = var.migration_enabled ? { (var.attempt_annotation_key) = local.attempt_value } : {}
+    annotations = var.migration_enabled ? { (local.attempt_annotation_key) = local.attempt_value } : {}
 
     scaling {
       min_instance_count = 0 # Google suggests the service-level minimum
@@ -122,7 +122,16 @@ resource "google_cloud_run_v2_service" "fleet" {
     }
   }
 
-  # Ordering: secrets/IAM/CMEK via prerequisites; the migration job through
-  # the attempt annotation (job UID) reference above.
-  depends_on = [terraform_data.prerequisites, google_cloud_run_v2_job.migration]
+  lifecycle {
+    # Migration-success gate (job.tf): no deploy, and therefore no restore,
+    # unless this attempt's execution reports exactly EXECUTION_SUCCEEDED.
+    precondition {
+      condition     = !var.migration_enabled || local.migrated || local.migration_succeeded
+      error_message = "Refusing to deploy or restore Fleet: the migration execution of this attempt has not succeeded (job terminal condition and latestCreatedExecution.completionStatus must be CONDITION_SUCCEEDED / EXECUTION_SUCCEEDED). Fleet stays stopped (MANUAL/0). Job status: ${jsonencode(local.job_view)}. A failed or cancelled execution is retried with a new job by the next `terraform apply`; a pending or running one: wait until it has finished, then apply again."
+    }
+  }
+
+  # Ordering: secrets/IAM/CMEK via prerequisites; the migration job and its
+  # execution read-back (job.tf).
+  depends_on = [terraform_data.prerequisites, data.terracurl_request.job_execution]
 }

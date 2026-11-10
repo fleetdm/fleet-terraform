@@ -2,10 +2,11 @@
 # Attempt + stop + control-plane verification + bounded drain.
 # -----------------------------------------------------------------------------
 
-# One attempt per job name. A new identity or a live FAILED job of the current
-# identity changes the job name, which re-runs stop/verify/drain before the new
-# job. A tainted job that keeps its name reuses the existing attempt: Fleet was
-# already stopped by it, and verify (a data source) re-checks the live state.
+# One attempt per job name. A new identity or a live failed job/execution of
+# the current identity changes the job name, which re-runs stop/verify/drain
+# before the new job. A tainted job that keeps its name reuses the existing
+# attempt: Fleet was already stopped by it, and verify (a data source)
+# re-checks the live state.
 resource "terraform_data" "attempt" {
   count = local.migration_count
 
@@ -49,16 +50,16 @@ locals {
 # (no service yet). 401/403/5xx are never treated as absence: terracurl
 # retries (PATCH with a fixed body is idempotent) then fails the apply; the
 # create error leaves this resource tainted so the next apply re-sends it.
-# When the identity is already proven restored (e.g. the job was only
-# re-created after an out-of-band delete) this degrades to a read-only GET so
-# a no-op can never stop Fleet.
+# When the identity is already migrated (`migrated` in main.tf; e.g. the job
+# was only re-created after an out-of-band delete) this degrades to a
+# read-only GET so a no-op can never stop Fleet.
 resource "terracurl_request" "stop" {
   count = local.migration_count
 
   name           = "fleet-lifecycle-stop-${terraform_data.attempt[0].id}"
-  url            = local.proven ? local.service_get_url : "${local.service_url}?updateMask=scaling,traffic&fields=${urlencode(local.op_fields)}"
-  method         = local.proven ? "GET" : "PATCH"
-  request_body   = local.proven ? null : local.stop_body
+  url            = local.migrated ? local.service_get_url : "${local.service_url}?updateMask=scaling,traffic&fields=${urlencode(local.op_fields)}"
+  method         = local.migrated ? "GET" : "PATCH"
+  request_body   = local.migrated ? null : local.stop_body
   headers        = local.attempt_auth
   response_codes = ["200", "404"]
   timeout        = 60
@@ -71,14 +72,6 @@ resource "terracurl_request" "stop" {
     # may trigger a new request; token refreshes or a later proven/AUTO view
     # must not re-send the stop.
     ignore_changes = [headers, url, method, request_body]
-
-    # Do not even stop Fleet while an earlier migration execution is active
-    # (executions.tf). Evaluated during apply for a new attempt, at plan
-    # otherwise; passes trivially when no new migration can start.
-    precondition {
-      condition     = local.earlier_executions_ok
-      error_message = "Refusing to start a new Fleet migration: ${local.earlier_executions_error}. Fleet was not stopped and no migration was started; earlier jobs are left untouched. Wait until the earlier execution has finished (or cancel it yourself), then run `terraform apply` again."
-    }
   }
 }
 
@@ -86,7 +79,7 @@ locals {
   stop_status = var.migration_enabled ? terracurl_request.stop[0].status_code : ""
   stop_op     = try(jsondecode(terracurl_request.stop[0].response).name, "")
   stop_done   = try(jsondecode(terracurl_request.stop[0].response).done, false)
-  stop_waits  = var.migration_enabled && !local.proven && local.stop_status == "200" && local.stop_op != "" && !local.stop_done
+  stop_waits  = var.migration_enabled && !local.migrated && local.stop_status == "200" && local.stop_op != "" && !local.stop_done
 }
 
 # Best effort: operations.wait returns when the LRO is done OR when the
@@ -138,7 +131,7 @@ data "terracurl_request" "stop_verify" {
   lifecycle {
     postcondition {
       condition = (
-        local.proven ||
+        local.migrated ||
         (self.status_code == "404" && local.stop_status == "404") ||
         (self.status_code == "200" && try(alltrue([
           jsondecode(self.response).scaling.scalingMode == "MANUAL",
@@ -157,7 +150,7 @@ data "terracurl_request" "stop_verify" {
 }
 
 # Bounded drain after the control plane reports MANUAL/0. Skipped for a fresh
-# deployment (404) and for an already-proven identity. A configurable wait,
+# deployment (404) and for an already-migrated identity. A configurable wait,
 # not a guarantee (no documented hard termination bound).
 # Keyed on the attempt AND replaced whenever the stop itself is (re)created
 # (replace_triggered_by): a fresh stop (e.g. after Fleet was restarted out of
@@ -168,7 +161,7 @@ data "terracurl_request" "stop_verify" {
 resource "time_sleep" "drain" {
   count = local.migration_count
 
-  create_duration = (local.proven || local.stop_status == "404") ? "0s" : "${var.drain_seconds}s"
+  create_duration = (local.migrated || local.stop_status == "404") ? "0s" : "${var.drain_seconds}s"
 
   triggers = {
     attempt = terraform_data.attempt[0].id

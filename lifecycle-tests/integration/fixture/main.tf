@@ -39,8 +39,8 @@ variable "min_instance_count" {
   default   = 1
 }
 
-# Short backoff for the module's bounded control-plane settlement checks: the
-# real default is 30s (30 + 60 + 120); tests must not wait minutes.
+# Short interval for the module's bounded control-plane settlement wait: the
+# real default is 30s (one wait of 7x = 210s); tests must not wait minutes.
 variable "restore_settle_interval_seconds" {
   type    = number
   default = 1
@@ -53,6 +53,10 @@ variable "drain_seconds" {
 
 locals {
   endpoint = "http://127.0.0.1:${var.fake_port}/v2"
+}
+
+locals {
+  fleet_service_name = "fleet-api"
 }
 
 provider "google-beta" {
@@ -74,7 +78,7 @@ module "lifecycle" {
 
   project_id            = "fictional-proj"
   region                = "us-central1"
-  service_name          = "fleet-api"
+  service_name          = local.fleet_service_name
   image                 = var.image
   service_account_email = "fleet-run-sa@fictional-proj.iam.gserviceaccount.com"
   vpc_network           = "projects/fictional-proj/global/networks/fleet-network"
@@ -102,6 +106,23 @@ module "lifecycle" {
   job_create_timeout     = "10m"
 
   restore_settle_interval_seconds = var.restore_settle_interval_seconds
+}
+
+# Stand-in for the root's serverless NEGs and the load balancer that depends
+# on them with create_before_destroy. run_scenarios.py substitutes the root's
+# actual NEG `service` expressions (global, regional) into `input`, so a NEG
+# that references the lifecycle module's service also propagates
+# create_before_destroy to the migration job here.
+resource "terraform_data" "neg" {
+  input = [local.fleet_service_name, local.fleet_service_name] # ROOT_NEG_SERVICE_REFS
+}
+
+resource "terraform_data" "lb" {
+  input = terraform_data.neg.output
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 output "identity" {

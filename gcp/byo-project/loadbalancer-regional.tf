@@ -23,8 +23,9 @@ resource "google_compute_region_network_endpoint_group" "regional_neg" {
   project               = var.project_id
   network_endpoint_type = "SERVERLESS"
 
+  # Literal service name, as for the global NEG (see cloud_run.tf).
   cloud_run {
-    service = module.fleet_lifecycle.service_name
+    service = local.fleet_service_name
   }
 
 }

@@ -113,7 +113,7 @@ variable "max_instance_count" {
 }
 
 variable "service_annotations" {
-  description = "Extra service-level annotations. The module adds its own success marker (see marker_annotation_key)."
+  description = "Extra service-level annotations. The module adds its own success marker and restore key (main.tf)."
   type        = map(string)
   default     = {}
 }
@@ -186,10 +186,10 @@ variable "operation_wait_seconds" {
 
 variable "restore_settle_interval_seconds" {
   description = <<-EOT
-    Base interval of the bounded, read-only control-plane checks after the
-    restore PATCH. The checks wait at most 1x, 2x and 4x this interval (default
-    30 => 210s total) and skip a wait as soon as the service is settled.
-    Test fixtures shorten it; 0 keeps the checks but removes the waits.
+    Base interval of the bounded, read-only control-plane check after the
+    restore PATCH: one probe, then at most one wait of 7x this interval
+    (default 30 => 210s), skipped when the probe shows a settled service.
+    Test fixtures shorten it; 0 keeps the checks but removes the wait.
   EOT
   type        = number
   default     = 30
@@ -210,22 +210,4 @@ variable "prerequisites" {
   description = "Ordering-only values (IDs/etags of secrets, IAM grants, CMEK waits, database/user). The job and service wait for them; they never trigger a migration."
   type        = list(string)
   default     = []
-}
-
-variable "marker_annotation_key" {
-  description = "Service annotation the restore PATCH writes (value = migration identity UUID). Internal; not an operator lock."
-  type        = string
-  default     = "fleetdm.com/lifecycle-restored"
-}
-
-variable "attempt_annotation_key" {
-  description = "Revision-template annotation carrying the migration Job UID (forces a fresh revision per attempt)."
-  type        = string
-  default     = "fleetdm.com/lifecycle-attempt"
-}
-
-variable "restore_key_annotation_key" {
-  description = "Service annotation the restore PATCH writes with its own restore key (lets a failed restore be retried by a plain apply without plan churn after success). Internal."
-  type        = string
-  default     = "fleetdm.com/lifecycle-restore-key"
 }

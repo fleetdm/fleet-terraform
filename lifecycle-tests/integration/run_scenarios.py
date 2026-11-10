@@ -19,6 +19,7 @@ Artifacts: lifecycle-tests/integration/artifacts/<run-id>/ (logs, events, result
 import argparse
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -33,6 +34,19 @@ TOKEN = "fake-loopback-token-not-a-credential"
 PARENT = "projects/fictional-proj/locations/us-central1"
 SVC = PARENT + "/services/fleet-api"
 MOD = "module.lifecycle"
+
+
+def root_neg_service_refs():
+    """`cloud_run { service = ... }` of the root's global and regional NEGs,
+    with the root's module name mapped to the fixture's."""
+    root = os.path.normpath(os.path.join(HERE, "..", "..", "gcp", "byo-project"))
+    refs = []
+    for f, name in (("cloud_run.tf", "neg"), ("loadbalancer-regional.tf", "regional_neg")):
+        m = re.search(r'"google_compute_region_network_endpoint_group"\s+"%s"\s*\{.*?cloud_run\s*\{\s*service\s*=\s*([^\n#]+)' % name,
+                      open(os.path.join(root, f)).read(), re.S)
+        assert m, "NEG %s not found in %s" % (name, f)
+        refs.append(m.group(1).strip().replace("module.fleet_lifecycle.", "module.lifecycle."))
+    return refs
 
 
 def free_port():
@@ -56,6 +70,11 @@ class Runner:
         mod_abs = os.path.normpath(os.path.join(HERE, "..", "..", "gcp", "byo-project", "modules", "fleet-lifecycle"))
         p = os.path.join(self.work, "main.tf")
         src = open(p).read().replace('"../../../gcp/byo-project/modules/fleet-lifecycle"', json.dumps(mod_abs))
+        # the fixture's NEG stand-in takes the root's actual NEG expressions
+        self.neg_refs = root_neg_service_refs()
+        ph = "[local.fleet_service_name, local.fleet_service_name] # ROOT_NEG_SERVICE_REFS"
+        assert ph in src, "fixture NEG placeholder missing"
+        src = src.replace(ph, "[%s]" % ", ".join(self.neg_refs))
         open(p, "w").write(src)
         with open(os.path.join(self.work, "providers_pin.tf"), "w") as f:
             f.write('terraform {\n  required_providers {\n'
@@ -98,6 +117,7 @@ class Runner:
         assert 'endpoint = "http://127.0.0.1:${var.fake_port}/v2"' in src
         assert "credentials" not in src.replace("FAKE credentials", "")
         self.log("SAFETY OK: no GOOGLE_/CLOUDSDK_ vars, fake token, loopback endpoints, dead proxy for non-loopback")
+        self.log("root NEG service refs (fixture edge): %s" % self.neg_refs)
 
     # ---------------------------------------------------------------- fake
     def start_fake(self):
@@ -257,9 +277,16 @@ def migration_flow_checks(r, sc, evs, image, existing=True):
     r.check(sc, "no lifecycle REST read asks for the container image (image contract)",
             not any("image" in parse_qs(e["details"]["query"]).get("fields", [""])[0] for e in tc)
             and not any(e["kind"] == "UNEXPECTED_image_in_fields_mask" for e in evs))
-    ok_inv, pos_inv = ordered(evs, k("executions_listed", job="-"), k("job_created"))
-    r.check(sc, "execution inventory (jobs/-/executions) read before the job", ok_inv, "pos=%s" % pos_inv)
+    ok_ex, pos_ex = ordered(evs, k("execution_finished", outcome="success"), job_outcome_read,
+                            lambda e: e["kind"] in ("service_full_patch", "service_created"))
+    r.check(sc, "execution outcome read (GET job, completionStatus) after the job and before the deploy", ok_ex, "pos=%s" % pos_ex)
     r.check(sc, "no unexpected job PATCH", not any(e["kind"] == "job_updated_UNEXPECTED" for e in evs))
+
+
+def job_outcome_read(e):
+    d = e["details"]
+    return (e["kind"] == "http" and d["method"] == "GET" and d["client"] == "terracurl" and "/jobs/" in d["path"]
+            and "completionStatus" in parse_qs(d["query"]).get("fields", [""])[0])
 
 
 def stop_wait_checks(r, sc, evs):
@@ -333,12 +360,17 @@ def scenario_env_change(r):
 
 
 def scenario_upgrade(r, image="fleetdm/fleet:v4.94.0", sc="S3 image upgrade", label="s3"):
+    ann = dict(r.get("/_state")["services"][SVC].get("annotations", {}), **{"example.com/out-of-band": label})
+    r.inject(action="set_annotations", service=SVC, annotations=ann)
     s0 = r.seq()
     rc, _ = r.apply("%s-upgrade" % label, "-var", "image=" + image)
     evs = r.events_since(s0)
     r.save_events("%s-upgrade" % label, evs)
     r.check(sc, "apply succeeded", rc == 0)
     migration_flow_checks(r, sc, evs, image, existing=True)
+    st = r.get("/_state")["services"][SVC]
+    r.check(sc, "out-of-band service annotation survives the provider update and the restore",
+            st.get("annotations", {}).get("example.com/out-of-band") == label, json.dumps(st.get("annotations")))
     stop_wait_checks(r, sc, evs)
     noop_checks(r, sc, label, "-var", "image=" + image)
 
@@ -354,6 +386,8 @@ def scenario_job_fail(r, outcome, image, sc, label, expect_tainted):
     tainted = "(tainted)" in st
     r.check(sc, "job tainted == %s" % expect_tainted, tainted == expect_tainted, "state show header: %s" % st.splitlines()[0] if st else "missing")
     r.check(sc, "no service rollout of the new image", not any(e["kind"] in ("service_full_patch",) and e["details"]["image"] == image for e in evs))
+    if outcome == "exec_failed_job_ready":
+        r.check(sc, "failure names the migration-success gate", "has not succeeded" in flat(out), flat(out)[-400:])
     r.check(sc, "no AUTOMATIC restore", not any(masked("AUTOMATIC")(e) for e in evs))
     st_now = r.get("/_state")["services"][SVC]
     r.check(sc, "service left MANUAL/0", st_now["scaling"].get("scalingMode") == "MANUAL", json.dumps(st_now["scaling"]))
@@ -667,7 +701,7 @@ def scenario_transient_restore_settles(r):
     by itself, with no new PATCH and no new revision."""
     sc = "S18 healthy transient restore settles within one apply"
     image = "fleetdm/fleet:v5.5.0"
-    r.control(restore_settle_outcomes=["pending_then_settle"], restore_settle_reads=3)
+    r.control(restore_settle_outcomes=["pending_then_settle"], restore_settle_reads=2)
     s0 = r.seq()
     rc, out = r.apply("s18-transient", "-var", "image=" + image)
     evs = r.events_since(s0)
@@ -691,8 +725,8 @@ def scenario_transient_restore_settles(r):
                 json.dumps([e["kind"] for e in after_wait if e["kind"] != "http"])[:600])
         pending = [e for e in after_wait if e["kind"] == "restore_settle_read"
                    and e["details"]["observedGeneration"] != e["details"]["generation"]]
-        r.check(sc, "control plane was pending on several successive reads before it settled",
-                len(pending) >= 3 and pending[0]["details"]["observedGeneration"] != pending[0]["details"]["generation"],
+        r.check(sc, "control plane was still pending on the first read after the restore",
+                len(pending) >= 1,
                 json.dumps([e["details"] for e in pending])[:600])
         r.check(sc, "the read that settled the service needed no new PATCH or revision",
                 any(e["kind"] == "restore_settled_on_read" for e in after_wait),
@@ -704,21 +738,30 @@ def scenario_transient_restore_settles(r):
             and st["terminalCondition"]["state"] == "CONDITION_SUCCEEDED"
             and "fleetdm.com/lifecycle-restored" in st.get("annotations", {}),
             json.dumps([st["scaling"], st.get("_held"), st.get("generation"), st.get("observedGeneration"), st["terminalCondition"]]))
-    r.control(restore_settle_outcomes=[], restore_settle_reads=3)
+    r.control(restore_settle_outcomes=[], restore_settle_reads=2)
     noop_checks(r, sc, "s18", "-var", "image=" + image)
 
 
 def scenario_fresh_stop_fresh_drain(r):
-    sc = "S16 re-sent stop (same attempt, tainted same-name job, Fleet restarted out of band) gets a NEW drain"
+    sc = "S16 tainted job with a running execution; re-sent stop (same attempt, Fleet restarted out of band) gets a NEW drain"
     image = "fleetdm/fleet:v5.2.0"
     drain = 2  # fixture default drain_seconds
-    r.control(job_outcomes=["lro_error_reconciling"])
+    r.control(job_outcomes=["lro_error_active"])
     s0 = r.seq()
     rc, out = r.apply("s16-fail", "-var", "image=" + image)
     r.save_events("s16-fail", r.events_since(s0))
-    r.check(sc, "first apply: drain completed, job failed and is tainted",
+    r.check(sc, "first apply: drain completed, job create failed (tainted), its execution still running",
             rc != 0 and "time_sleep.drain[0]: Creation complete" in out
-            and "(tainted)" in r.state_show("%s.google_cloud_run_v2_job.migration[0]" % MOD), "rc=%d" % rc)
+            and "(tainted)" in r.state_show("%s.google_cloud_run_v2_job.migration[0]" % MOD)
+            and any(j.get("latestCreatedExecution", {}).get("completionStatus") == "EXECUTION_RUNNING"
+                    for j in r.get("/_state")["jobs"].values()), "rc=%d" % rc)
+    s1 = r.seq()
+    rc1, out1 = r.apply("s16-running", "-var", "image=" + image)
+    evs1 = r.events_since(s1)
+    r.save_events("s16-running", evs1)
+    r.check(sc, "plain re-apply while it runs: blocked at PLAN, the tainted job is NOT deleted, nothing written",
+            rc1 != 0 and "pending or running execution" in flat(out1) and not writes(evs1), "rc=%d" % rc1)
+    r.inject(action="complete_running_executions")
     r.inject(action="set_scaling", service=SVC, scaling={"scalingMode": "AUTOMATIC", "minInstanceCount": 1})
     s1 = r.seq()
     rc2, out2 = r.apply("s16-plain-retry", "-var", "image=" + image)
@@ -746,162 +789,6 @@ def scenario_fresh_stop_fresh_drain(r):
         s = svc_at(jc[0])
         r.check(sc, "service MANUAL/0 when the new job started", s and s["scaling"].get("scalingMode") == "MANUAL", json.dumps(s))
     noop_checks(r, sc, "s16", "-var", "image=" + image)
-
-
-def guard_block_then_retry(r, sc, label, image, setup, release, expect_text, earlier_job):
-    setup()
-    s0 = r.seq()
-    rc, out = r.apply("%s-blocked" % label, "-var", "image=" + image)
-    evs = r.events_since(s0)
-    r.save_events("%s-blocked" % label, evs)
-    r.check(sc, "apply blocked with a clear message before any stop/job",
-            rc != 0 and "Refusing to start a new Fleet migration" in flat(out) and expect_text in flat(out)
-            and not any(masked("MANUAL")(e) for e in evs) and not any(e["kind"] in ("job_created", "execution_started") for e in evs),
-            "rc=%d" % rc)
-    # A new identity's guard is read during apply; Terraform may already have
-    # deleted the PREVIOUS identity's (completed, managed) job as the first
-    # half of the job replacement. The earlier active job is never touched.
-    deleted = [e["details"]["job"] for e in evs if e["kind"] == "job_deleted"]
-    r.check(sc, "the earlier active job is not deleted or modified by the guard",
-            not any(d.endswith("/jobs/" + earlier_job) for d in deleted)
-            and "/jobs/" + earlier_job in json.dumps(list(r.get("/_state")["jobs"].keys())), json.dumps(deleted))
-    s1 = r.seq()
-    rc1, out1 = r.apply("%s-still-blocked" % label, "-var", "image=" + image)
-    evs1 = r.events_since(s1)
-    r.save_events("%s-still-blocked" % label, evs1)
-    r.check(sc, "plain re-apply while still active: blocked at PLAN, no writes",
-            rc1 != 0 and "Refusing to start a new Fleet migration" in flat(out1) and not writes(evs1), "rc=%d" % rc1)
-    release()
-    s2 = r.seq()
-    rc2, _ = r.apply("%s-retry" % label, "-var", "image=" + image)
-    evs2 = r.events_since(s2)
-    r.save_events("%s-retry" % label, evs2)
-    r.check(sc, "plain re-apply after the earlier execution finished: exactly one migration, restored",
-            rc2 == 0 and sum(e["kind"] == "execution_started" for e in evs2) == 1 and any(masked("AUTOMATIC")(e) for e in evs2), "rc=%d" % rc2)
-    noop_checks(r, sc, label, "-var", "image=" + image)
-
-
-def scenario_earlier_executions(r):
-    base = "S17 earlier migration executions guard"
-    # an unrelated job keeps running throughout: never blocks
-    r.inject(action="add_execution", parent=PARENT, job="nightly-report", execution="nightly-report-1", active=True, create_job=True)
-    r.inject(action="add_execution", parent=PARENT, job="fleet-migrations-report", execution="fmr-1", active=True, create_job=True)
-
-    guard_block_then_retry(
-        r, base + " / legacy fleet-migration execution active", "s17a", "fleetdm/fleet:v5.3.0",
-        lambda: r.inject(action="add_execution", parent=PARENT, job="fleet-migration", execution="fleet-migration-legacy1",
-                         active=True, create_job=True, job_field="short"),
-        lambda: r.inject(action="complete_execution", execution="fleet-migration-legacy1"),
-        "fleet-migration-legacy1", "fleet-migration")
-    guard_block_then_retry(
-        r, base + " / prior-identity orphan job active (full Execution.job)", "s17b", "fleetdm/fleet:v5.3.1",
-        lambda: r.inject(action="add_execution", parent=PARENT, job="fleet-migrate-0123456789ab", execution="fleet-migrate-0123456789ab-r1",
-                         active=True, create_job=True, job_field="full",
-                         labels={"fleetdm-lifecycle-identity": "0123456789ab"}),
-        lambda: r.inject(action="complete_execution", execution="fleet-migrate-0123456789ab-r1"),
-        "fleet-migrate-0123456789ab-r1", "fleet-migrate-0123456789ab")
-
-    def older_active():
-        r.inject(action="add_execution", parent=PARENT, job="fleet-migrate-fedcba987654", execution="fleet-migrate-fedcba987654-a-old",
-                 active=True, create_job=True, job_field="absent")
-        r.inject(action="add_execution", parent=PARENT, job="fleet-migrate-fedcba987654", execution="fleet-migrate-fedcba987654-b-new",
-                 active=False, job_field="absent")
-    guard_block_then_retry(
-        r, base + " / older execution active, newer completed (Execution.job omitted)", "s17c", "fleetdm/fleet:v5.3.2",
-        older_active, lambda: r.inject(action="complete_execution", execution="fleet-migrate-fedcba987654-a-old"),
-        "fleet-migrate-fedcba987654-a-old", "fleet-migrate-fedcba987654")
-
-    # current job: LRO error while its execution keeps running (tainted job)
-    sc = base + " / current tainted job with a still-active execution"
-    image = "fleetdm/fleet:v5.3.3"
-    r.control(job_outcomes=["lro_error_active"])
-    s0 = r.seq()
-    rc, out = r.apply("s17d-fail", "-var", "image=" + image)
-    r.save_events("s17d-fail", r.events_since(s0))
-    r.check(sc, "job create fails, job tainted, its execution still active",
-            rc != 0 and "(tainted)" in r.state_show("%s.google_cloud_run_v2_job.migration[0]" % MOD)
-            and any("completionTime" not in e for e in r.get("/_state")["executions"].values()), "rc=%d" % rc)
-    s1 = r.seq()
-    rc1, out1 = r.apply("s17d-blocked", "-var", "image=" + image)
-    evs1 = r.events_since(s1)
-    r.save_events("s17d-blocked", evs1)
-    r.check(sc, "plain re-apply blocked at PLAN: the tainted job is NOT deleted, nothing written",
-            rc1 != 0 and "Refusing to start a new Fleet migration" in flat(out1) and not writes(evs1)
-            and not any(e["kind"] == "job_deleted" for e in evs1), "rc=%d" % rc1)
-    r.inject(action="complete_execution", all=True)
-    # the unrelated executions were completed too; restart one so it stays active
-    r.inject(action="add_execution", parent=PARENT, job="nightly-report", execution="nightly-report-2", active=True)
-    s2 = r.seq()
-    rc2, _ = r.apply("s17d-retry", "-var", "image=" + image)
-    evs2 = r.events_since(s2)
-    r.save_events("s17d-retry", evs2)
-    ok, pos = ordered(evs2, k("job_deleted"), k("job_created"), k("execution_finished", outcome="success"), masked("AUTOMATIC"))
-    r.check(sc, "after it finished: tainted job replaced, exactly one new execution, restored",
-            rc2 == 0 and ok and sum(e["kind"] == "execution_started" for e in evs2) == 1, "rc=%d pos=%s" % (rc2, pos))
-    noop_checks(r, sc, "s17d", "-var", "image=" + image)
-
-    # inventory that cannot be trusted
-    for mode, text, image in (("truncated", "more than one page", "fleetdm/fleet:v5.3.4"),
-                              ("malformed", "not a parsable 200 list", "fleetdm/fleet:v5.3.4"),
-                              ("forbidden", "403", "fleetdm/fleet:v5.3.4")):
-        sc = base + " / inventory %s" % mode
-        r.control(executions_list_mode=mode)
-        s0 = r.seq()
-        rc, out = r.apply("s17e-%s" % mode, "-var", "image=" + image)
-        evs = r.events_since(s0)
-        r.save_events("s17e-%s" % mode, evs)
-        r.check(sc, "never treated as an empty inventory: blocked before any stop/job",
-                rc != 0 and text in flat(out) and not any(masked("MANUAL")(e) for e in evs)
-                and not any(e["kind"] in ("job_created", "execution_started") for e in evs), "rc=%d" % rc)
-    r.control(executions_list_mode="ok")
-    sc = base + " / inventory valid again"
-    s0 = r.seq()
-    rc, _ = r.apply("s17e-ok", "-var", "image=fleetdm/fleet:v5.3.4")
-    evs = r.events_since(s0)
-    r.save_events("s17e-ok", evs)
-    r.check(sc, "one migration, restored (unrelated active jobs never block)",
-            rc == 0 and sum(e["kind"] == "execution_started" for e in evs) == 1 and any(masked("AUTOMATIC")(e) for e in evs), "rc=%d" % rc)
-    noop_checks(r, sc, "s17e", "-var", "image=fleetdm/fleet:v5.3.4")
-
-
-def scenario_replace_succeeded_unproven_job(r):
-    sc = "S7c same-name replacement of a SUCCEEDED job of an unproven identity is guarded"
-    image = "fleetdm/fleet:v5.4.0"
-    r.control(rollout_outcomes=["response_failed"])
-    s0 = r.seq()
-    rc, _ = r.apply("s7c-rollout-fail", "-var", "image=" + image)
-    evs = r.events_since(s0)
-    r.save_events("s7c-rollout-fail", evs)
-    job = [e["details"]["job"] for e in evs if e["kind"] == "job_created"]
-    r.check(sc, "setup: migration succeeded, rollout failed, identity unproven (Fleet MANUAL)",
-            rc != 0 and sum(e["kind"] == "execution_finished" and e["details"]["outcome"] == "success" for e in evs) == 1
-            and r.get("/_state")["services"][SVC]["scaling"].get("scalingMode") == "MANUAL", "rc=%d" % rc)
-    r.inject(action="add_execution", parent=PARENT, job="fleet-migrate-aaaaaaaaaaaa", execution="fleet-migrate-aaaaaaaaaaaa-r9",
-             active=True, create_job=True, job_field="short")
-    s1 = r.seq()
-    rc1, out1 = r.tf("s7c-replace-job", "apply", "-auto-approve", "-no-color", "-var", "image=" + image,
-                     "-replace=%s.google_cloud_run_v2_job.migration[0]" % MOD)
-    evs1 = r.events_since(s1)
-    r.save_events("s7c-replace-job", evs1)
-    r.check(sc, "-replace of the succeeded job blocked at PLAN: no DELETE, no new execution, nothing written",
-            rc1 != 0 and "Refusing to start a new Fleet migration" in flat(out1) and "fleet-migrate-aaaaaaaaaaaa-r9" in flat(out1)
-            and not writes(evs1) and job and job[0] in r.get("/_state")["jobs"], "rc=%d" % rc1)
-    s2 = r.seq()
-    rc2, out2 = r.apply("s7c-plain-blocked", "-var", "image=" + image)
-    evs2 = r.events_since(s2)
-    r.save_events("s7c-plain-blocked", evs2)
-    r.check(sc, "plain rollout retry also blocked while the orphan is active (no writes)",
-            rc2 != 0 and "Refusing to start a new Fleet migration" in flat(out2) and not writes(evs2), "rc=%d" % rc2)
-    r.inject(action="complete_execution", execution="fleet-migrate-aaaaaaaaaaaa-r9")
-    s3 = r.seq()
-    rc3, _ = r.apply("s7c-retry", "-var", "image=" + image)
-    evs3 = r.events_since(s3)
-    r.save_events("s7c-retry", evs3)
-    r.check(sc, "after it finished: plain retry redeploys and restores without a migration",
-            rc3 == 0 and any(e["kind"] == "revision_created" and e["details"]["outcome"] == "ready" for e in evs3)
-            and any(masked("AUTOMATIC")(e) for e in evs3), "rc=%d" % rc3)
-    no_migration_checks(r, sc, evs3)
-    noop_checks(r, sc, "s7c", "-var", "image=" + image)
 
 
 def scenario_proven_job_recreated_unsettled_restore(r):
@@ -935,16 +822,172 @@ def scenario_proven_job_recreated_unsettled_restore(r):
     noop_checks(r, sc, "s11b", "-var", "image=" + image)
 
 
+def scenario_marker_repair(r):
+    sc = "S19 restore marker stripped while Fleet serves the current attempt"
+    image = "fleetdm/fleet:v5.5.0"
+    ann = r.get("/_state")["services"][SVC].get("annotations", {})
+    r.inject(action="set_annotations", service=SVC,
+             annotations={k: v for k, v in ann.items() if k != "fleetdm.com/lifecycle-restored"})
+    s0 = r.seq()
+    rc, _ = r.apply("s19-repair", "-var", "image=" + image)
+    evs = r.events_since(s0)
+    r.save_events("s19-repair", evs)
+    r.check(sc, "plain apply succeeds and only re-sends the restore", rc == 0 and any(masked("AUTOMATIC")(e) for e in evs), "rc=%d" % rc)
+    no_migration_checks(r, sc, evs)
+    r.check(sc, "Fleet never declared/written MANUAL (no outage to repair the marker)",
+            not any(e["kind"] in ("service_full_patch", "service_masked_patch") and e["details"]["scaling"].get("scalingMode") == "MANUAL"
+                    for e in evs), json.dumps([e["kind"] for e in evs if e["kind"] != "http"])[:600])
+    st = r.get("/_state")["services"][SVC]
+    r.check(sc, "marker restored", "fleetdm.com/lifecycle-restored" in st.get("annotations", {}), json.dumps(st.get("annotations")))
+    noop_checks(r, sc, "s19", "-var", "image=" + image)
+
+
+def scenario_cross_identity_running(r):
+    sc = "S20 tainted job still running; a new identity (image or database) is blocked at plan"
+    image_a, image_b = "fleetdm/fleet:v5.6.0", "fleetdm/fleet:v5.6.1"
+    r.control(job_outcomes=["lro_error_active"])
+    s0 = r.seq()
+    rc, _ = r.apply("s20-fail", "-var", "image=" + image_a)
+    r.save_events("s20-fail", r.events_since(s0))
+    running = [n for n, j in r.get("/_state")["jobs"].items()
+               if j.get("latestCreatedExecution", {}).get("completionStatus") == "EXECUTION_RUNNING"]
+    r.check(sc, "setup: job A tainted, its execution still running",
+            rc != 0 and "(tainted)" in r.state_show("%s.google_cloud_run_v2_job.migration[0]" % MOD) and len(running) == 1, "rc=%d" % rc)
+    job_a = running[0] if running else PARENT + "/jobs/missing"
+    # Outside the guard's scope: other prefix, unlabelled, finished history.
+    other = {PARENT + "/jobs/other-migrate-0123456789ab": ({"fleetdm-lifecycle-identity": "0123456789ab"}, "EXECUTION_RUNNING"),
+             PARENT + "/jobs/fleet-migrate-0123456789ab": ({}, "EXECUTION_PENDING"),
+             PARENT + "/jobs/fleet-migrate-ba9876543210": ({"fleetdm-lifecycle-identity": "ba9876543210"}, "EXECUTION_SUCCEEDED")}
+    for name, (labels, status) in other.items():
+        r.inject(action="put_job", job=name, labels=labels, status=status)
+    for status, change, extra in (("EXECUTION_RUNNING", "image", ["-var", "image=" + image_b]),
+                                  ("EXECUTION_PENDING", "image", ["-var", "image=" + image_b]),
+                                  ("EXECUTION_RUNNING", "db", ["-var", "image=" + image_a, "-replace=terraform_data.fake_sql"]),
+                                  ("EXECUTION_PENDING", "db", ["-var", "image=" + image_a, "-replace=terraform_data.fake_sql"])):
+        r.inject(action="put_job", job=job_a, status=status)
+        label = "s20-%s-%s" % (change, status.split("_")[1].lower())
+        s1 = r.seq()
+        rc1, out1 = r.apply(label, *extra)
+        evs1 = r.events_since(s1)
+        r.save_events(label, evs1)
+        a = r.get("/_state")["jobs"].get(job_a, {})
+        r.check(sc, "%s change while A is %s: fails at PLAN naming A; nothing written, A kept, no new execution" % (change, status),
+                rc1 != 0 and not any(m in out1 for m in ("Destroying...", "Creating...", "Modifying...")) and "still pending or running: " + job_a.split("/")[-1] in flat(out1)
+                and not writes(evs1) and a.get("latestCreatedExecution", {}).get("completionStatus") == status
+                and no_sensitive_diagnostic(out1), "rc=%d %s" % (rc1, flat(out1)[-300:]))
+    # A finished: the intended next attempt runs once; out-of-scope jobs never block.
+    r.inject(action="put_job", job=job_a, status="EXECUTION_SUCCEEDED")
+    s2 = r.seq()
+    rc2, _ = r.apply("s20-finished", "-var", "image=" + image_b)
+    evs2 = r.events_since(s2)
+    r.save_events("s20-finished", evs2)
+    r.check(sc, "A finished: apply succeeds; A deleted only after it finished", rc2 == 0
+            and [e["details"]["execution_status"] for e in evs2 if k("job_deleted", job=job_a)(e)] == ["EXECUTION_SUCCEEDED"], "rc=%d" % rc2)
+    migration_flow_checks(r, sc, evs2, image_b, existing=True)
+    noop_checks(r, sc, "s20", "-var", "image=" + image_b)
+    # Out-of-band execution of the identity the marker proves: no-op as before.
+    job_b = PARENT + "/jobs/" + r.outputs()["job_name"]
+    r.inject(action="put_job", job=job_b, status="EXECUTION_RUNNING")
+    rc3, _ = r.plan_exit("s20-proven-running", "-var", "image=" + image_b)
+    r.check(sc, "running execution of the proven identity: plan is still a no-op", rc3 == 0, "rc=%d" % rc3)
+    r.inject(action="put_job", job=job_b, status="EXECUTION_SUCCEEDED")
+    for name in other:
+        r.inject(action="delete_job", job=name)
+
+
+def job_cbd_in_state(r):
+    """create_before_destroy as stored on the migration job instance(s)."""
+    st = json.load(open(os.path.join(r.work, "terraform.tfstate")))
+    return [i.get("create_before_destroy", False) for res in st["resources"]
+            if res.get("module") == MOD and res["mode"] == "managed" and res["type"] == "google_cloud_run_v2_job"
+            for i in res["instances"]]
+
+
+def scenario_neg_cbd_tainted_completed(r):
+    sc = "S21 NEG stand-in with a create_before_destroy dependent; tainted job whose execution then succeeds"
+    image = "fleetdm/fleet:v5.7.0"
+    jaddr = "%s.google_cloud_run_v2_job.migration[0]" % MOD
+    r.check(sc, "fixture NEG edge = root NEG expressions, none via the lifecycle module",
+            len(r.neg_refs) == 2 and not any("module." in x for x in r.neg_refs), json.dumps(r.neg_refs))
+    r.control(job_outcomes=["lro_error_active"])
+    s0 = r.seq()
+    rc, _ = r.apply("s21-fail", "-var", "image=" + image)
+    evs = r.events_since(s0)
+    r.save_events("s21-fail", evs)
+    jc = [e["details"]["job"] for e in evs if e["kind"] == "job_created"]
+    job = jc[0] if jc else PARENT + "/jobs/missing"
+    r.check(sc, "setup: job tainted, its execution still running",
+            rc != 0 and len(jc) == 1 and "(tainted)" in r.state_show(jaddr)
+            and r.get("/_state")["jobs"].get(job, {}).get("latestCreatedExecution", {}).get("completionStatus") == "EXECUTION_RUNNING", "rc=%d" % rc)
+    r.check(sc, "create_before_destroy not stored on the job", job_cbd_in_state(r) == [False], json.dumps(job_cbd_in_state(r)))
+    for status in ("EXECUTION_RUNNING", "EXECUTION_PENDING"):
+        r.inject(action="put_job", job=job, status=status)
+        s1 = r.seq()
+        rc1, out1 = r.apply("s21-%s" % status.split("_")[1].lower(), "-var", "image=" + image)
+        evs1 = r.events_since(s1)
+        r.check(sc, "%s: blocked at plan, tainted job kept, nothing written" % status,
+                rc1 != 0 and "pending or running" in flat(out1) and not writes(evs1) and job in r.get("/_state")["jobs"], "rc=%d" % rc1)
+    r.inject(action="put_job", job=job, status="EXECUTION_SUCCEEDED", condition="CONDITION_SUCCEEDED")
+    _, acts = planned_resource_actions(r, "s21-retry", "-var", "image=" + image)
+    r.check(sc, "retry plans the tainted job delete-then-create", acts.get(jaddr) == ["delete", "create"], json.dumps(acts.get(jaddr)))
+    s2 = r.seq()
+    rc2, out2 = r.apply("s21-retry", "-var", "image=" + image)
+    evs2 = r.events_since(s2)
+    r.save_events("s21-retry", evs2)
+    r.check(sc, "plain retry succeeds, no same-name conflict (409)",
+            rc2 == 0 and "409" not in out2 and "already exists" not in out2.lower(), "rc=%d %s" % (rc2, flat(out2)[-400:]))
+    ok, pos = ordered(evs2, k("job_deleted", job=job), k("job_created", job=job), k("execution_started"),
+                      k("execution_finished", outcome="success"), lambda e: e["kind"] == "service_full_patch", masked("AUTOMATIC"))
+    r.check(sc, "finished job deleted, same name re-created and run, then deploy and restore", ok, "pos=%s" % pos)
+    ex = [e for e in evs2 if e["kind"] == "execution_started"]
+    r.check(sc, "exactly one extra execution, Fleet still MANUAL; no new stop or drain (same attempt)",
+            len(ex) == 1 and (svc_at(ex[0]) or {}).get("scaling", {}).get("scalingMode") == "MANUAL"
+            and not any(masked("MANUAL")(e) for e in evs2) and "time_sleep.drain[0]: Creating" not in out2, "n=%d" % len(ex))
+    noop_checks(r, sc, "s21", "-var", "image=" + image)
+
+
+def scenario_neg_cbd_failed_then_rollout(r):
+    sc = "S21b failed migration, retry migrates but its rollout fails, plain retry reuses the migration"
+    image = "fleetdm/fleet:v5.7.1"
+    r.control(job_outcomes=["lro_error_reconciling"])
+    s0 = r.seq()
+    rc, _ = r.apply("s21b-fail", "-var", "image=" + image)
+    r.save_events("s21b-fail", r.events_since(s0))
+    r.check(sc, "setup: migration failed, job tainted", rc != 0 and "(tainted)" in r.state_show("%s.google_cloud_run_v2_job.migration[0]" % MOD), "rc=%d" % rc)
+    r.control(rollout_outcomes=["lro_error"])
+    s1 = r.seq()
+    rc1, _ = r.apply("s21b-rollout-fail", "-var", "image=" + image)
+    evs1 = r.events_since(s1)
+    r.save_events("s21b-rollout-fail", evs1)
+    new = [e["details"]["job"] for e in evs1 if e["kind"] == "job_created"]
+    label = r.get("/_state")["jobs"].get(new[0] if new else "", {}).get("labels", {}).get("fleetdm-lifecycle-identity")
+    same = [n for n, j in r.get("/_state")["jobs"].items() if label and j.get("labels", {}).get("fleetdm-lifecycle-identity") == label]
+    r.check(sc, "retry: failed job deleted before its successor, one successful migration, rollout fails, no restore",
+            rc1 != 0 and ordered(evs1, k("job_deleted"), k("job_created"))[0] and same == new
+            and sum(e["kind"] == "execution_finished" and e["details"]["outcome"] == "success" for e in evs1) == 1
+            and not any(masked("AUTOMATIC")(e) for e in evs1), "rc=%d jobs of identity=%s" % (rc1, same))
+    s2 = r.seq()
+    rc2, out2 = r.apply("s21b-retry", "-var", "image=" + image)
+    evs2 = r.events_since(s2)
+    r.save_events("s21b-retry", evs2)
+    r.check(sc, "plain retry succeeds without a new migration or classification error",
+            rc2 == 0 and not any(e["kind"] in ("job_created", "execution_started") for e in evs2) and "Cannot classify" not in flat(out2),
+            "rc=%d %s" % (rc2, flat(out2)[-400:]))
+    ok, pos = ordered(evs2, lambda e: e["kind"] == "service_full_patch", k("revision_created", outcome="ready"), masked("AUTOMATIC"))
+    r.check(sc, "fresh revision deployed then restored", ok, "pos=%s" % pos)
+    noop_checks(r, sc, "s21b", "-var", "image=" + image)
+
+
 SCENARIOS = [
     ("s1", scenario_fresh),
     ("s2", scenario_env_change),
     ("s3", scenario_upgrade),
     ("s4", lambda r: scenario_job_fail(r, "lro_error", "fleetdm/fleet:v4.95.0", "S4 job failure shape 1 (LRO done.error)", "s4", True)),
     ("s5", lambda r: scenario_job_fail(r, "terminal_failed", "fleetdm/fleet:v4.96.0", "S5 job failure shape 2 (LRO done.response, terminal FAILED)", "s5", False)),
-    ("s6", lambda r: scenario_job_fail(r, "lro_error_reconciling", "fleetdm/fleet:v4.97.0", "S6 shape 1 with job not marked FAILED (same-name tainted retry)", "s6", True)),
+    ("s5b", lambda r: scenario_job_fail(r, "exec_failed_job_ready", "fleetdm/fleet:v4.96.1", "S5b execution FAILED while the Job reports Ready", "s5b", False)),
+    ("s6", lambda r: scenario_job_fail(r, "lro_error_reconciling", "fleetdm/fleet:v4.97.0", "S6 shape 1 with job not marked FAILED (failed execution => new job)", "s6", True)),
     ("s7a", lambda r: scenario_rollout_fail(r, "lro_error", "fleetdm/fleet:v4.98.0", "S7a rollout failure (service LRO error)", "s7a")),
     ("s7b", lambda r: scenario_rollout_fail(r, "response_failed", "fleetdm/fleet:v4.99.0", "S7b rollout failure (LRO ok, revision not Ready)", "s7b")),
-    ("s7c", scenario_replace_succeeded_unproven_job),
     ("s8", scenario_tag_removed),
     ("s9", scenario_tag_blocks),
     ("s10", scenario_db_replace),
@@ -956,8 +999,11 @@ SCENARIOS = [
     ("s15b", lambda r: scenario_restore_settlement(r, "pending", "fleetdm/fleet:v5.1.1", "s15b", False)),
     ("s15c", lambda r: scenario_restore_settlement(r, "cp_failed", "fleetdm/fleet:v5.1.2", "s15c", False)),
     ("s16", scenario_fresh_stop_fresh_drain),
-    ("s17", scenario_earlier_executions),
     ("s18", scenario_transient_restore_settles),
+    ("s19", scenario_marker_repair),
+    ("s20", scenario_cross_identity_running),
+    ("s21", scenario_neg_cbd_tainted_completed),
+    ("s21b", scenario_neg_cbd_failed_then_rollout),
     ("s12", scenario_hard_kill),
 ]
 

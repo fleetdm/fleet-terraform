@@ -85,6 +85,37 @@ run "lifecycle_enabled_by_default" {
   }
 }
 
+// The NEGs must not reference the lifecycle module's resource-backed service
+// name: the load balancer's create_before_destroy would propagate through them
+// to the service and the migration job (same-name job re-create => 409). Both
+// expressions resolve to "fleet-api", so a sentinel module output tells them
+// apart. The invoker grant keeps the resource-backed name (service first).
+run "negs_do_not_depend_on_lifecycle_service" {
+  command = plan
+
+  variables {
+    load_balancer_config = { use_regional_lb = true }
+  }
+
+  override_module {
+    target  = module.fleet_lifecycle
+    outputs = { service_name = "lifecycle-output-sentinel", service_location = "us-central1" }
+  }
+
+  assert {
+    condition = (
+      google_compute_region_network_endpoint_group.neg.cloud_run[0].service == "fleet-api" &&
+      google_compute_region_network_endpoint_group.regional_neg[0].cloud_run[0].service == "fleet-api"
+    )
+    error_message = "The global and regional serverless NEGs must use local.fleet_service_name, not module.fleet_lifecycle.service_name."
+  }
+
+  assert {
+    condition     = google_cloud_run_v2_service_iam_member.allow_lb_invoker.name == "lifecycle-output-sentinel"
+    error_message = "The LB invoker grant must keep module.fleet_lifecycle.service_name (created after the service)."
+  }
+}
+
 run "job_is_single_task_single_attempt_with_serving_env" {
   command = plan
 

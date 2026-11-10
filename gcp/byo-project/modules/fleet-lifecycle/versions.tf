@@ -2,7 +2,7 @@
 # Every apply-path action is a google-beta resource, a terracurl request,
 # a time_sleep or terraform_data.
 terraform {
-  required_version = ">= 1.11"
+  required_version = ">= 1.12"
 
   required_providers {
     # Service, Job (run_execution_token) and the access token used by the

@@ -14,13 +14,10 @@ not knowledge of Google behaviour:
     proto3-style omission of zero ints in scaling.
   * jobs: create with runExecutionToken starts one execution whose outcome is
     set by control: success, LRO error ("shape 1") or LRO done.response with a
-    FAILED terminal condition ("shape 2"), or an LRO error while the execution
-    keeps running ("lro_error_active"); delete removes executions.
-  * executions: GET .../jobs/-/executions (all jobs of the region) and
-    .../jobs/<job>/executions; settled = completionTime set and runningCount 0.
-    Extra executions (legacy fleet-migration, orphan prior identities,
-    unrelated jobs) are injected via /_inject. Control "executions_list_mode"
-    can return a truncated page, a malformed 200 body or a 403.
+    FAILED terminal condition ("shape 2"), LRO done.response with a SUCCEEDED
+    Job condition but a FAILED execution ("exec_failed_job_ready"), or an LRO
+    error while the execution keeps running ("lro_error_active"). The outcome
+    is reported as latestCreatedExecution.completionStatus on the job.
   * desired vs observed control plane: a restore PATCH (masked, touches
     annotations) always stores the desired fields and bumps generation; per
     control "restore_settle_outcomes" the observed side may lag
@@ -57,7 +54,6 @@ LOCK = threading.RLock()
 STATE = {
     "services": {},
     "jobs": {},
-    "executions": {},
     "operations": {},
     "revisions": {},
     "seq": 0,
@@ -67,6 +63,7 @@ CONTROL = {
     # job outcomes consumed in order, then default
     "job_outcomes": [],
     "job_default": "success",          # success | lro_error | terminal_failed | lro_error_reconciling
+                                       # | exec_failed_job_ready | lro_error_active
     "exec_polls": 1,                   # operation polls before a job execution finishes
     "rollout_outcomes": [],            # per new revision: ready | lro_error | response_failed
     "rollout_default": "ready",
@@ -82,8 +79,7 @@ CONTROL = {
     # control "restore_settle_reads" masked service GETs, with no new PATCH or
     # revision) | "cp_failed" (observed, Ready FAILED)
     "restore_settle_outcomes": [],
-    "restore_settle_reads": 3,
-    "executions_list_mode": "ok",      # ok | truncated | malformed | forbidden
+    "restore_settle_reads": 2,
     "image_report": "as_sent",         # as_sent | alias | absent (masked service GETs only)
 }
 IMAGE_ALIAS = "docker.io/fleetdm/fleet@sha256:" + "ab" * 32
@@ -212,22 +208,20 @@ def finish_pending(entry):
     if p["polls"] > 0:
         return op
     job = STATE["jobs"].get(p["job"])
-    ex = STATE["executions"].get(p["execution"])
     outcome = p["outcome"]
     t = now()
-    if ex and outcome != "lro_error_active":
-        complete_execution(ex, outcome == "success")
     if job:
+        ok = outcome in ("success", "exec_failed_job_ready")
         state = {"success": "CONDITION_SUCCEEDED", "lro_error": "CONDITION_FAILED",
                  "terminal_failed": "CONDITION_FAILED", "lro_error_reconciling": "CONDITION_RECONCILING",
-                 "lro_error_active": "CONDITION_RECONCILING"}[outcome]
+                 "lro_error_active": "CONDITION_RECONCILING", "exec_failed_job_ready": "CONDITION_SUCCEEDED"}[outcome]
         job["terminalCondition"] = {"type": "Ready", "state": state,
-                                    "reason": "" if outcome == "success" else "fake-prepare-db-exit-1",
-                                    "message": "" if outcome == "success" else "fake: fleet prepare db exited 1",
+                                    "reason": "" if ok else "fake-prepare-db-exit-1",
+                                    "message": "" if ok else "fake: fleet prepare db exited 1",
                                     "lastTransitionTime": t}
         job["reconciling"] = False
         if outcome != "lro_error_active":
-            job["latestCreatedExecution"]["completionTime"] = t
+            complete_execution(job, outcome == "success")
     if outcome == "lro_error_active":
         event("execution_lro_error_still_running", job=p["job"], execution=p["execution"])
     else:
@@ -240,33 +234,10 @@ def finish_pending(entry):
     return op
 
 
-def new_execution(job_full, exec_short, job_field="short", active=True, running_count=None):
-    """Execution object as listed by the API (subset). job_field: short | full | absent."""
-    name = "%s/executions/%s" % (job_full, exec_short)
-    ex = {"name": name, "createTime": now(), "startTime": now(), "reconciling": active,
-          "conditions": [{"type": "Completed", "state": "CONDITION_RECONCILING" if active else "CONDITION_SUCCEEDED"}],
-          "_job_full": job_full}
-    if job_field == "short":
-        ex["job"] = job_full.split("/")[-1]
-    elif job_field == "full":
-        ex["job"] = job_full
-    if active:
-        ex["runningCount"] = 1 if running_count is None else running_count
-    else:
-        ex["completionTime"] = now()
-        if running_count:
-            ex["runningCount"] = running_count
-    STATE["executions"][name] = ex
-    return ex
-
-
-def complete_execution(ex, ok=True):
-    ex["completionTime"] = now()
-    ex.pop("runningCount", None)  # proto3: zero omitted
-    ex["reconciling"] = False
-    ex["succeededCount"] = 1 if ok else 0
-    ex["failedCount"] = 0 if ok else 1
-    ex["conditions"] = [{"type": "Completed", "state": "CONDITION_SUCCEEDED" if ok else "CONDITION_FAILED"}]
+def complete_execution(job, ok=True):
+    """Job.latestCreatedExecution (ExecutionReference) reports the outcome."""
+    job["latestCreatedExecution"].update(completionTime=now(),
+                                         completionStatus="EXECUTION_SUCCEEDED" if ok else "EXECUTION_FAILED")
 
 
 def settle_service(svc):
@@ -394,9 +365,6 @@ class Handler(BaseHTTPRequestHandler):
             if not path.startswith("/v2/"):
                 return self._err(404, "NOT_FOUND", "fake: unknown path")
             rest = path[len("/v2/"):]
-            mx = re.fullmatch(r"(projects/[^/]+/locations/[^/]+)/jobs/([^/]+)/executions", rest)
-            if mx:
-                return self.list_executions(method, mx.group(1), mx.group(2), qs)
             m = re.fullmatch(r"(projects/[^/]+/locations/[^/]+)/(services|jobs|operations)(?:/([^/:]+))?(:wait)?", rest)
             if not m:
                 return self._err(404, "NOT_FOUND", "fake: unsupported path " + rest)
@@ -582,8 +550,6 @@ class Handler(BaseHTTPRequestHandler):
                 exec_name = "%s/executions/%s-%s" % (full, jid, token)
                 if len(jid) + len(token) >= 63:
                     return self._err(400, "INVALID_ARGUMENT", "fake: name+token too long")
-                if exec_name in STATE["executions"]:
-                    return self._err(409, "ALREADY_EXISTS", "fake: execution exists")
             job = {k: body[k] for k in ("labels", "annotations", "client", "clientVersion", "launchStage",
                                         "binaryAuthorization", "template") if k in body}
             job.update({"name": full, "uid": str(uuid.uuid4()), "generation": "1", "observedGeneration": "1",
@@ -598,8 +564,7 @@ class Handler(BaseHTTPRequestHandler):
                 op = new_operation(parent, "Job", full, True, response=copy.deepcopy(job))
                 return self._respond(200, op, qs)
             outcome = CONTROL["job_outcomes"].pop(0) if CONTROL["job_outcomes"] else CONTROL["job_default"]
-            new_execution(full, exec_name.split("/")[-1], job_field="short", active=True)
-            job["latestCreatedExecution"] = {"name": exec_name, "createTime": now()}
+            job["latestCreatedExecution"] = {"name": exec_name, "createTime": now(), "completionStatus": "EXECUTION_RUNNING"}
             event("execution_started", job=full, execution=exec_name, planned_outcome=outcome)
             op = new_operation(parent, "Job", full, False,
                                pending={"job": full, "execution": exec_name, "outcome": outcome,
@@ -616,10 +581,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._respond(200, public(job), qs)
         if method == "DELETE":
             del jobs[full]
-            running = [e for e in STATE["executions"] if e.startswith(full + "/")]
-            for e in running:
-                del STATE["executions"][e]
-            event("job_deleted", job=full, executions_removed=running)
+            event("job_deleted", job=full,
+                  execution_status=job.get("latestCreatedExecution", {}).get("completionStatus"))
             op = new_operation(parent, "Job", full, True, response=public(job))
             return self._respond(200, op, qs)
         if method == "PATCH":
@@ -628,33 +591,6 @@ class Handler(BaseHTTPRequestHandler):
             op = new_operation(parent, "Job", full, True, response=public(job))
             return self._respond(200, op, qs)
         return self._err(405, "METHOD_NOT_ALLOWED", "fake")
-
-    # ------------------------------------------------------------ executions
-    def list_executions(self, method, parent, job, qs):
-        if method != "GET":
-            return self._err(405, "METHOD_NOT_ALLOWED", "fake")
-        if "-" in parent.split("/"):
-            return self._err(400, "INVALID_ARGUMENT", "fake: region wildcard not allowed")
-        mode = CONTROL["executions_list_mode"]
-        if mode == "forbidden":
-            return self._err(403, "PERMISSION_DENIED", "fake: run.executions.list denied")
-        if mode == "malformed":
-            data = b"<html>fake: not json</html>"
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-            return None
-        prefix = parent + "/jobs/" + ("" if job == "-" else job + "/")
-        items = [public(e) for e in sorted(STATE["executions"].values(), key=lambda e: e["name"])
-                 if e["_job_full"].startswith(parent + "/jobs/") and (job == "-" or e["_job_full"] == parent + "/jobs/" + job)
-                 and e["name"].startswith(prefix)]
-        body = {"executions": items} if items else {}
-        if mode == "truncated":
-            body["nextPageToken"] = "fake-next-page"
-        event("executions_listed", job=job, n=len(items), mode=mode)
-        return self._respond(200, body, qs)
 
     # ------------------------------------------------------------ operations
     def operations(self, method, parent, op_id, wait, qs):
@@ -682,8 +618,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, EVENTS)
         if path == "/_state" and method == "GET":
             return self._send(200, {"services": STATE["services"], "jobs": STATE["jobs"],
-                                    "executions": STATE["executions"], "revisions": STATE["revisions"],
-                                    "control": CONTROL})
+                                    "revisions": STATE["revisions"], "control": CONTROL})
         if path == "/_control" and method == "POST":
             CONTROL.update(self._body())
             event("control", control=copy.deepcopy(CONTROL))
@@ -706,20 +641,19 @@ class Handler(BaseHTTPRequestHandler):
                         finish_pending(entry)
             elif act == "set_scaling":
                 STATE["services"][b["service"]]["scaling"] = proto3_scaling(b["scaling"])
-            elif act == "add_execution":
-                # b: parent, job, execution, active, job_field, running_count, create_job
-                job_full = "%s/jobs/%s" % (b["parent"], b["job"])
-                if b.get("create_job") and job_full not in STATE["jobs"]:
-                    STATE["jobs"][job_full] = {"name": job_full, "uid": str(uuid.uuid4()), "generation": "1",
-                                               "labels": b.get("labels", {}), "reconciling": False,
-                                               "terminalCondition": {"type": "Ready", "state": "CONDITION_SUCCEEDED"}}
-                new_execution(job_full, b["execution"], job_field=b.get("job_field", "short"),
-                              active=b.get("active", True), running_count=b.get("running_count"))
-            elif act == "complete_execution":
-                for n, ex in STATE["executions"].items():
-                    active = "completionTime" not in ex or ex.get("runningCount")
-                    if (b.get("all") and active) or n.endswith("/executions/" + b.get("execution", "\0")):
-                        complete_execution(ex, True)
+            elif act == "complete_running_executions":
+                for job in STATE["jobs"].values():
+                    if job.get("latestCreatedExecution", {}).get("completionStatus") == "EXECUTION_RUNNING":
+                        complete_execution(job, True)
+            elif act == "put_job":  # create/update job metadata (labels, execution status)
+                job = STATE["jobs"].setdefault(b["job"], {"name": b["job"], "uid": str(uuid.uuid4()), "labels": {},
+                                                          "terminalCondition": {"type": "Ready", "state": "CONDITION_SUCCEEDED"}})
+                job["labels"] = b.get("labels", job["labels"])
+                job["latestCreatedExecution"] = dict(job.get("latestCreatedExecution", {}), completionStatus=b["status"])
+                if "condition" in b:  # Job Ready state, e.g. CONDITION_SUCCEEDED once the execution succeeded
+                    job["terminalCondition"] = {"type": "Ready", "state": b["condition"]}
+            elif act == "set_annotations":
+                STATE["services"][b["service"]]["annotations"] = b["annotations"]
             elif act == "settle_service":
                 settle_service(STATE["services"][b["service"]])
             else:

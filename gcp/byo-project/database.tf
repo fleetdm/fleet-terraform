@@ -7,11 +7,12 @@ module "private-service-access" {
   source  = "terraform-google-modules/sql-db/google//modules/private_service_access"
   version = "~> 25.0"
 
-  project_id      = var.project_id
-  vpc_network     = module.vpc.network_name
+  project_id = var.project_id
+  # Ordered after the network by value (its ID is unknown only while the network
+  # is created). A module-wide depends_on would also defer the module's network
+  # lookup on unrelated VPC changes and replace the range and peering.
+  vpc_network     = basename(module.vpc.network_id)
   deletion_policy = "ABANDON"
-
-  depends_on = [module.vpc]
 }
 
 module "mysql" {

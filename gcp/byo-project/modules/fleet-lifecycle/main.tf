@@ -2,17 +2,20 @@
 # Fleet migration lifecycle: identity, plan-time status reads, shared locals
 #
 # Apply-path order for a NEW migration identity (all native):
-#   identity -> attempt -> execution inventory GET (no earlier relevant
-#   migration execution may still be active) -> stop PATCH (MANUAL/0 +
-#   LATEST/100 untagged) -> operations.wait (best effort) -> verify GET
-#   (MANUAL/0, not reconciling, observedGeneration == generation, no traffic
-#   tags) -> bounded drain
+#   identity -> attempt -> stop PATCH (MANUAL/0 + LATEST/100 untagged)
+#   -> operations.wait (best effort) -> verify GET (MANUAL/0, not
+#   reconciling, observedGeneration == generation, no traffic tags)
+#   -> bounded drain
 #   -> Job CREATE with run_execution_token (provider waits for the execution)
+#   -> job GET: the execution must report EXECUTION_SUCCEEDED (job.tf)
 #   -> Service update/create still MANUAL/0 with the target template
 #      (provider waits for the Ready revision)
 #   -> restore PATCH (AUTOMATIC/min + success marker = identity UUID)
-#   -> bounded, read-only control-plane settlement checks (restore_settlement.tf)
+#   -> one settlement probe, at most one bounded wait (restore_settlement.tf)
 #   -> restore read-back: marker + AUTOMATIC/min AND a settled control plane.
+#
+# Concurrency: the Terraform state lock and the documented single-writer
+# assumption. There is no region-wide execution inventory.
 #
 # Image contract: var.image (the caller's literal fleet_config.image_tag, e.g.
 # "fleetdm/fleet:v4.93.0") is the ONLY image identity. Job and service are
@@ -37,29 +40,25 @@ locals {
   service_url    = "${local.run_api}/${local.service_path}"
   identity_label = "fleetdm-lifecycle-identity"
 
+  # Annotations: success marker (service; value = identity UUID, written only
+  # by the restore PATCH), restore key (service; restore.tf) and attempt
+  # (revision template; Job UID, forces a fresh revision per attempt).
+  marker_annotation_key      = "fleetdm.com/lifecycle-restored"
+  restore_key_annotation_key = "fleetdm.com/lifecycle-restore-key"
+  attempt_annotation_key     = "fleetdm.com/lifecycle-attempt"
+
   # Google partial-response masks (standard `fields` system parameter).
   # They keep the non-sensitive terracurl `response` attribute metadata-only:
   # no container env, license key or template body is copied into state.
   # ASSUMPTION (not verified against live Cloud Run): the Run v2 REST surface
   # honours `fields` like other Google JSON APIs. The local fake enforces it.
   # No container image is requested anywhere (see the image contract above).
-  service_fields  = "name,uid,generation,observedGeneration,reconciling,annotations,scaling,traffic,trafficStatuses,terminalCondition(type,state,reason),latestReadyRevision,latestCreatedRevision,template(annotations)"
-  job_list_fields = "jobs(name,uid,labels,reconciling,terminalCondition(type,state,reason)),nextPageToken"
-  op_fields       = "name,done,error(code,message)"
-  # Every execution of every job in this project/region ("-" = all jobs; the
-  # region stays fixed). Documented for projects.locations.jobs.executions.list
-  # (needs run.executions.list, included in roles/run.admin).
-  exec_list_fields = "executions(name,job,createTime,startTime,completionTime,deleteTime,reconciling,runningCount,conditions(type,state,reason)),nextPageToken"
+  service_fields = "name,uid,generation,observedGeneration,reconciling,annotations,scaling,traffic,trafficStatuses,terminalCondition(type,state,reason),latestReadyRevision,latestCreatedRevision,template(annotations)"
+  job_fields     = "name,uid,labels,reconciling,terminalCondition(type,state,reason),latestCreatedExecution(name,completionStatus)"
+  op_fields      = "name,done,error(code,message)"
 
   service_get_url = "${local.service_url}?fields=${urlencode(local.service_fields)}"
-  jobs_list_url   = "${local.run_api}/${local.parent}/jobs?pageSize=1000&fields=${urlencode(local.job_list_fields)}"
-  exec_list_url   = "${local.run_api}/${local.parent}/jobs/-/executions?pageSize=1000&fields=${urlencode(local.exec_list_fields)}"
-
-  # Job IDs whose executions are Fleet migrations: the fixed-name job of
-  # earlier releases (forgotten via `removed`, possibly still present) and
-  # every per-identity job of this module (all identities, including orphans
-  # outside state). Labels are deliberately not used.
-  legacy_job_id = "fleet-migration"
+  jobs_list_url   = "${local.run_api}/${local.parent}/jobs?pageSize=1000&fields=${urlencode("jobs(${local.job_fields}),nextPageToken")}"
 }
 
 # Access tokens come from the SAME google-beta provider configuration that
@@ -134,7 +133,7 @@ locals {
   # Success marker written ONLY by the restore PATCH after a verified job and a
   # Ready target revision. Value = identity UUID. It is derived state, not a
   # lock or checkpoint; nobody edits it.
-  live_marker = try(tostring(local.svc.annotations[var.marker_annotation_key]), "")
+  live_marker = try(tostring(local.svc.annotations[local.marker_annotation_key]), "")
 
   # True only when the live service already proves THIS identity was migrated
   # and restored. Unknown at plan while the identity is being replaced.
@@ -146,7 +145,20 @@ locals {
   # of the service: a later unhealthy service must not stop Fleet or re-run
   # the migration. Restore SETTLEMENT is checked separately (live_settled
   # below and data.terracurl_request.restore_verify).
-  serving = !var.migration_enabled || local.proven
+  serving = !var.migration_enabled || local.migrated
+
+  # `migrated`: the marker proves this identity, OR (marker missing, e.g. a
+  # failed restore LRO or stripped annotations) the live state already shows
+  # it: the live job of this identity reports a SUCCEEDED execution, the
+  # service template carries that job's UID, and the service is settled and
+  # AUTOMATIC. Then no stop/migration runs (it would only stop Fleet to write
+  # the marker); the restore is re-sent instead (restore_needed). A live
+  # MANUAL, unsettled, other-attempt or failed state never counts.
+  repairing = !local.proven && local.current_succeeded && local.current_job_uid != "" && alltrue([
+    startswith(local.live_attempt, local.current_job_uid), local.live_settled,
+    try(local.svc.scaling.scalingMode, "") == "AUTOMATIC",
+  ])
+  migrated = local.proven || local.repairing
 
   # Control plane settled on the live service: the latest spec generation is
   # observed, nothing is reconciling, the Ready condition succeeded and the
@@ -161,18 +173,35 @@ locals {
   ]), false)
 
   # Jobs of the current identity (label written at job create).
-  jobs_page       = var.migration_enabled ? try(jsondecode(data.terracurl_request.jobs_live[0].response), null) : null
-  jobs_truncated  = try(local.jobs_page.nextPageToken, "") != ""
-  identity_jobs   = [for j in try(local.jobs_page.jobs, []) : j if try(j.labels[local.identity_label], "") == local.identity_hex]
-  current_job     = length(local.identity_jobs) == 1 ? local.identity_jobs[0] : null
-  current_job_tc  = try(local.current_job.terminalCondition.state, "")
-  current_failed  = local.current_job != null && local.current_job_tc == "CONDITION_FAILED"
-  job_base_name   = "${var.job_name_prefix}-${local.identity_hex}"
-  current_job_uid = try(local.current_job.uid, "")
+  jobs_page      = var.migration_enabled ? try(jsondecode(data.terracurl_request.jobs_live[0].response), null) : null
+  jobs_truncated = try(local.jobs_page.nextPageToken, "") != ""
+  identity_jobs  = [for j in try(local.jobs_page.jobs, []) : j if try(j.labels[local.identity_label], "") == local.identity_hex]
+  current_job    = length(local.identity_jobs) == 1 ? local.identity_jobs[0] : null
+  current_job_tc = try(local.current_job.terminalCondition.state, "")
+  # Outcome of the job's execution (Job.latestCreatedExecution): the Job's
+  # terminalCondition alone is the Job's readiness, not the migration result.
+  current_exec   = try(local.current_job.latestCreatedExecution.completionStatus, "")
+  current_failed = local.current_job != null && (local.current_job_tc == "CONDITION_FAILED" || contains(["EXECUTION_FAILED", "EXECUTION_CANCELLED"], local.current_exec))
+  # Live job of this identity whose execution succeeded (see `repairing`).
+  current_succeeded = local.current_job_tc == "CONDITION_SUCCEEDED" && local.current_exec == "EXECUTION_SUCCEEDED"
+  job_base_name     = "${var.job_name_prefix}-${local.identity_hex}"
+  current_job_uid   = try(local.current_job.uid, "")
 
-  # Retry without taint/checkpoint: a live FAILED job of this identity yields
-  # a new deterministic name (=> replacement => fresh execution with CURRENT
-  # config). Otherwise keep the live/base name (no churn on no-op).
+  # Pending/running migration jobs of ANY identity (identity label set, name
+  # <prefix>-<12 hex>[-<6 hex>]), except the identity the live marker proves
+  # restored. Unlike identity_jobs this needs no identity UUID, so it stays
+  # known at plan while the identity is replaced (if jobs_live is read then).
+  marker_hex = substr(replace(local.live_marker, "-", ""), 0, 12)
+  running_jobs = [for j in try(local.jobs_page.jobs, []) : reverse(split("/", j.name))[0] if alltrue([
+    can(regex("^${var.job_name_prefix}-[0-9a-f]{12}(-[0-9a-f]{6})?$", reverse(split("/", j.name))[0])),
+    !contains(["", local.marker_hex], try(j.labels[local.identity_label], "")),
+    contains(["EXECUTION_PENDING", "EXECUTION_RUNNING"], try(j.latestCreatedExecution.completionStatus, "")),
+  ])]
+
+  # Retry without taint/checkpoint: a live FAILED job or failed/cancelled
+  # execution of this identity yields a new deterministic name (=> replacement
+  # => fresh execution with CURRENT config). Otherwise keep the live/base name
+  # (no churn on no-op).
   job_name = (
     local.current_job == null ? local.job_base_name :
     local.current_failed ? "${local.job_base_name}-${substr(sha256(local.current_job_uid), 0, 6)}" :
@@ -185,7 +214,7 @@ locals {
   # attempt's rollout did not become Ready, append a hash of the latest created
   # revision so the next plain apply deploys a fresh revision instead of
   # leaving a failed rollout silently in place.
-  live_attempt   = try(tostring(local.svc.template.annotations[var.attempt_annotation_key]), "")
+  live_attempt   = try(tostring(local.svc.template.annotations[local.attempt_annotation_key]), "")
   live_healthy   = local.live_settled
   job_uid        = var.migration_enabled ? google_cloud_run_v2_job.migration[0].uid : ""
   attempt_is_cur = local.live_attempt != "" && startswith(local.live_attempt, local.job_uid)
@@ -203,7 +232,7 @@ locals {
   # re-sends the restore. After success the key is read back from the live
   # annotation, so plans stay clean. The image reported by the API plays no
   # part (it may be resolved, aliased or omitted).
-  live_restore_key = try(tostring(local.svc.annotations[var.restore_key_annotation_key]), "")
+  live_restore_key = try(tostring(local.svc.annotations[local.restore_key_annotation_key]), "")
   restore_needed   = var.migration_enabled && !local.proven && local.attempt_is_cur && local.live_healthy
   restore_key = (
     local.restore_needed ? "${local.job_uid}-r${formatdate("YYMMDDhhmmss", timestamp())}" :

@@ -10,11 +10,12 @@
 //
 // Runs share one state and are ordered: each run continues from the previous.
 // data.terracurl_request.restore_verify is overridden with a restored AND
-// settled view in the runs that restore (runs 13-17 cover desired-only /
-// unsettled read-backs); a restore LRO that completes with an error and the
-// pending/failed control-plane variants are exercised with the real providers
-// in lifecycle-tests/integration (S13, S15). The API-reported container image
-// is varied (digest, alias, omitted) to show it is never consulted.
+// settled view in the runs that restore; the verify_* runs and runs 12b-15
+// cover read-backs that must fail closed. A restore LRO that completes with an
+// error and the pending/failed control-plane variants are exercised with the
+// real providers in lifecycle-tests/integration (S13, S15). The API-reported
+// container image is varied (digest, alias, omitted) to show it is never
+// consulted.
 //
 // MOCK LIMITATION: mock providers only know the JSON schema, not ForceNew /
 // RequiresReplace, and an overridden terraform_data loses its built-in
@@ -58,12 +59,11 @@ mock_provider "terracurl" {
 
 mock_provider "time" {}
 
-// Execution inventory (GET jobs/-/executions): by default a valid 200 list of
-// settled/unrelated executions, so the earlier-migration guard passes. Runs
-// that exercise the guard override it.
+// Execution outcome of the current job (GET jobs/<job>): succeeded by default.
+// Runs that exercise the migration-success gate override it.
 override_data {
-  target = data.terracurl_request.executions_live[0]
-  values = { status_code = "200", response = "{\"executions\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-000000000000/executions/fleet-migrate-000000000000-r1\",\"job\":\"fleet-migrate-000000000000\",\"completionTime\":\"2026-01-01T00:00:00Z\"},{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/nightly-report/executions/nightly-report-x\",\"job\":\"nightly-report\",\"runningCount\":1}]}" }
+  target = data.terracurl_request.job_execution[0]
+  values = { status_code = "200", response = "{\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestCreatedExecution\":{\"completionStatus\":\"EXECUTION_SUCCEEDED\"}}" }
 }
 
 variables {
@@ -93,7 +93,7 @@ run "fresh_deploy" {
   }
   override_data {
     target = data.terracurl_request.service_ready[0]
-    values = { status_code = "200", response = "{\"name\":\"projects/fictional-proj/locations/us-central1/services/fleet-api\",\"generation\":\"3\",\"observedGeneration\":\"3\",\"reconciling\":false,\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00009\",\"latestCreatedRevision\":\"fleet-api-00009\",\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-1\"},\"containers\":[{\"image\":\"fleetdm/fleet:v4.93.0\"}]}}" }
+    values = { status_code = "200", response = "{\"name\":\"projects/fictional-proj/locations/us-central1/services/fleet-api\",\"generation\":\"3\",\"observedGeneration\":\"3\",\"reconciling\":false,\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00009\",\"latestCreatedRevision\":\"fleet-api-00009\",\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-1\"},\"containers\":[{\"image\":\"fleetdm/fleet:v4.93.0\"}]},\"annotations\":{\"example.com/out-of-band\":\"kept\"}}" }
   }
   override_resource {
     target = terraform_data.identity[0]
@@ -180,6 +180,18 @@ run "fresh_deploy" {
     error_message = "Restore must PATCH AUTOMATIC/min and the identity marker, keyed on the job UID."
   }
   assert {
+    condition = jsondecode(terracurl_request.restore[0].request_body).annotations == {
+      "example.com/out-of-band"           = "kept"
+      "fleetdm.com/lifecycle-restored"    = "11111111-1111-4111-8111-111111111111"
+      "fleetdm.com/lifecycle-restore-key" = "job-uid-1"
+    }
+    error_message = "Restore must keep the live (out-of-band) annotations read after the service step and add only marker + key."
+  }
+  assert {
+    condition     = time_sleep.restore_settle[0].create_duration == "210s"
+    error_message = "An unsettled probe (transient reconcile) must wait the full 7x interval once; the settled read-back then passes."
+  }
+  assert {
     condition     = !strcontains(terracurl_request.stop[0].request_url_string == null ? "" : terracurl_request.stop[0].request_url_string, "fake-license")
     error_message = "No env in request URLs."
   }
@@ -248,6 +260,76 @@ run "noop_apply_after_restore" {
   }
 }
 
+// 3b. The restore read-back is the strict final gate: on a proven no-op plan
+//     it is read at plan time, and each unsettled/undone view below fails it.
+run "verify_missing_marker_fails" {
+  command = plan
+  override_data {
+    target = data.terracurl_request.service_live[0]
+    values = { status_code = "200", response = "{\"generation\":\"7\",\"observedGeneration\":\"7\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"AUTOMATIC\",\"minInstanceCount\":1},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00001\",\"latestCreatedRevision\":\"fleet-api-00001\",\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"11111111-1111-4111-8111-111111111111\"},\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-1\"}}}" }
+  }
+  override_data {
+    target = data.terracurl_request.jobs_live[0]
+    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"fleet-migrate-111111111111\",\"uid\":\"job-uid-1\",\"labels\":{\"fleetdm-lifecycle-identity\":\"111111111111\"},\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestCreatedExecution\":{\"completionStatus\":\"EXECUTION_SUCCEEDED\"}}]}" }
+  }
+  override_data {
+    target = data.terracurl_request.restore_verify[0]
+    values = { status_code = "200", response = "{\"annotations\":{},\"scaling\":{\"scalingMode\":\"AUTOMATIC\",\"minInstanceCount\":1},\"generation\":\"9\",\"observedGeneration\":\"9\",\"reconciling\":false,\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00009\",\"latestCreatedRevision\":\"fleet-api-00009\"}" } // marker missing
+  }
+  expect_failures = [data.terracurl_request.restore_verify]
+}
+
+run "verify_wrong_scaling_fails" {
+  command = plan
+  override_data {
+    target = data.terracurl_request.service_live[0]
+    values = { status_code = "200", response = "{\"generation\":\"7\",\"observedGeneration\":\"7\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"AUTOMATIC\",\"minInstanceCount\":1},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00001\",\"latestCreatedRevision\":\"fleet-api-00001\",\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"11111111-1111-4111-8111-111111111111\"},\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-1\"}}}" }
+  }
+  override_data {
+    target = data.terracurl_request.jobs_live[0]
+    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"fleet-migrate-111111111111\",\"uid\":\"job-uid-1\",\"labels\":{\"fleetdm-lifecycle-identity\":\"111111111111\"},\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestCreatedExecution\":{\"completionStatus\":\"EXECUTION_SUCCEEDED\"}}]}" }
+  }
+  override_data {
+    target = data.terracurl_request.restore_verify[0]
+    values = { status_code = "200", response = "{\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"11111111-1111-4111-8111-111111111111\"},\"scaling\":{\"scalingMode\":\"MANUAL\"},\"generation\":\"9\",\"observedGeneration\":\"9\",\"reconciling\":false,\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00009\",\"latestCreatedRevision\":\"fleet-api-00009\"}" } // MANUAL/0 scaling
+  }
+  expect_failures = [data.terracurl_request.restore_verify]
+}
+
+run "verify_failed_ready_fails" {
+  command = plan
+  override_data {
+    target = data.terracurl_request.service_live[0]
+    values = { status_code = "200", response = "{\"generation\":\"7\",\"observedGeneration\":\"7\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"AUTOMATIC\",\"minInstanceCount\":1},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00001\",\"latestCreatedRevision\":\"fleet-api-00001\",\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"11111111-1111-4111-8111-111111111111\"},\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-1\"}}}" }
+  }
+  override_data {
+    target = data.terracurl_request.jobs_live[0]
+    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"fleet-migrate-111111111111\",\"uid\":\"job-uid-1\",\"labels\":{\"fleetdm-lifecycle-identity\":\"111111111111\"},\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestCreatedExecution\":{\"completionStatus\":\"EXECUTION_SUCCEEDED\"}}]}" }
+  }
+  override_data {
+    target = data.terracurl_request.restore_verify[0]
+    values = { status_code = "200", response = "{\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"11111111-1111-4111-8111-111111111111\"},\"scaling\":{\"scalingMode\":\"AUTOMATIC\",\"minInstanceCount\":1},\"generation\":\"9\",\"observedGeneration\":\"9\",\"reconciling\":false,\"terminalCondition\":{\"state\":\"CONDITION_FAILED\"},\"latestReadyRevision\":\"fleet-api-00009\",\"latestCreatedRevision\":\"fleet-api-00009\"}" } // Ready FAILED
+  }
+  expect_failures = [data.terracurl_request.restore_verify]
+}
+
+run "verify_reconciling_fails" {
+  command = plan
+  override_data {
+    target = data.terracurl_request.service_live[0]
+    values = { status_code = "200", response = "{\"generation\":\"7\",\"observedGeneration\":\"7\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"AUTOMATIC\",\"minInstanceCount\":1},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00001\",\"latestCreatedRevision\":\"fleet-api-00001\",\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"11111111-1111-4111-8111-111111111111\"},\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-1\"}}}" }
+  }
+  override_data {
+    target = data.terracurl_request.jobs_live[0]
+    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"fleet-migrate-111111111111\",\"uid\":\"job-uid-1\",\"labels\":{\"fleetdm-lifecycle-identity\":\"111111111111\"},\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestCreatedExecution\":{\"completionStatus\":\"EXECUTION_SUCCEEDED\"}}]}" }
+  }
+  override_data {
+    target = data.terracurl_request.restore_verify[0]
+    values = { status_code = "200", response = "{\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"11111111-1111-4111-8111-111111111111\"},\"scaling\":{\"scalingMode\":\"AUTOMATIC\",\"minInstanceCount\":1},\"generation\":\"9\",\"observedGeneration\":\"9\",\"reconciling\":true,\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00009\",\"latestCreatedRevision\":\"fleet-api-00009\"}" } // still reconciling
+  }
+  expect_failures = [data.terracurl_request.restore_verify]
+}
+
 // 4. Upgrade while an out-of-band traffic tag is still reported: verify
 //    refuses (tagged revisions remain reachable under MANUAL/0), so no job is
 //    created. (Here the stop PATCH would have removed tags; the fake status
@@ -294,6 +376,10 @@ run "upgrade_apply" {
   override_data {
     target = data.terracurl_request.restore_verify[0]
     values = { status_code = "200", response = "{\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"22222222-2222-4222-8222-222222222222\",\"fleetdm.com/lifecycle-restore-key\":\"mock\"},\"scaling\":{\"scalingMode\":\"AUTOMATIC\",\"minInstanceCount\":1},\"generation\":\"9\",\"observedGeneration\":\"9\",\"reconciling\":false,\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00009\",\"latestCreatedRevision\":\"fleet-api-00009\"}" }
+  }
+  override_data {
+    target = data.terracurl_request.restore_probe[0]
+    values = { status_code = "200", response = "{\"generation\":\"9\",\"observedGeneration\":\"9\",\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00009\",\"latestCreatedRevision\":\"fleet-api-00009\"}" }
   }
   override_data {
     target = data.terracurl_request.service_ready[0]
@@ -360,6 +446,10 @@ run "upgrade_apply" {
     condition     = jsondecode(terracurl_request.restore[0].request_body).annotations["fleetdm.com/lifecycle-restored"] == "22222222-2222-4222-8222-222222222222"
     error_message = "Restore must write the new identity marker."
   }
+  assert {
+    condition     = time_sleep.restore_settle[0].create_duration == "0s"
+    error_message = "A probe that already shows a settled control plane must skip the wait."
+  }
 }
 
 // 6. No-op after the upgrade.
@@ -416,12 +506,12 @@ run "config_churn_does_not_migrate" {
   }
 }
 
-// 8. A migration whose job create LRO "succeeds" but reports a FAILED
-//    terminal condition (shape 2): the job postcondition fails the apply, the
-//    service is not updated and restore never runs. (Shape 1, an LRO error,
-//    is a provider error/taint and can only be shown with the real provider:
-//    see the integration harness.)
-run "job_failed_shape2" {
+// 8. The Job reports a SUCCEEDED terminal condition (its own readiness) but
+//    the execution FAILED: the migration-success gate on the service fails
+//    the apply, so the target is not deployed and restore never runs. (An LRO
+//    error is a provider error/taint and a FAILED Job condition is shown with
+//    the real provider: see the integration harness, S4/S5.)
+run "job_ready_but_execution_failed" {
   command = apply
   plan_options {
     replace = [
@@ -445,8 +535,12 @@ run "job_failed_shape2" {
     target = google_cloud_run_v2_job.migration[0]
     values = {
       uid                = "job-uid-3"
-      terminal_condition = [{ type = "Ready", state = "CONDITION_FAILED", reason = "fake-prepare-db-exit-1", message = "" }]
+      terminal_condition = [{ type = "Ready", state = "CONDITION_SUCCEEDED", reason = "", message = "" }]
     }
+  }
+  override_data {
+    target = data.terracurl_request.job_execution[0]
+    values = { status_code = "200", response = "{\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestCreatedExecution\":{\"completionStatus\":\"EXECUTION_FAILED\"}}" }
   }
   override_data {
     target = data.terracurl_request.service_live[0]
@@ -461,11 +555,85 @@ run "job_failed_shape2" {
     values = { status_code = "200", response = "{\"name\":\"projects/fictional-proj/locations/us-central1/services/fleet-api\",\"generation\":\"7\",\"observedGeneration\":\"7\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"MANUAL\"},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"trafficStatuses\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00001\",\"latestCreatedRevision\":\"fleet-api-00001\",\"annotations\":{},\"template\":{\"annotations\":{}}}" }
   }
 
+  expect_failures = [google_cloud_run_v2_service.fleet]
+}
+
+// 8b. Same job, execution still RUNNING: the plan fails at the job (it is not
+//     replaced or deleted while it runs), so nothing is deployed or restored.
+run "execution_running_blocks" {
+  command = plan
+  variables {
+    image = "fleetdm/fleet:v4.95.0"
+  }
+  override_data {
+    target = data.terracurl_request.service_live[0]
+    values = { status_code = "200", response = "{\"generation\":\"7\",\"observedGeneration\":\"7\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"MANUAL\"},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00001\",\"latestCreatedRevision\":\"fleet-api-00001\",\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"22222222-2222-4222-8222-222222222222\"},\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-2\"}}}" }
+  }
+  override_data {
+    target = data.terracurl_request.stop_verify[0]
+    values = { status_code = "200", response = "{\"generation\":\"7\",\"observedGeneration\":\"7\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"MANUAL\"},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}]}" }
+  }
+  override_data {
+    target = data.terracurl_request.jobs_live[0]
+    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"fleet-migrate-333333333333\",\"uid\":\"job-uid-3\",\"labels\":{\"fleetdm-lifecycle-identity\":\"333333333333\"},\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestCreatedExecution\":{\"completionStatus\":\"EXECUTION_RUNNING\"}}]}" }
+  }
+  override_data {
+    target = data.terracurl_request.job_execution[0]
+    values = { status_code = "200", response = "{\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestCreatedExecution\":{\"completionStatus\":\"EXECUTION_RUNNING\"}}" }
+  }
   expect_failures = [google_cloud_run_v2_job.migration]
 }
 
-// 9. Plain next apply after the failed job (no taint, no edits): the live
-//    FAILED job of this identity yields a new job name => new attempt (stop
+// 8b2. Same running job, but a new identity (image change): the identity UUID,
+//      and with it the per-identity check, is unknown at plan. The
+//      identity-independent running-job check still fails the plan.
+run "new_identity_while_running_blocks" {
+  command = plan
+  plan_options {
+    replace = [terraform_data.identity[0], google_cloud_run_v2_job.migration[0]]
+  }
+  variables {
+    image = "fleetdm/fleet:v4.95.1"
+  }
+  override_data {
+    target = data.terracurl_request.service_live[0]
+    values = { status_code = "200", response = "{\"generation\":\"7\",\"observedGeneration\":\"7\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"MANUAL\"},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00001\",\"latestCreatedRevision\":\"fleet-api-00001\",\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"22222222-2222-4222-8222-222222222222\"},\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-2\"}}}" }
+  }
+  override_data {
+    target = data.terracurl_request.jobs_live[0]
+    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-333333333333\",\"uid\":\"job-uid-3\",\"labels\":{\"fleetdm-lifecycle-identity\":\"333333333333\"},\"latestCreatedExecution\":{\"completionStatus\":\"EXECUTION_RUNNING\"}}]}" }
+  }
+  expect_failures = [google_cloud_run_v2_job.migration]
+}
+
+// 8c. Same job, no execution outcome reported (Job Ready alone): fails closed.
+run "execution_status_missing_blocks" {
+  command = plan
+  variables {
+    image = "fleetdm/fleet:v4.95.0"
+  }
+  override_data {
+    target = data.terracurl_request.service_live[0]
+    values = { status_code = "200", response = "{\"generation\":\"7\",\"observedGeneration\":\"7\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"MANUAL\"},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00001\",\"latestCreatedRevision\":\"fleet-api-00001\",\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"22222222-2222-4222-8222-222222222222\"},\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-2\"}}}" }
+  }
+  override_data {
+    target = data.terracurl_request.stop_verify[0]
+    values = { status_code = "200", response = "{\"generation\":\"7\",\"observedGeneration\":\"7\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"MANUAL\"},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}]}" }
+  }
+  override_data {
+    target = data.terracurl_request.jobs_live[0]
+    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"fleet-migrate-333333333333\",\"uid\":\"job-uid-3\",\"labels\":{\"fleetdm-lifecycle-identity\":\"333333333333\"},\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"}}]}" }
+  }
+  override_data {
+    target = data.terracurl_request.job_execution[0]
+    values = { status_code = "200", response = "{\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"}}" }
+  }
+  expect_failures = [google_cloud_run_v2_service.fleet]
+}
+
+// 9. Plain next apply after the failed execution (no taint, no edits): the
+//    live job of this identity whose execution FAILED (its Job condition is
+//    SUCCEEDED) yields a new job name => new attempt (stop
 //    re-sent, drain, verify) => one fresh execution with current config.
 //    The live service is still MANUAL/0 with the OLD marker, so the identity
 //    is not proven and the token is set.
@@ -505,7 +673,7 @@ run "retry_after_failed_job" {
   }
   override_data {
     target = data.terracurl_request.jobs_live[0]
-    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"fleet-migrate-333333333333\",\"uid\":\"job-uid-3\",\"labels\":{\"fleetdm-lifecycle-identity\":\"333333333333\"},\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_FAILED\"}}]}" }
+    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"fleet-migrate-333333333333\",\"uid\":\"job-uid-3\",\"labels\":{\"fleetdm-lifecycle-identity\":\"333333333333\"},\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestCreatedExecution\":{\"completionStatus\":\"EXECUTION_FAILED\"}}]}" }
   }
   override_data {
     target = data.terracurl_request.stop_verify[0]
@@ -580,40 +748,12 @@ run "failed_rollout_no_restore" {
 // 11. Plain next apply after the failed rollout: same job/attempt (no new
 //     migration), still MANUAL, and a redeploy nonce in the attempt
 //     annotation forces a fresh revision; restore runs once it is Ready.
-// 10b. Unproven identity whose job already SUCCEEDED (failed rollout): an explicit
-//      same-name job replacement would carry run_execution_token, so the
-//      earlier-migration guard applies (read at plan) and an active orphan
-//      execution blocks the PLAN: the job is never deleted.
-run "guard_blocks_replacing_succeeded_job_of_unproven_identity" {
-  command = plan
-  plan_options {
-    replace = [google_cloud_run_v2_job.migration[0]]
-  }
-  variables {
-    image = "fleetdm/fleet:v4.96.0"
-  }
-  override_data {
-    target = data.terracurl_request.service_live[0]
-    values = { status_code = "200", response = "{\"name\":\"projects/fictional-proj/locations/us-central1/services/fleet-api\",\"generation\":\"7\",\"observedGeneration\":\"7\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"MANUAL\"},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"trafficStatuses\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_FAILED\"},\"latestReadyRevision\":\"fleet-api-00009\",\"latestCreatedRevision\":\"fleet-api-00010\",\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"33333333-3333-4333-8333-333333333333\"},\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-4\"}}}" }
-  }
-  override_data {
-    target = data.terracurl_request.jobs_live[0]
-    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"fleet-migrate-444444444444\",\"uid\":\"job-uid-4\",\"labels\":{\"fleetdm-lifecycle-identity\":\"444444444444\"},\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"}}]}" }
-  }
-  override_data {
-    target = data.terracurl_request.stop_verify[0]
-    values = { status_code = "200", response = "{\"name\":\"projects/fictional-proj/locations/us-central1/services/fleet-api\",\"generation\":\"7\",\"observedGeneration\":\"7\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"MANUAL\"},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"trafficStatuses\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00001\",\"latestCreatedRevision\":\"fleet-api-00001\",\"annotations\":{},\"template\":{\"annotations\":{}}}" }
-  }
-  override_data {
-    target = data.terracurl_request.executions_live[0]
-    values = { status_code = "200", response = "{\"executions\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-0123456789ab/executions/fleet-migrate-0123456789ab-r1\",\"job\":\"fleet-migrate-0123456789ab\",\"runningCount\":1}]}" }
-  }
-
-  expect_failures = [terracurl_request.stop]
-}
-
 run "rollout_retry_redeploys_then_restores" {
   command = apply
+  override_data {
+    target = data.terracurl_request.restore_probe[0]
+    values = { status_code = "200", response = "{\"generation\":\"9\",\"observedGeneration\":\"9\",\"reconciling\":false,\"terminalCondition\":{\"state\":\"CONDITION_FAILED\"}}" }
+  }
   override_data {
     target = data.terracurl_request.restore_verify[0]
     values = { status_code = "200", response = "{\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"44444444-4444-4444-8444-444444444444\",\"fleetdm.com/lifecycle-restore-key\":\"mock\"},\"scaling\":{\"scalingMode\":\"AUTOMATIC\",\"minInstanceCount\":1},\"generation\":\"9\",\"observedGeneration\":\"9\",\"reconciling\":false,\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00009\",\"latestCreatedRevision\":\"fleet-api-00009\"}" }
@@ -655,6 +795,10 @@ run "rollout_retry_redeploys_then_restores" {
   assert {
     condition     = terracurl_request.restore[0].name == "fleet-lifecycle-restore-job-uid-4" && jsondecode(terracurl_request.restore[0].request_body).annotations["fleetdm.com/lifecycle-restored"] == "44444444-4444-4444-8444-444444444444"
     error_message = "Restore must follow the successful redeploy."
+  }
+  assert {
+    condition     = time_sleep.restore_settle[0].create_duration == "0s"
+    error_message = "A terminally failed probe must not wait (waiting cannot heal it); restore_verify decides."
   }
 }
 
@@ -909,9 +1053,8 @@ run "restore_lagging_retry_apply_recovers" {
 }
 
 // 16. Settled no-op for a plain tag while the API reports an unrelated alias
-//     image and a RELEVANT execution is active: nothing changes (no nonce,
-//     the earlier-execution guard only applies before a new migration).
-run "settled_noop_ignores_api_image_and_guard" {
+//     image: nothing changes (no nonce).
+run "settled_noop_ignores_api_image" {
   command = plan
   variables {
     image = "fleetdm/fleet:v4.97.0"
@@ -923,10 +1066,6 @@ run "settled_noop_ignores_api_image_and_guard" {
   override_data {
     target = data.terracurl_request.jobs_live[0]
     values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-555555555555\",\"uid\":\"job-uid-5\",\"labels\":{\"fleetdm-lifecycle-identity\":\"555555555555\"},\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"}}]}" }
-  }
-  override_data {
-    target = data.terracurl_request.executions_live[0]
-    values = { status_code = "200", response = "{\"executions\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migration/executions/fleet-migration-abcde\",\"job\":\"fleet-migration\",\"runningCount\":1}]}" }
   }
 
   assert {
@@ -957,7 +1096,7 @@ run "restore_retry_ignores_reported_digest_image" {
   }
   override_data {
     target = data.terracurl_request.jobs_live[0]
-    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-555555555555\",\"uid\":\"job-uid-5\",\"labels\":{\"fleetdm-lifecycle-identity\":\"555555555555\"},\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"}}]}" }
+    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-555555555555\",\"uid\":\"job-uid-5\",\"labels\":{\"fleetdm-lifecycle-identity\":\"555555555555\"},\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"},\"latestCreatedExecution\":{\"completionStatus\":\"EXECUTION_SUCCEEDED\"}}]}" }
   }
   override_data {
     target = data.terracurl_request.service_ready[0]
@@ -981,255 +1120,93 @@ run "restore_retry_ignores_reported_digest_image" {
     )
     error_message = "A missing marker must re-send the restore (fresh key) without a migration, regardless of the reported image."
   }
+  assert {
+    condition     = output.declared_scaling_mode == "MANUAL"
+    error_message = "A live MANUAL service stays MANUAL until the restore PATCH itself."
+  }
 }
 
-// ---------------------------------------------------------------------------
-// Earlier-migration guard (GET jobs/-/executions). Relevant job IDs:
-// fleet-migration (earlier releases) and fleet-migrate-* (every identity).
-// ---------------------------------------------------------------------------
-
-// 18. New identity while the legacy fixed-name job has an active execution:
-//     the inventory is read during apply after the attempt; the stop
-//     precondition refuses, so Fleet is not stopped and no job is created.
-run "guard_legacy_active_blocks_before_stop" {
+// 17b. Marker stripped while Fleet already serves this attempt (AUTOMATIC,
+//      settled, live job = this attempt's job, execution SUCCEEDED): the
+//      service stays declared AUTOMATIC (no MANUAL/0 flip without a drain) and
+//      only the restore is re-sent, keeping out-of-band annotations.
+run "missing_marker_repaired_without_outage" {
   command = apply
+  variables {
+    image = "fleetdm/fleet:v4.97.0"
+  }
   plan_options {
-    replace = [
-      terraform_data.identity[0],
-      google_cloud_run_v2_job.migration[0],
-      terracurl_request.stop[0],
-      terracurl_request.stop_wait[0],
-      time_sleep.drain[0],
-      terracurl_request.restore[0],
-      terracurl_request.restore_wait[0],
-    ]
-  }
-  variables {
-    image = "fleetdm/fleet:v4.98.0"
-  }
-  override_resource {
-    target = terraform_data.identity[0]
-    values = { id = "66666666-6666-4666-8666-666666666666" }
+    replace = [terracurl_request.restore[0], terracurl_request.restore_wait[0]]
   }
   override_data {
     target = data.terracurl_request.service_live[0]
-    values = { status_code = "200", response = "{\"name\":\"projects/fictional-proj/locations/us-central1/services/fleet-api\",\"generation\":\"14\",\"observedGeneration\":\"14\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"AUTOMATIC\",\"minInstanceCount\":1},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"trafficStatuses\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00012\",\"latestCreatedRevision\":\"fleet-api-00012\",\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"55555555-5555-4555-8555-555555555555\",\"fleetdm.com/lifecycle-restore-key\":\"job-uid-5-r1\"},\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-5.settled\"}}}" }
+    values = { status_code = "200", response = "{\"generation\":\"14\",\"observedGeneration\":\"14\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"AUTOMATIC\",\"minInstanceCount\":1},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00012\",\"latestCreatedRevision\":\"fleet-api-00012\",\"annotations\":{\"example.com/out-of-band\":\"kept\"},\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-5.settled\"}}}" }
   }
   override_data {
     target = data.terracurl_request.jobs_live[0]
-    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-555555555555\",\"uid\":\"job-uid-5\",\"labels\":{\"fleetdm-lifecycle-identity\":\"555555555555\"},\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"}}]}" }
+    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-555555555555\",\"uid\":\"job-uid-5\",\"labels\":{\"fleetdm-lifecycle-identity\":\"555555555555\"},\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestCreatedExecution\":{\"completionStatus\":\"EXECUTION_SUCCEEDED\"}}]}" }
   }
   override_data {
-    target = data.terracurl_request.executions_live[0]
-    values = { status_code = "200", response = "{\"executions\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migration/executions/fleet-migration-abcde\",\"job\":\"fleet-migration\",\"runningCount\":1},{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/nightly-report/executions/nightly-report-1\",\"job\":\"nightly-report\",\"runningCount\":1}]}" }
-  }
-
-  expect_failures = [terracurl_request.stop]
-}
-
-// 19. A prior identity's orphan job (not in state; full Execution.job name) still running.
-run "guard_prior_identity_orphan_active_full_job_name" {
-  command = plan
-  variables {
-    image = "fleetdm/fleet:v4.98.0"
+    target = data.terracurl_request.service_ready[0]
+    values = { status_code = "200", response = "{\"generation\":\"14\",\"observedGeneration\":\"14\",\"reconciling\":false,\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00012\",\"latestCreatedRevision\":\"fleet-api-00012\",\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-5.settled\"}},\"annotations\":{\"example.com/out-of-band\":\"kept\"}}" }
   }
   override_data {
-    target = data.terracurl_request.service_live[0]
-    values = { status_code = "200", response = "{\"name\":\"projects/fictional-proj/locations/us-central1/services/fleet-api\",\"generation\":\"15\",\"observedGeneration\":\"15\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"MANUAL\"},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"trafficStatuses\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00012\",\"latestCreatedRevision\":\"fleet-api-00012\",\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"55555555-5555-4555-8555-555555555555\",\"fleetdm.com/lifecycle-restore-key\":\"job-uid-5-r1\"},\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-5.settled\"}}}" }
-  }
-  override_data {
-    target = data.terracurl_request.jobs_live[0]
-    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-555555555555\",\"uid\":\"job-uid-5\",\"labels\":{\"fleetdm-lifecycle-identity\":\"555555555555\"},\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"}}]}" }
-  }
-  override_data {
-    target = data.terracurl_request.executions_live[0]
-    values = { status_code = "200", response = "{\"executions\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-0123456789ab/executions/fleet-migrate-0123456789ab-r1\",\"job\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-0123456789ab\",\"runningCount\":1}]}" }
-  }
-
-  expect_failures = [terracurl_request.stop]
-}
-
-// 20. Same job: an OLDER execution still active while the newer (latest) one completed;
-//     Execution.job omitted (job ID from Execution.name). Must block: the full
-//     inventory is checked, not only the latest execution.
-run "guard_older_execution_active_newer_completed" {
-  command = plan
-  variables {
-    image = "fleetdm/fleet:v4.98.0"
-  }
-  override_data {
-    target = data.terracurl_request.service_live[0]
-    values = { status_code = "200", response = "{\"name\":\"projects/fictional-proj/locations/us-central1/services/fleet-api\",\"generation\":\"15\",\"observedGeneration\":\"15\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"MANUAL\"},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"trafficStatuses\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00012\",\"latestCreatedRevision\":\"fleet-api-00012\",\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"55555555-5555-4555-8555-555555555555\",\"fleetdm.com/lifecycle-restore-key\":\"job-uid-5-r1\"},\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-5.settled\"}}}" }
-  }
-  override_data {
-    target = data.terracurl_request.jobs_live[0]
-    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-555555555555\",\"uid\":\"job-uid-5\",\"labels\":{\"fleetdm-lifecycle-identity\":\"555555555555\"},\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"}}]}" }
-  }
-  override_data {
-    target = data.terracurl_request.executions_live[0]
-    values = { status_code = "200", response = "{\"executions\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-fedcba987654/executions/fleet-migrate-fedcba987654-new\",\"completionTime\":\"2026-10-01T00:00:00Z\"},{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-fedcba987654/executions/fleet-migrate-fedcba987654-old\"}]}" }
-  }
-
-  expect_failures = [terracurl_request.stop]
-}
-
-// 21. completionTime set but runningCount > 0 (e.g. cancelling): still active.
-run "guard_completed_but_still_running_count" {
-  command = plan
-  variables {
-    image = "fleetdm/fleet:v4.98.0"
-  }
-  override_data {
-    target = data.terracurl_request.service_live[0]
-    values = { status_code = "200", response = "{\"name\":\"projects/fictional-proj/locations/us-central1/services/fleet-api\",\"generation\":\"15\",\"observedGeneration\":\"15\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"MANUAL\"},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"trafficStatuses\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00012\",\"latestCreatedRevision\":\"fleet-api-00012\",\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"55555555-5555-4555-8555-555555555555\",\"fleetdm.com/lifecycle-restore-key\":\"job-uid-5-r1\"},\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-5.settled\"}}}" }
-  }
-  override_data {
-    target = data.terracurl_request.jobs_live[0]
-    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-555555555555\",\"uid\":\"job-uid-5\",\"labels\":{\"fleetdm-lifecycle-identity\":\"555555555555\"},\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"}}]}" }
-  }
-  override_data {
-    target = data.terracurl_request.executions_live[0]
-    values = { status_code = "200", response = "{\"executions\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migration/executions/fleet-migration-c\",\"job\":\"fleet-migration\",\"completionTime\":\"2026-10-01T00:00:00Z\",\"runningCount\":1}]}" }
-  }
-
-  expect_failures = [terracurl_request.stop]
-}
-
-// 22. More than one page (nextPageToken): no partial inventory is trusted.
-run "guard_truncated_inventory_blocks" {
-  command = plan
-  variables {
-    image = "fleetdm/fleet:v4.98.0"
-  }
-  override_data {
-    target = data.terracurl_request.service_live[0]
-    values = { status_code = "200", response = "{\"name\":\"projects/fictional-proj/locations/us-central1/services/fleet-api\",\"generation\":\"15\",\"observedGeneration\":\"15\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"MANUAL\"},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"trafficStatuses\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00012\",\"latestCreatedRevision\":\"fleet-api-00012\",\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"55555555-5555-4555-8555-555555555555\",\"fleetdm.com/lifecycle-restore-key\":\"job-uid-5-r1\"},\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-5.settled\"}}}" }
-  }
-  override_data {
-    target = data.terracurl_request.jobs_live[0]
-    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-555555555555\",\"uid\":\"job-uid-5\",\"labels\":{\"fleetdm-lifecycle-identity\":\"555555555555\"},\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"}}]}" }
-  }
-  override_data {
-    target = data.terracurl_request.executions_live[0]
-    values = { status_code = "200", response = "{\"executions\":[],\"nextPageToken\":\"next\"}" }
-  }
-
-  expect_failures = [terracurl_request.stop]
-}
-
-// 23. A 200 body that is not JSON is never an empty inventory.
-run "guard_malformed_inventory_blocks" {
-  command = plan
-  variables {
-    image = "fleetdm/fleet:v4.98.0"
-  }
-  override_data {
-    target = data.terracurl_request.service_live[0]
-    values = { status_code = "200", response = "{\"name\":\"projects/fictional-proj/locations/us-central1/services/fleet-api\",\"generation\":\"15\",\"observedGeneration\":\"15\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"MANUAL\"},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"trafficStatuses\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00012\",\"latestCreatedRevision\":\"fleet-api-00012\",\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"55555555-5555-4555-8555-555555555555\",\"fleetdm.com/lifecycle-restore-key\":\"job-uid-5-r1\"},\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-5.settled\"}}}" }
-  }
-  override_data {
-    target = data.terracurl_request.jobs_live[0]
-    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-555555555555\",\"uid\":\"job-uid-5\",\"labels\":{\"fleetdm-lifecycle-identity\":\"555555555555\"},\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"}}]}" }
-  }
-  override_data {
-    target = data.terracurl_request.executions_live[0]
-    values = { status_code = "200", response = "<html>not json</html>" }
-  }
-
-  expect_failures = [terracurl_request.stop]
-}
-
-// 24. A non-200 status (mock; the real request already fails on it) is never an empty inventory.
-run "guard_non_200_inventory_blocks" {
-  command = plan
-  variables {
-    image = "fleetdm/fleet:v4.98.0"
-  }
-  override_data {
-    target = data.terracurl_request.service_live[0]
-    values = { status_code = "200", response = "{\"name\":\"projects/fictional-proj/locations/us-central1/services/fleet-api\",\"generation\":\"15\",\"observedGeneration\":\"15\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"MANUAL\"},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"trafficStatuses\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00012\",\"latestCreatedRevision\":\"fleet-api-00012\",\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"55555555-5555-4555-8555-555555555555\",\"fleetdm.com/lifecycle-restore-key\":\"job-uid-5-r1\"},\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-5.settled\"}}}" }
-  }
-  override_data {
-    target = data.terracurl_request.jobs_live[0]
-    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-555555555555\",\"uid\":\"job-uid-5\",\"labels\":{\"fleetdm-lifecycle-identity\":\"555555555555\"},\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"}}]}" }
-  }
-  override_data {
-    target = data.terracurl_request.executions_live[0]
-    values = { status_code = "403", response = "{\"error\":{\"code\":403}}" }
-  }
-
-  expect_failures = [terracurl_request.stop]
-}
-
-// 25. An execution that names no job cannot be classified: blocks.
-run "guard_unattributable_execution_blocks" {
-  command = plan
-  variables {
-    image = "fleetdm/fleet:v4.98.0"
-  }
-  override_data {
-    target = data.terracurl_request.service_live[0]
-    values = { status_code = "200", response = "{\"name\":\"projects/fictional-proj/locations/us-central1/services/fleet-api\",\"generation\":\"15\",\"observedGeneration\":\"15\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"MANUAL\"},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"trafficStatuses\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00012\",\"latestCreatedRevision\":\"fleet-api-00012\",\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"55555555-5555-4555-8555-555555555555\",\"fleetdm.com/lifecycle-restore-key\":\"job-uid-5-r1\"},\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-5.settled\"}}}" }
-  }
-  override_data {
-    target = data.terracurl_request.jobs_live[0]
-    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-555555555555\",\"uid\":\"job-uid-5\",\"labels\":{\"fleetdm-lifecycle-identity\":\"555555555555\"},\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"}}]}" }
-  }
-  override_data {
-    target = data.terracurl_request.executions_live[0]
-    values = { status_code = "200", response = "{\"executions\":[{\"createTime\":\"2026-10-01T00:00:00Z\"}]}" }
-  }
-
-  expect_failures = [terracurl_request.stop]
-}
-
-// 26. Relevant executions settled (omitted runningCount = 0) and an unrelated job
-//     still running: the new migration may proceed.
-run "guard_settled_or_unrelated_passes" {
-  command = plan
-  variables {
-    image = "fleetdm/fleet:v4.98.0"
-  }
-  override_data {
-    target = data.terracurl_request.service_live[0]
-    values = { status_code = "200", response = "{\"name\":\"projects/fictional-proj/locations/us-central1/services/fleet-api\",\"generation\":\"15\",\"observedGeneration\":\"15\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"MANUAL\"},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"trafficStatuses\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00012\",\"latestCreatedRevision\":\"fleet-api-00012\",\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"55555555-5555-4555-8555-555555555555\",\"fleetdm.com/lifecycle-restore-key\":\"job-uid-5-r1\"},\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-5.settled\"}}}" }
-  }
-  override_data {
-    target = data.terracurl_request.jobs_live[0]
-    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-555555555555\",\"uid\":\"job-uid-5\",\"labels\":{\"fleetdm-lifecycle-identity\":\"555555555555\"},\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"}}]}" }
-  }
-  override_data {
-    target = data.terracurl_request.executions_live[0]
-    values = { status_code = "200", response = "{\"executions\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migration/executions/fleet-migration-abcde\",\"job\":\"fleet-migration\",\"completionTime\":\"2026-10-01T00:00:00Z\"},{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-0123456789ab/executions/x-1\",\"job\":\"fleet-migrate-0123456789ab\",\"completionTime\":\"2026-10-01T00:00:00Z\",\"runningCount\":0},{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/nightly-report/executions/nightly-report-1\",\"job\":\"nightly-report\",\"runningCount\":1},{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrations-report/executions/r-1\",\"job\":\"fleet-migrations-report\",\"runningCount\":1}]}" }
+    target = data.terracurl_request.restore_verify[0]
+    values = { status_code = "200", response = "{\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"55555555-5555-4555-8555-555555555555\"},\"scaling\":{\"scalingMode\":\"AUTOMATIC\",\"minInstanceCount\":1},\"generation\":\"15\",\"observedGeneration\":\"15\",\"reconciling\":false,\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00012\",\"latestCreatedRevision\":\"fleet-api-00012\"}" }
   }
 
   assert {
-    condition     = terracurl_request.stop[0].method == "PATCH" && google_cloud_run_v2_job.migration[0].name == "fleet-migrate-666666666666"
-    error_message = "With no relevant active execution the new migration must be planned."
+    condition = (
+      output.declared_scaling_mode == "AUTOMATIC" &&
+      google_cloud_run_v2_service.fleet.scaling[0].scaling_mode == "AUTOMATIC" &&
+      output.attempt_id == run.restore_retry_ignores_reported_digest_image.attempt_id &&
+      google_cloud_run_v2_job.migration[0].uid == "job-uid-5" &&
+      startswith(terracurl_request.restore[0].name, "fleet-lifecycle-restore-job-uid-5-r") &&
+      jsondecode(terracurl_request.restore[0].request_body).annotations["example.com/out-of-band"] == "kept" &&
+      jsondecode(terracurl_request.restore[0].request_body).annotations["fleetdm.com/lifecycle-restored"] == "55555555-5555-4555-8555-555555555555"
+    )
+    error_message = "A missing marker on a serving, settled current attempt must be repaired by the restore alone, without stopping Fleet."
   }
 }
 
-// 27. A valid 200 body without an executions array is a legitimately empty region.
-run "guard_empty_region_passes" {
+// 17c. Same missing marker, but the live service is not settled: not accepted.
+//      Nothing is deployed or restored; the plan fails closed at the stop
+//      verification (the service is not MANUAL/0), as for any unproven state.
+run "missing_marker_unsettled_not_accepted" {
   command = plan
   variables {
-    image = "fleetdm/fleet:v4.98.0"
+    image = "fleetdm/fleet:v4.97.0"
   }
   override_data {
     target = data.terracurl_request.service_live[0]
-    values = { status_code = "200", response = "{\"name\":\"projects/fictional-proj/locations/us-central1/services/fleet-api\",\"generation\":\"15\",\"observedGeneration\":\"15\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"MANUAL\"},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"trafficStatuses\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00012\",\"latestCreatedRevision\":\"fleet-api-00012\",\"annotations\":{\"fleetdm.com/lifecycle-restored\":\"55555555-5555-4555-8555-555555555555\",\"fleetdm.com/lifecycle-restore-key\":\"job-uid-5-r1\"},\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-5.settled\"}}}" }
+    values = { status_code = "200", response = "{\"generation\":\"14\",\"observedGeneration\":\"13\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"AUTOMATIC\",\"minInstanceCount\":1},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00012\",\"latestCreatedRevision\":\"fleet-api-00012\",\"annotations\":{\"example.com/out-of-band\":\"kept\"},\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-5.settled\"}}}" }
   }
   override_data {
     target = data.terracurl_request.jobs_live[0]
-    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-555555555555\",\"uid\":\"job-uid-5\",\"labels\":{\"fleetdm-lifecycle-identity\":\"555555555555\"},\"terminalCondition\":{\"type\":\"Ready\",\"state\":\"CONDITION_SUCCEEDED\"}}]}" }
+    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-555555555555\",\"uid\":\"job-uid-5\",\"labels\":{\"fleetdm-lifecycle-identity\":\"555555555555\"},\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestCreatedExecution\":{\"completionStatus\":\"EXECUTION_SUCCEEDED\"}}]}" }
+  }
+
+  expect_failures = [data.terracurl_request.stop_verify]
+}
+
+// 17d. Same missing marker, but the live job's execution was CANCELLED: not
+//      accepted; the retry plans a new job (one fresh migration).
+run "missing_marker_cancelled_execution_not_accepted" {
+  command = plan
+  variables {
+    image = "fleetdm/fleet:v4.97.0"
   }
   override_data {
-    target = data.terracurl_request.executions_live[0]
-    values = { status_code = "200", response = "{}" }
+    target = data.terracurl_request.service_live[0]
+    values = { status_code = "200", response = "{\"generation\":\"14\",\"observedGeneration\":\"14\",\"reconciling\":false,\"scaling\":{\"scalingMode\":\"AUTOMATIC\",\"minInstanceCount\":1},\"traffic\":[{\"type\":\"TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST\",\"percent\":100}],\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestReadyRevision\":\"fleet-api-00012\",\"latestCreatedRevision\":\"fleet-api-00012\",\"annotations\":{\"example.com/out-of-band\":\"kept\"},\"template\":{\"annotations\":{\"fleetdm.com/lifecycle-attempt\":\"job-uid-5.settled\"}}}" }
+  }
+  override_data {
+    target = data.terracurl_request.jobs_live[0]
+    values = { status_code = "200", response = "{\"jobs\":[{\"name\":\"projects/fictional-proj/locations/us-central1/jobs/fleet-migrate-555555555555\",\"uid\":\"job-uid-5\",\"labels\":{\"fleetdm-lifecycle-identity\":\"555555555555\"},\"terminalCondition\":{\"state\":\"CONDITION_SUCCEEDED\"},\"latestCreatedExecution\":{\"completionStatus\":\"EXECUTION_CANCELLED\"}}]}" }
   }
 
   assert {
-    condition     = terracurl_request.stop[0].method == "PATCH" && google_cloud_run_v2_job.migration[0].name == "fleet-migrate-666666666666"
-    error_message = "With no relevant active execution the new migration must be planned."
+    condition     = output.declared_scaling_mode == "MANUAL" && output.migration_job_name == "fleet-migrate-555555555555-${substr(sha256("job-uid-5"), 0, 6)}"
+    error_message = "A cancelled execution must not count as migrated; it is retried with a new job."
   }
 }

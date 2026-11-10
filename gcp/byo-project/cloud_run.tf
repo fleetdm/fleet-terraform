@@ -58,9 +58,9 @@ resource "terraform_data" "fleet_database_ready" {
 }
 
 # --- Fleet service + provider-only migration lifecycle ---
-# Replaces module.fleet-service (cloud-run v0.17.2, which cannot express
-# scaling_mode), the fixed-name google_cloud_run_v2_job.fleet_migration_job
-# and the terracurl_request.exec trigger. See modules/fleet-lifecycle.
+# Adopts main's module.fleet-service in place, declares scaling_mode directly,
+# and replaces the fixed-name google_cloud_run_v2_job.fleet_migration_job and
+# terracurl_request.exec trigger. See modules/fleet-lifecycle.
 # Apply path: providers only.
 module "fleet_lifecycle" {
   source = "./modules/fleet-lifecycle"
@@ -93,7 +93,7 @@ module "fleet_lifecycle" {
     database_name       = var.database_config.database_name
   }
 
-  # Ordering only (same readiness set as the former module-wide depends_on).
+  # Ordering only: database, secrets/IAM and CMEK readiness.
   prerequisites = concat(
     [
       google_service_account.fleet_run_sa.id,
@@ -117,7 +117,7 @@ moved {
   to   = module.fleet_lifecycle.google_cloud_run_v2_service.fleet
 }
 
-# The fixed-name `fleet-migration` job of earlier releases is forgotten, not
+# Main's fixed-name `fleet-migration` job is forgotten, not
 # destroyed: deleting a job whose execution might still be running is not
 # something an apply should do implicitly. Delete `fleet-migration` by hand
 # after review.
@@ -129,9 +129,9 @@ removed {
   }
 }
 
-# The earlier terracurl_request.exec ran that job with a plan-time OAuth token
-# and without stopping Fleet. Forget it without destroying: its destroy action
-# was an authenticated GET, which must not run.
+# Main's terracurl_request.exec started that job asynchronously with a
+# plan-time OAuth token and without stopping Fleet. Forget it without
+# executing a destroy action.
 removed {
   from = terracurl_request.exec
 
@@ -145,8 +145,12 @@ resource "google_compute_region_network_endpoint_group" "neg" {
   region                = var.region
   project               = var.project_id
   network_endpoint_type = "SERVERLESS"
+  # Literal service name, not module.fleet_lifecycle.service_name: the load
+  # balancer's create_before_destroy resources would otherwise propagate
+  # create_before_destroy through this NEG to the service and the migration
+  # job, and a same-name job re-create would then conflict (409).
   cloud_run {
-    service = module.fleet_lifecycle.service_name
+    service = local.fleet_service_name
   }
 }
 

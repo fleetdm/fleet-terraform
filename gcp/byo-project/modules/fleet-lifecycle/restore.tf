@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
-# Restore: only after (a) the migration job of this attempt succeeded and
-# (b) the provider deployed the target template while MANUAL/0 and the
+# Restore: only after (a) the migration execution of this attempt reported
+# EXECUTION_SUCCEEDED (gate on the service, service.tf) and (b) the provider deployed the target template while MANUAL/0 and the
 # service reports that revision Ready. Then one REST PATCH sets AUTOMATIC/min
 # and writes the success marker (identity UUID) and its restore key. Keyed on
 # local.restore_key (normally the Job UID; never the service generation,
@@ -11,10 +11,9 @@
 # while the control plane has not yet observed, or has failed to reconcile,
 # that spec. A single immediate read is not enough either: a normal restore is
 # transiently RECONCILING with observedGeneration trailing generation and
-# settles on its own. restore_settlement.tf therefore performs a bounded,
-# provider-only backoff of read-only GETs (default 30s + 60s + 120s, skipping
-# waits as soon as the control plane is settled) and
-# data.terracurl_request.restore_verify then reads the service once more and
+# settles on its own. restore_settlement.tf therefore reads the service once
+# and, unless it is already settled (or terminally failed), waits once
+# (default 210s); data.terracurl_request.restore_verify then reads it again and
 # fails the apply unless the marker, AUTOMATIC/min AND a settled control plane
 # (observedGeneration == generation, not reconciling, Ready succeeded, latest
 # created revision ready) are visible. Plain retries converge without another
@@ -47,15 +46,15 @@ locals {
       scalingMode      = "AUTOMATIC"
       minInstanceCount = var.min_instance_count
     }
-    # updateMask=annotations replaces the whole map: re-send the declared
-    # annotations plus the marker (out-of-band annotations are dropped, as a
-    # provider update of the service would also do).
-    annotations = merge(var.service_annotations, {
-      (var.marker_annotation_key)      = local.identity_id
-      (var.restore_key_annotation_key) = local.restore_key
+    # updateMask=annotations replaces the whole map: re-send the live map read
+    # right after the service step (the declared annotations as the provider
+    # just applied them, plus out-of-band keys, the same merge the provider's
+    # effective_annotations performs) with the marker and restore key on top.
+    annotations = merge(try(local.ready.annotations, {}), {
+      (local.marker_annotation_key)      = local.identity_id
+      (local.restore_key_annotation_key) = local.restore_key
     })
   })
-
 }
 
 # Readiness of the service AFTER the service step of this apply. A data
@@ -80,7 +79,7 @@ data "terracurl_request" "service_ready" {
 }
 
 locals {
-  ready_fields = "name,generation,observedGeneration,reconciling,terminalCondition(type,state,reason),latestReadyRevision,latestCreatedRevision,template(annotations)"
+  ready_fields = "name,generation,observedGeneration,reconciling,terminalCondition(type,state,reason),latestReadyRevision,latestCreatedRevision,template(annotations),annotations"
   ready        = var.migration_enabled ? try(jsondecode(data.terracurl_request.service_ready[0].response), null) : null
 }
 
@@ -108,11 +107,8 @@ resource "terracurl_request" "restore" {
     # service resource itself.
     ignore_changes = [headers, url, method, request_body]
 
-    precondition {
-      condition     = local.proven || contains([for c in try(google_cloud_run_v2_job.migration[0].terminal_condition, []) : c.state], "CONDITION_SUCCEEDED")
-      error_message = "Refusing to restore Fleet: the migration job of this attempt has not succeeded."
-    }
-
+    # Migration success is gated on the service (service.tf), which this
+    # restore follows.
     precondition {
       condition = local.proven || try(alltrue([
         local.ready.terminalCondition.state == "CONDITION_SUCCEEDED",
@@ -122,7 +118,7 @@ resource "terracurl_request" "restore" {
         tostring(local.ready.observedGeneration) == tostring(local.ready.generation),
         # Ownership = this attempt's Job UID on the deployed template (the
         # service and the job are configured from the same var.image).
-        startswith(local.ready.template.annotations[var.attempt_annotation_key], local.job_uid),
+        startswith(local.ready.template.annotations[local.attempt_annotation_key], local.job_uid),
       ]), false)
       error_message = "Refusing to restore Fleet: the target revision is not Ready (latest created != latest ready, failed terminal condition, still reconciling, or not this attempt). Fleet stays MANUAL/0, so the previous revision (old image on a migrated schema) is NOT restarted. Fix the rollout cause and run `terraform apply` again; a new revision is deployed automatically. Live status: ${try(jsonencode(local.ready), "unknown")}"
     }
@@ -186,12 +182,12 @@ data "terracurl_request" "restore_verify" {
   max_retry      = 2
   retry_interval = 10
 
-  depends_on = [time_sleep.restore_settle_3, terracurl_request.restore_wait, google_cloud_run_v2_service.fleet]
+  depends_on = [time_sleep.restore_settle, terracurl_request.restore_wait, google_cloud_run_v2_service.fleet]
 
   lifecycle {
     postcondition {
       condition = try(alltrue([
-        jsondecode(self.response).annotations[var.marker_annotation_key] == local.identity_id,
+        jsondecode(self.response).annotations[local.marker_annotation_key] == local.identity_id,
         jsondecode(self.response).scaling.scalingMode == "AUTOMATIC",
         tonumber(try(jsondecode(self.response).scaling.minInstanceCount, 0)) == var.min_instance_count,
         tostring(jsondecode(self.response).observedGeneration) == tostring(jsondecode(self.response).generation),

@@ -8,11 +8,6 @@ output "service_location" {
   value       = google_cloud_run_v2_service.fleet.location
 }
 
-output "service_id" {
-  description = "Fleet Cloud Run service ID."
-  value       = google_cloud_run_v2_service.fleet.id
-}
-
 output "migration_job_name" {
   description = "Current per-attempt migration job name (null when migrations are disabled)."
   value       = var.migration_enabled ? google_cloud_run_v2_job.migration[0].name : null
