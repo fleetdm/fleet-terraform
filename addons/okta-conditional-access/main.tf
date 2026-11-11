@@ -113,7 +113,9 @@ resource "aws_s3_object" "trust_store_ca" {
   bucket = module.lb_trust_store_bucket.s3_bucket_id
   key    = var.alb_config.trust_store.ca_certificates_bundle_s3_key
   source = var.alb_config.trust_store.ca_certificates_bundle_file
-  etag   = filemd5(var.alb_config.trust_store.ca_certificates_bundle_file)
+
+  # Not etag: the bucket is SSE-KMS, and KMS object ETags are not content MD5s.
+  source_hash = filemd5(var.alb_config.trust_store.ca_certificates_bundle_file)
 }
 
 ### ALB
