@@ -7,8 +7,11 @@ module "private-service-access" {
   source  = "terraform-google-modules/sql-db/google//modules/private_service_access"
   version = "~> 25.0"
 
-  project_id      = var.project_id
-  vpc_network     = module.vpc.network_name
+  project_id = var.project_id
+  # Ordered after the network by value (its ID is unknown only while the network
+  # is created). A module-wide depends_on would also defer the module's network
+  # lookup on unrelated VPC changes and replace the range and peering.
+  vpc_network     = basename(module.vpc.network_id)
   deletion_policy = "ABANDON"
 }
 
@@ -18,7 +21,7 @@ module "mysql" {
 
   name                 = var.database_config.name
   project_id           = var.project_id
-  deletion_protection  = var.database_config.deletion_protection
+  deletion_protection  = var.allow_destroy ? false : var.database_config.deletion_protection
   database_version     = var.database_config.database_version
   tier                 = var.database_config.tier
   region               = var.region
@@ -35,9 +38,23 @@ module "mysql" {
     # We never set authorized networks, we need all connections via the
     # public IP to be mediated by Cloud SQL.
     authorized_networks = []
-    require_ssl         = false
     private_network     = module.vpc.network_self_link
   }
 
-  module_depends_on = [module.private-service-access.peering_completed]
+  # Opt-in CMEK (cmek.cloud_sql). null = Google-managed (unchanged default).
+  # ForceNew: setting or changing this on an existing instance replaces it.
+  encryption_key_name = local.cmek_cloud_sql_key_id
+
+  # The instance must not be created before the Cloud SQL service agent can
+  # use the key: direct grant, then the shared IAM propagation wait
+  # (cmek-readiness.tf). module_depends_on is list(any) and only its length is
+  # read, so both are added as string attributes (etag, id), never as
+  # resource objects. The wait is only added when cmek.cloud_sql is set, so
+  # opting in another consumer does not change this list. With CMEK off the
+  # list is unchanged (length 1).
+  module_depends_on = concat(
+    [module.private-service-access.peering_completed],
+    google_kms_crypto_key_iam_member.cloud_sql_cmek[*].etag,
+    var.cmek.cloud_sql != null ? time_sleep.cmek_iam_propagation[*].id : [],
+  )
 }
