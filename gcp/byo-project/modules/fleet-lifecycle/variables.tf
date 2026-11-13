@@ -102,6 +102,34 @@ variable "secret_env" {
   default = {}
 }
 
+variable "tmp_volume_config" {
+  description = <<-EOT
+    Disk-backed /tmp for the Fleet service container (not the migration job).
+    enable = true (default) mounts one Cloud Run ephemeral disk volume
+    (empty_dir, medium DISK, size_limit "<size_gib>Gi") at /tmp, so files
+    written to /tmp no longer use instance memory. enable = false declares no
+    volume and no mount: /tmp is the in-memory filesystem, as before.
+    size_gib must be a whole number from 1 to 100 (Cloud Run ephemeral disk
+    volume limits). Changes roll out as a new revision; they are not part of
+    the migration identity and never trigger a migration.
+  EOT
+  type = object({
+    enable   = optional(bool, true)
+    size_gib = optional(number, 10)
+  })
+  default  = {}
+  nullable = false
+
+  validation {
+    condition = (
+      var.tmp_volume_config.size_gib >= 1 &&
+      var.tmp_volume_config.size_gib <= 100 &&
+      floor(var.tmp_volume_config.size_gib) == var.tmp_volume_config.size_gib
+    )
+    error_message = "tmp_volume_config.size_gib must be a whole number of GiB from 1 to 100."
+  }
+}
+
 variable "min_instance_count" {
   description = "Service-level minimum instances restored after a verified migration."
   type        = number

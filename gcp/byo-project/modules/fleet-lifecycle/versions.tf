@@ -10,7 +10,7 @@ terraform {
     # caller-configured google-beta provider.
     google-beta = {
       source  = "hashicorp/google-beta"
-      version = ">= 6.35.0, < 7.0.0"
+      version = ">= 7.24.0, < 8.0.0"
     }
     # Stop / restore PATCH and the read-only status GETs. 1.2.2 was inspected:
     # request fields are ForceNew, Read/Update issue no HTTP, `response` is

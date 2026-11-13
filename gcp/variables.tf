@@ -245,6 +245,43 @@ variable "fleet_config" {
   }
 }
 
+variable "tmp_volume_config" {
+  description = <<-EOT
+    Disk-backed /tmp for the Fleet Cloud Run service (on by default).
+    Separate from fleet_config, and not sensitive.
+
+      enable   - Mount one Cloud Run ephemeral disk volume (empty_dir with
+                 medium DISK) at /tmp in the Fleet container (default true).
+                 Files Fleet writes to /tmp then use disk instead of instance
+                 memory. false declares no volume and no mount: /tmp stays the
+                 in-memory filesystem of earlier releases.
+      size_gib - Volume size limit in GiB (default 10). A whole number from 1
+                 to 100. Above 10 GiB, request a higher per-instance ephemeral
+                 disk quota first.
+
+    Cloud Run bills the full provisioned size for the lifetime of each
+    instance and deletes the data when the instance shuts down. Adding,
+    resizing or removing the volume rolls out a new revision in place and
+    never runs a database migration on its own. The migration job has no /tmp
+    volume.
+  EOT
+  type = object({
+    enable   = optional(bool, true)
+    size_gib = optional(number, 10)
+  })
+  default  = {}
+  nullable = false
+
+  validation {
+    condition = (
+      var.tmp_volume_config.size_gib >= 1 &&
+      var.tmp_volume_config.size_gib <= 100 &&
+      floor(var.tmp_volume_config.size_gib) == var.tmp_volume_config.size_gib
+    )
+    error_message = "tmp_volume_config.size_gib must be a whole number of GiB from 1 to 100."
+  }
+}
+
 variable "cmek" {
   description = <<-EOT
     Customer-Managed Encryption Key configuration. When enable = true, the GCS

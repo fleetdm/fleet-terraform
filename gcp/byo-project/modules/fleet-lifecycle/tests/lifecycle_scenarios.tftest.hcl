@@ -215,11 +215,15 @@ run "noop_plan_after_restore" {
     condition     = output.migration_proven == true && output.declared_scaling_mode == "AUTOMATIC"
     error_message = "Proven identity must be declared AUTOMATIC."
   }
+  // manual_instance_count is not declared while serving. google-beta 7 marks
+  // it Optional+Computed, so an undeclared count plans as the prior state
+  // value (0 from the mocked apply) instead of null; the provider does not
+  // send a 0 count.
   assert {
     condition = (
       google_cloud_run_v2_service.fleet.scaling[0].scaling_mode == "AUTOMATIC" &&
       google_cloud_run_v2_service.fleet.scaling[0].min_instance_count == 1 &&
-      google_cloud_run_v2_service.fleet.scaling[0].manual_instance_count == null &&
+      coalesce(google_cloud_run_v2_service.fleet.scaling[0].manual_instance_count, 0) == 0 &&
       !contains(keys(google_cloud_run_v2_service.fleet.annotations), "fleetdm.com/lifecycle-restored")
     )
     error_message = "Declared scaling must equal what restore wrote; the marker itself is left to effective_annotations (not declared)."

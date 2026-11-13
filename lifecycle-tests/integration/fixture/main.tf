@@ -51,6 +51,16 @@ variable "drain_seconds" {
   default = 2
 }
 
+# Forwarded as-is (the module's own default: 10 GiB DISK /tmp). U1 passes
+# {enable = false} to show that opting out keeps an upgraded service unchanged.
+variable "tmp_volume_config" {
+  type = object({
+    enable   = optional(bool)
+    size_gib = optional(number)
+  })
+  default = {}
+}
+
 locals {
   endpoint = "http://127.0.0.1:${var.fake_port}/v2"
 }
@@ -106,6 +116,8 @@ module "lifecycle" {
   job_create_timeout     = "10m"
 
   restore_settle_interval_seconds = var.restore_settle_interval_seconds
+
+  tmp_volume_config = var.tmp_volume_config
 }
 
 # Stand-in for the root's serverless NEGs and the load balancer that depends

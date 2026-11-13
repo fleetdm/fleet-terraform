@@ -33,6 +33,11 @@ output "cloud_run_service_location" {
   value       = module.fleet.cloud_run_service_location
 }
 
+output "cloud_run_tmp_volume" {
+  description = "The disk-backed /tmp volume declared on the Fleet Cloud Run service (name, medium, size_limit, mount_path), or null when tmp_volume_config.enable = false."
+  value       = module.fleet.cloud_run_tmp_volume
+}
+
 output "mysql_instance_name" {
   description = "The name of the Cloud SQL for MySQL instance."
   value       = module.fleet.mysql_instance_name

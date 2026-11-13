@@ -312,13 +312,63 @@ software_installers_config = {
 
 When versioning is enabled, noncurrent-version expiry defaults on after 30 days. The lifecycle targets **archived/noncurrent versions only**, never the live installer object. Disable expiry to retain all versions indefinitely. With versioning off, this module adds no expiry rule. Enabling expiry on an existing versioned bucket can delete versions already older than the configured window; `allow_destroy` does not prevent lifecycle expiry.
 
+## Disk-backed `/tmp`
+
+By default the Fleet Cloud Run service mounts a 10 GiB [Cloud Run ephemeral disk](https://cloud.google.com/run/docs/configuring/services/ephemeral-disk) at `/tmp`. Without it, `/tmp` on Cloud Run is an in-memory filesystem: every file written there counts against the instance's memory limit (`fleet_config.fleet_memory`), so large temporary files can make an instance run out of memory. With the disk, files in `/tmp` use disk space instead of memory. This only helps with memory used by files in `/tmp`; it doesn't raise the memory limit or prevent out-of-memory errors that have other causes.
+
+Configure it with `tmp_volume_config`, which is separate from `fleet_config`:
+
+```hcl
+# Default (same as leaving tmp_volume_config unset): 10 GiB disk at /tmp.
+tmp_volume_config = {
+  enable   = true
+  size_gib = 10 # whole number from 1 to 100
+}
+```
+
+```hcl
+# Larger /tmp. Above 10 GiB, request a per-instance quota increase first (see below).
+tmp_volume_config = {
+  size_gib = 20
+}
+```
+
+```hcl
+# Opt out: no volume and no mount; /tmp stays in memory, as in earlier releases.
+tmp_volume_config = {
+  enable = false
+}
+```
+
+**What the module declares.** One `empty_dir` volume named `tmp` with `medium = "DISK"` and `size_limit = "<size_gib>Gi"`, and a mount of that volume at `/tmp` in the Fleet container. The mount path and the `DISK` medium are fixed. With `enable = false`, neither the volume nor the mount is declared. The volume applies to the Fleet service only; the database migration job doesn't get one. The service keeps its `GA` launch stage and the second-generation execution environment, which ephemeral disks require. The container's CPU and memory limits don't change.
+
+**Quotas.** Check these before you apply:
+
+* **Per instance.** Each instance can use 10 GiB of ephemeral disk by default. A `size_gib` above 10 needs a per-instance quota increase in the project first.
+* **Per region.** A project starts with a regional ephemeral disk allocation of 0 GiB. According to Google, the allocation becomes 100 GiB in a region after the first ephemeral disk deployment there. The allocation is shared by every running instance that uses ephemeral disk in that project and region, including other services and the old and new instances that overlap during a rollout. `size_gib` × `fleet_config.max_instance_count` must fit, with room for rollouts and other services. With the defaults (10 GiB, at most 5 instances), Fleet alone needs up to 50 GiB, and more while a rollout runs. If the quota is too small, Cloud Run can fail to deploy the revision or start instances.
+
+**Billing.** Cloud Run bills the full provisioned size (`size_gib`) for the lifetime of each instance that uses it, whether or not the space is used. See [Cloud Run pricing](https://cloud.google.com/run/pricing).
+
+**Data lifetime.** The disk is temporary. Each instance gets its own empty disk, and its data is permanently deleted when the instance shuts down, for example when it scales in, crashes or is replaced by a new revision. Don't keep anything in `/tmp` that must survive an instance.
+
+**Changing the setting.** Enabling, resizing or disabling the volume is an in-place update of the Fleet service that rolls out a new revision. The setting isn't part of the migration identity, so it never runs a database migration or stops Fleet on its own.
+
+**Provider versions.** No new provider requirement: `google-beta` 7.24.0, this module's minimum (`>= 7.24.0, < 8.0.0`), accepts `medium = "DISK"`. The volume has been tested with `google-beta` 7.24.0 and 7.46.2 (`google` 6.35.0 and 6.50.0) on Terraform 1.12 and 1.14.
+
+**Validation status.** The volume and mount are covered by mocked `terraform test` suites and by the loopback integration harness in `lifecycle-tests/`, which runs the real `google-beta` provider against a fake Cloud Run API. That harness also upgrades state written by the previous release (with `google-beta` 6.x) to this release. None of this runs against Google Cloud, so it doesn't show quota enforcement, billing, or that Fleet writes to the mounted disk. Before relying on the feature, run these checks on live GCP:
+
+* Upgrade an existing deployment from the previous release. The plan must show only the changes described in [Upgrade notes](#upgrade-notes) for the `/tmp` volume: the in-place update of the Fleet service and the re-armed settlement check. After the apply, the new revision must be Ready and serve HTTPS `/healthz`, no migration job may have run, and the next plan must be clean.
+* Deploy in a region where the project has never used an ephemeral disk, to confirm the regional allocation.
+* Set `size_gib` above 10 with and without the per-instance quota increase.
+* Upgrade with `enable = false` and confirm that the plan doesn't change the service.
+
 ## Database migration gate
 
 With `fleet_config.exec_migration = true` (the default), Terraform runs the Fleet database migration (`fleet prepare db`) in a Cloud Run job while Fleet is stopped, before the Fleet service runs the new image. The module [`byo-project/modules/fleet-lifecycle`](./byo-project/modules/fleet-lifecycle) uses Terraform providers only (`google-beta`, `terracurl`, `time`); there are no local scripts, provisioners or `gcloud` calls. Planning reads Cloud Run status; migrations execute only during `terraform apply`.
 
 **Choosing the image.** Set `fleet_config.image_tag` to the Fleet image you want to run, for example `fleetdm/fleet:v4.94.0`. A plain version tag like this is fully supported. The module uses the string exactly as you write it for both the migration job and the Fleet service. It doesn't look the image up in a registry, compare it with the image Cloud Run reports, or require a digest. To upgrade Fleet, change the tag. If the image behind an unchanged tag is replaced in the registry, the module doesn't notice, and no migration runs.
 
-**When it runs.** The migration identity covers the `fleet_config.image_tag` string, the project, region and service name, the Cloud SQL instance (Terraform creating or replacing it, including a replacement that keeps the same name) and `database_config.database_name`. When the identity changes, the apply runs one migration attempt. With migrations enabled (the default), the first apply when adopting a deployment from main also runs it once, even with an unchanged image (see [Upgrade notes](#upgrade-notes)). Other changes, for example CPU, memory, scaling, labels or extra environment variables, roll out normally without a migration.
+**When it runs.** The migration identity covers the `fleet_config.image_tag` string, the project, region and service name, the Cloud SQL instance (Terraform creating or replacing it, including a replacement that keeps the same name) and `database_config.database_name`. When the identity changes, the apply runs one migration attempt. With migrations enabled (the default), the first apply when adopting a deployment from main also runs it once, even with an unchanged image (see [Upgrade notes](#upgrade-notes)). Other changes, for example CPU, memory, scaling, labels, extra environment variables or `tmp_volume_config`, roll out normally without a migration.
 
 **The gate does not replace, back up or restore the database.** `fleet prepare db` creates or upgrades the schema of the target database. A replaced instance or a new database name starts empty. Back up first, and restore data yourself, if you replace the database on purpose.
 
@@ -368,6 +418,23 @@ Not every interrupted or cancelled run recovers on its own. If an apply was inte
 * Terraform moves these state addresses automatically, without recreating anything: `module.project_factory` to `module.project_factory[0]`, the global load balancer module `module.fleet_lb` to `module.fleet_lb[0]` inside `byo-project`, and the Fleet Cloud Run service into the `fleet_lifecycle` module.
 * The installer bucket now sets `public_access_prevention = "enforced"` (an in-place change), and with `create_project = true` the project factory also enables `certificatemanager.googleapis.com`. Both appear on the first plan after upgrading.
 * Terraform 1.12 or newer is now required.
+* **google-beta 7.** `google-beta` must now be `>= 7.24.0, < 8.0.0` (root module, `byo-project` and `byo-project/modules/fleet-lifecycle`). `google` stays on 6.x (`>= 6.35.0, < 7.0.0`) because the cloud-router (7.0) and memorystore (14.x) modules used here require `google < 7`. To accept `google-beta` 7, these upstream modules move to newer major or minor versions:
+
+  | Module | Before | Now |
+  | ------ | ------ | --- |
+  | `GoogleCloudPlatform/lb-http/google//modules/serverless_negs` | `~> 12.0` | `~> 14.0` |
+  | `terraform-google-modules/sql-db/google//modules/mysql` and `//modules/private_service_access` | `~> 25.0` | `~> 26.2` |
+  | `terraform-google-modules/network/google` | `11.0.0` | `12.0.0` |
+  | `terraform-google-modules/project-factory/google` | `~> 18.0.0` | `~> 18.1.0` |
+
+  A lock file that records `google-beta` 6.x makes a plain `terraform init` fail. Run `terraform init -upgrade` once after you update the module source, then review the first plan.
+* **No state moves for the module upgrades.** None of these upstream releases renames or removes a resource that Fleet uses, so no `moved` blocks or `terraform state` commands are needed. The configuration they produce is also unchanged:
+  * network 12.0.0 adds BGP routing inputs (`bgp_always_compare_med`, `bgp_best_path_selection_mode`, `bgp_inter_region_cost`) with non-null defaults, and the Compute API rejects `bgp_always_compare_med` with the default `LEGACY` path selection. Fleet passes `null` for all three, so the VPC network is configured exactly as with 11.0.0.
+  * sql-db 26 sets `retain_backups_on_delete = false` and `enable_dataplex_integration = false` on the Cloud SQL instance. The provider already sent `false` for both when they were unset, so the instance request doesn't change.
+  * The serverless NEG load balancer resources in lb-http 14 are the same as in 12.2. project-factory 18.1 changes only Shared VPC host grants, which Fleet doesn't use.
+
+  The first plan after upgrading shouldn't replace the network, Cloud SQL instance, load balancer or project because of this upgrade. If it does, stop and review before you apply.
+* **Disk-backed `/tmp` (new default).** The Fleet service now mounts a 10 GiB ephemeral disk at `/tmp` (see [Disk-backed `/tmp`](#disk-backed-tmp)). The first plan after upgrading shows one in-place update of `module.fleet.module.fleet_lifecycle.google_cloud_run_v2_service.fleet` that adds the `tmp` volume and its `/tmp` mount. With `exec_migration = true`, the plan also replaces `time_sleep.restore_settle[0]`, as after any service update: the module re-runs its read-only settlement check, which waits (up to 210 s by default) only if the service isn't settled yet. No other resource changes and no Cloud Run service or job is replaced, so no `moved` blocks or state commands are needed. Applying it rolls out a new revision without a migration, stop or drain, unless the same apply also changes the Fleet image or database, in which case the volume is part of that migration's deploy step. Check the regional ephemeral disk quota before you apply. To keep the in-memory `/tmp`, set `tmp_volume_config = { enable = false }` in the same change; the service then shows no change from this feature.
 * The root inputs `prefix` and `fleet_image` remain legacy inputs with no effect, as on main. The Fleet image is set only by `fleet_config.image_tag`.
 
 ## Known Limitations
@@ -435,7 +502,7 @@ Once the deployment is complete, migrations have run successfully, and DNS has p
 *   **GCS Bucket:** For S3-compatible software installer storage.
 *   **Secret Manager Secrets:** Database password, Fleet server private key, and HMAC key for GCS access.
 *   **Service Account (`fleet-run-sa`):** Used by Cloud Run services/jobs with necessary permissions.
-*   **Cloud Run Service:** Hosts the main Fleet application.
+*   **Cloud Run Service:** Hosts the main Fleet application, with a disk-backed `/tmp` by default (see [Disk-backed `/tmp`](#disk-backed-tmp)).
 *   **Cloud Run Job:** Runs database migrations.
 *   **External HTTP(S) Load Balancer:** Provides public HTTPS access to Fleet. Not created with `load_balancer_config.enable = false`; see [Bring your own load balancer](#bring-your-own-load-balancer-optional).
 *   **Cloud DNS Managed Zone:** Manages DNS records for `dns_zone_name`.
@@ -505,8 +572,8 @@ graph TD
 | Name | Version |
 | ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | ~> 1.12 |
-| <a name="requirement_google"></a> [google](#requirement\_google) | >= 6.35.0 |
-| <a name="requirement_google-beta"></a> [google-beta](#requirement\_google-beta) | >= 6.35.0 |
+| <a name="requirement_google"></a> [google](#requirement\_google) | >= 6.35.0, < 7.0.0 |
+| <a name="requirement_google-beta"></a> [google-beta](#requirement\_google-beta) | >= 7.24.0, < 8.0.0 |
 | <a name="requirement_terracurl"></a> [terracurl](#requirement\_terracurl) | ~> 1.0 |
 | <a name="requirement_time"></a> [time](#requirement\_time) | >= 0.9.0 |
 
@@ -514,14 +581,14 @@ graph TD
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_google"></a> [google](#provider\_google) | >= 6.35.0 |
+| <a name="provider_google"></a> [google](#provider\_google) | >= 6.35.0, < 7.0.0 |
 
 ## Modules
 
 | Name | Source | Version |
 | ---- | ------ | ------- |
 | <a name="module_fleet"></a> [fleet](#module\_fleet) | ./byo-project | n/a |
-| <a name="module_project_factory"></a> [project\_factory](#module\_project\_factory) | terraform-google-modules/project-factory/google | ~> 18.0.0 |
+| <a name="module_project_factory"></a> [project\_factory](#module\_project\_factory) | terraform-google-modules/project-factory/google | ~> 18.1.0 |
 
 ## Resources
 
@@ -560,6 +627,7 @@ graph TD
 | <a name="input_region"></a> [region](#input\_region) | GCP region for regional-only resources (Cloud Run, Cloud SQL, Memorystore, VPC, LB, Certificate Manager). | `string` | `"us-central1"` | no |
 | <a name="input_replicate_secrets"></a> [replicate\_secrets](#input\_replicate\_secrets) | Regions to pin Secret Manager replication to (applies to fleet-managed<br/>secrets: DB password, Fleet server private key, HMAC secret).<br/><br/>Empty (default) uses `automatic` replication — Google chooses locations,<br/>fewest constraints, works everywhere. Non-empty switches to<br/>`user_managed` replication with one replica per region.<br/><br/>Provide at least two regions if you want cross-region redundancy under<br/>user\_managed (single-region user\_managed has no failover).<br/><br/>NOTE: switching an existing secret between automatic and user\_managed<br/>forces replacement (destroy + recreate). | `list(string)` | `[]` | no |
 | <a name="input_software_installers_config"></a> [software\_installers\_config](#input\_software\_installers\_config) | Object versioning and noncurrent-version retention for the software<br/>installers bucket (fleet\_config.installers\_bucket\_name). Matches the AWS<br/>module defaults:<br/><br/>  enable\_bucket\_versioning           - Turn on GCS object versioning<br/>                                       (default false).<br/>  expire\_noncurrent\_versions         - When versioning is on, delete<br/>                                       noncurrent (overwritten or deleted)<br/>                                       object versions after<br/>                                       noncurrent\_version\_expiration\_days<br/>                                       (default true). Set false to keep<br/>                                       every noncurrent version.<br/>  noncurrent\_version\_expiration\_days - Days a version must have been<br/>                                       noncurrent before it is deleted<br/>                                       (default 30). Must be a positive<br/>                                       whole number.<br/><br/>The expiry rule only matches noncurrent versions; live objects are never<br/>deleted by it. With versioning off no lifecycle rule is created. Turning<br/>versioning off on an existing versioned bucket suspends versioning but<br/>does not delete versions already stored. | <pre>object({<br/>    enable_bucket_versioning           = optional(bool, false)<br/>    expire_noncurrent_versions         = optional(bool, true)<br/>    noncurrent_version_expiration_days = optional(number, 30)<br/>  })</pre> | `{}` | no |
+| <a name="input_tmp_volume_config"></a> [tmp\_volume\_config](#input\_tmp\_volume\_config) | Disk-backed /tmp for the Fleet Cloud Run service (on by default).<br/>Separate from fleet\_config, and not sensitive.<br/><br/>  enable   - Mount one Cloud Run ephemeral disk volume (empty\_dir with<br/>             medium DISK) at /tmp in the Fleet container (default true).<br/>             Files Fleet writes to /tmp then use disk instead of instance<br/>             memory. false declares no volume and no mount: /tmp stays the<br/>             in-memory filesystem of earlier releases.<br/>  size\_gib - Volume size limit in GiB (default 10). A whole number from 1<br/>             to 100. Above 10 GiB, request a higher per-instance ephemeral<br/>             disk quota first.<br/><br/>Cloud Run bills the full provisioned size for the lifetime of each<br/>instance and deletes the data when the instance shuts down. Adding,<br/>resizing or removing the volume rolls out a new revision in place and<br/>never runs a database migration on its own. The migration job has no /tmp<br/>volume. | <pre>object({<br/>    enable   = optional(bool, true)<br/>    size_gib = optional(number, 10)<br/>  })</pre> | `{}` | no |
 | <a name="input_vpc_config"></a> [vpc\_config](#input\_vpc\_config) | Configuration for the VPC network and subnets. | <pre>object({<br/>    network_name = string<br/>    subnets = list(object({<br/>      subnet_name           = string<br/>      subnet_ip             = string<br/>      subnet_region         = string<br/>      subnet_private_access = bool<br/>    }))<br/>  })</pre> | <pre>{<br/>  "network_name": "fleet-network",<br/>  "subnets": [<br/>    {<br/>      "subnet_ip": "10.10.10.0/24",<br/>      "subnet_name": "fleet-subnet",<br/>      "subnet_private_access": true,<br/>      "subnet_region": "us-central1"<br/>    }<br/>  ]<br/>}</pre> | no |
 
 ## Outputs
@@ -569,6 +637,7 @@ graph TD
 | <a name="output_cloud_router_name"></a> [cloud\_router\_name](#output\_cloud\_router\_name) | The name of the Cloud Router created for NAT. |
 | <a name="output_cloud_run_service_location"></a> [cloud\_run\_service\_location](#output\_cloud\_run\_service\_location) | The location of the deployed Fleet Cloud Run service. |
 | <a name="output_cloud_run_service_name"></a> [cloud\_run\_service\_name](#output\_cloud\_run\_service\_name) | The name of the deployed Fleet Cloud Run service. |
+| <a name="output_cloud_run_tmp_volume"></a> [cloud\_run\_tmp\_volume](#output\_cloud\_run\_tmp\_volume) | The disk-backed /tmp volume declared on the Fleet Cloud Run service (name, medium, size\_limit, mount\_path), or null when tmp\_volume\_config.enable = false. |
 | <a name="output_dns_managed_zone_name"></a> [dns\_managed\_zone\_name](#output\_dns\_managed\_zone\_name) | The name of the Cloud DNS managed zone created for Fleet. |
 | <a name="output_dns_managed_zone_name_servers"></a> [dns\_managed\_zone\_name\_servers](#output\_dns\_managed\_zone\_name\_servers) | The authoritative name servers for the created Cloud DNS managed zone. Delegate your domain to these. |
 | <a name="output_fleet_application_url"></a> [fleet\_application\_url](#output\_fleet\_application\_url) | The primary URL to access the Fleet application (via the Load Balancer). |

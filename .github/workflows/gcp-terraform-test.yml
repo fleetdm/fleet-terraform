@@ -9,8 +9,9 @@ name: gcp-terraform-test
 #   runs the tests of the directory it is invoked in, so the standalone
 #   gcp/byo-project/modules/fleet-lifecycle suite is its own matrix entry.
 #   Each job pins the hashicorp/google* providers that directory requires to
-#   one exact version with a CI-only override file (never committed), then
-#   checks the versions Terraform actually selected before running the suite.
+#   exact versions (google and google-beta are pinned independently) with a
+#   CI-only override file (never committed), then checks the versions
+#   Terraform actually selected before running the suite.
 #
 # lifecycle-integration: drives the fleet-lifecycle module with the REAL
 #   google-beta, terracurl and time providers against a loopback fake Cloud
@@ -18,6 +19,16 @@ name: gcp-terraform-test
 #   The runner strips GOOGLE_*/CLOUDSDK_*/GCLOUD* variables, uses a literal
 #   fake token and points HTTP(S) proxies at a dead loopback port. Only
 #   `terraform init` reaches the network, to download public providers.
+#
+# lifecycle-upgrade: same loopback harness. Applies the fixture and
+#   fleet-lifecycle module from an earlier commit with google-beta 6.x, then
+#   takes that state over with the current module on google-beta 7.x. With
+#   tmp_volume_config.enable = false it requires no resource changes and no
+#   Cloud Run writes. With the default disk-backed /tmp it requires exactly
+#   one in-place service update whose only differences are the /tmp volume
+#   and mount (plus the settlement check every service update re-arms), one
+#   service PATCH, no migration, and a clean plan afterwards. Then it runs a
+#   normal migration and turns /tmp off again the same controlled way.
 
 on:
   push:
@@ -51,7 +62,7 @@ permissions:
 
 jobs:
   tftest:
-    name: terraform test (${{ matrix.terraform_dir }}, TF ${{ matrix.terraform_version }}, google ${{ matrix.google_provider_version }})
+    name: terraform test (${{ matrix.terraform_dir }}, TF ${{ matrix.terraform_version }}, google ${{ matrix.providers.google }}, google-beta ${{ matrix.providers.google_beta }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -65,13 +76,16 @@ jobs:
         terraform_version:
           - 1.12.0
           - 1.14.5
-        # Exact hashicorp/google and hashicorp/google-beta versions (every
-        # pinned provider gets the same value). 6.35.0 is the minimum allowed
-        # by the modules' ">= 6.35.0" constraints; 6.50.0 is the newer tested
-        # baseline.
-        google_provider_version:
-          - 6.35.0
-          - 6.50.0
+        # Exact hashicorp/google and hashicorp/google-beta versions. The first
+        # pair is the minimum the modules allow (google ">= 6.35.0, < 7.0.0",
+        # google-beta ">= 7.24.0, < 8.0.0"); the second is the newest tested
+        # pair. google stays on 6.x because the cloud-router and memorystore
+        # modules require google < 7.
+        providers:
+          - google: 6.35.0
+            google_beta: 7.24.0
+          - google: 6.50.0
+            google_beta: 7.46.2
         # hashicorp/google* providers each directory requires, and therefore
         # pins. fleet-lifecycle is google-beta only.
         include:
@@ -84,7 +98,8 @@ jobs:
     env:
       TF_IN_AUTOMATION: 'true'
       TF_INPUT: '0'
-      GOOGLE_PROVIDER_VERSION: ${{ matrix.google_provider_version }}
+      GOOGLE_PROVIDER_VERSION: ${{ matrix.providers.google }}
+      GOOGLE_BETA_PROVIDER_VERSION: ${{ matrix.providers.google_beta }}
       PINNED_PROVIDERS: ${{ matrix.pinned_providers }}
     steps:
       - name: Harden Runner
@@ -105,20 +120,26 @@ jobs:
           terraform_wrapper: false
 
       # CI-only pin. Terraform merges required_providers in *_override.tf files
-      # entry by entry, so only the listed hashicorp/google* providers get the
-      # exact version. The delivered constraints, terracurl
-      # (devops-rob/terracurl) and time are untouched. No lock file is
-      # committed, so init resolves the pin from scratch.
-      - name: Pin ${{ matrix.pinned_providers }} ${{ matrix.google_provider_version }} (CI-only override)
+      # entry by entry, so only the listed hashicorp/google* providers get an
+      # exact version (google and google-beta each get their own). The
+      # delivered constraints, terracurl (devops-rob/terracurl) and time are
+      # untouched. No lock file is committed, so init resolves the pin from
+      # scratch.
+      - name: Pin ${{ matrix.pinned_providers }} (google ${{ matrix.providers.google }}, google-beta ${{ matrix.providers.google_beta }}; CI-only override)
         working-directory: ${{ matrix.terraform_dir }}
         run: |
           {
             echo 'terraform {'
             echo '  required_providers {'
             for p in ${PINNED_PROVIDERS}; do
+              case "${p}" in
+                google) v="${GOOGLE_PROVIDER_VERSION}" ;;
+                google-beta) v="${GOOGLE_BETA_PROVIDER_VERSION}" ;;
+                *) echo "unexpected pinned provider ${p}" >&2; exit 1 ;;
+              esac
               echo "    ${p} = {"
               echo "      source  = \"hashicorp/${p}\""
-              echo "      version = \"${GOOGLE_PROVIDER_VERSION}\""
+              echo "      version = \"${v}\""
               echo '    }'
             done
             echo '  }'
@@ -141,7 +162,10 @@ jobs:
           python3 - "${RUNNER_TEMP}/tf-version.json" .terraform.lock.hcl <<'PY'
           import json, os, re, sys
 
-          want = os.environ["GOOGLE_PROVIDER_VERSION"]
+          want_by_name = {
+              "google": os.environ["GOOGLE_PROVIDER_VERSION"],
+              "google-beta": os.environ["GOOGLE_BETA_PROVIDER_VERSION"],
+          }
           pinned = os.environ["PINNED_PROVIDERS"].split()
           sel = json.load(open(sys.argv[1]))["provider_selections"]
           lock = dict(re.findall(
@@ -155,6 +179,7 @@ jobs:
               errors.append("PINNED_PROVIDERS is empty")
           for name in pinned:
               addr = f"registry.terraform.io/hashicorp/{name}"
+              want = want_by_name.get(name)
               for where, got in (("selected", sel.get(addr)), ("locked", lock.get(addr))):
                   if got != want:
                       errors.append(f"{addr}: {where} {got!r}, expected {want!r}")
@@ -170,7 +195,7 @@ jobs:
                   errors.append(f"{addr}: not selected")
           if errors:
               sys.exit("Provider selection check failed:\n" + "\n".join(errors))
-          print(f"OK: {' and '.join(pinned)} {want}")
+          print("OK: " + ", ".join(f"{n} {want_by_name[n]}" for n in pinned))
           PY
 
       - name: Test ${{ matrix.terraform_dir }} (mocked providers)
@@ -187,10 +212,11 @@ jobs:
         terraform_version:
           - 1.12.0
         # Exact hashicorp/google-beta version; the runner pins it (plus
-        # terracurl and time) in the fixture it initializes.
+        # terracurl and time) in the fixture it initializes. 7.24.0 is the
+        # module minimum; 7.46.2 is the newest tested version.
         google_beta_version:
-          - 6.35.0
-          - 6.50.0
+          - 7.24.0
+          - 7.46.2
     env:
       PYTHONDONTWRITEBYTECODE: '1'
       GOOGLE_BETA_VERSION: ${{ matrix.google_beta_version }}
@@ -220,6 +246,68 @@ jobs:
           unset TF_PLUGIN_CACHE_DIR
           python3 -I lifecycle-tests/integration/run_scenarios.py \
             --provider-version "${GOOGLE_BETA_VERSION}" \
+            --terraform "$(command -v terraform)"
+
+      - name: Publish scenario summary
+        if: always()
+        run: |
+          shopt -s nullglob
+          for f in lifecycle-tests/integration/artifacts/*/SUMMARY.md; do
+            cat "$f" >> "${GITHUB_STEP_SUMMARY}"
+          done
+
+  lifecycle-upgrade:
+    name: lifecycle upgrade (loopback fake API, TF ${{ matrix.terraform_version }}, google-beta ${{ matrix.from_google_beta_version }} -> ${{ matrix.google_beta_version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      # Include-only: each entry is its own complete job. (Entries added to a
+      # shared base combination would overwrite each other's added keys.)
+      # From the oldest and newest google-beta 6.x the previous module
+      # accepted to the oldest and newest tested 7.x.
+      matrix:
+        include:
+          - terraform_version: 1.12.0
+            from_google_beta_version: 6.35.0
+            google_beta_version: 7.24.0
+          - terraform_version: 1.12.0
+            from_google_beta_version: 6.50.0
+            google_beta_version: 7.46.2
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      GOOGLE_BETA_VERSION: ${{ matrix.google_beta_version }}
+      FROM_GOOGLE_BETA_VERSION: ${{ matrix.from_google_beta_version }}
+      # Last commit whose fleet-lifecycle module required google-beta 6.x
+      # (">= 6.35.0, < 7.0.0"). The runner reads the module and fixture at
+      # this commit with `git show`; nothing is checked out.
+      UPGRADE_FROM_REF: cd3b41e69bb68436c0f119bdf2160ade1e48d112
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@63c24ba6bd7ba022e95695ff85de572c04a18142 # v2.7.0
+        with:
+          egress-policy: audit
+
+      # Full history, so UPGRADE_FROM_REF is available locally.
+      - name: Clone repo
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install terraform
+        uses: hashicorp/setup-terraform@633666f66e0061ca3b725c73b2ec20cd13a8fdd1 # v2.0.3
+        with:
+          terraform_version: ${{ matrix.terraform_version }}
+          terraform_wrapper: false
+
+      - name: Run upgrade scenario
+        run: |
+          unset TF_PLUGIN_CACHE_DIR
+          python3 -I lifecycle-tests/integration/run_scenarios.py \
+            --provider-version "${GOOGLE_BETA_VERSION}" \
+            --upgrade-from-ref "${UPGRADE_FROM_REF}" \
+            --upgrade-from-provider-version "${FROM_GOOGLE_BETA_VERSION}" \
             --terraform "$(command -v terraform)"
 
       - name: Publish scenario summary

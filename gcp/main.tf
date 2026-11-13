@@ -8,13 +8,15 @@ terraform {
   # }
 
   required_providers {
+    # Stays on 6.x: terraform-google-modules/cloud-router 7.0 and memorystore
+    # 14.x (used by ./byo-project) require google < 7.
     google = {
       source  = "hashicorp/google"
-      version = ">= 6.35.0"
+      version = ">= 6.35.0, < 7.0.0"
     }
     google-beta = {
       source  = "hashicorp/google-beta"
-      version = ">= 6.35.0"
+      version = ">= 7.24.0, < 8.0.0"
     }
     # Declared here so the root module (and its tests) resolve the same
     # terracurl provider as ./byo-project instead of hashicorp/terracurl.
@@ -44,7 +46,7 @@ locals {
 module "project_factory" {
   count   = var.create_project ? 1 : 0
   source  = "terraform-google-modules/project-factory/google"
-  version = "~> 18.0.0"
+  version = "~> 18.1.0"
 
   name              = var.project_name
   random_project_id = var.random_project_id
@@ -71,6 +73,7 @@ module "fleet" {
   dns_config           = var.dns_config
   vpc_config           = var.vpc_config
   fleet_config         = var.fleet_config
+  tmp_volume_config    = var.tmp_volume_config
   cache_config         = var.cache_config
   database_config      = var.database_config
   load_balancer_config = var.load_balancer_config

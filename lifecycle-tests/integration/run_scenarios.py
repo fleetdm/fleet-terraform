@@ -13,7 +13,17 @@ Safety (asserted before any apply):
   * terraform init runs separately (public registry download only).
 
 Usage:
-  python3 -I run_scenarios.py --provider-version 6.50.0 [--terraform terraform] [--only s1,s2]
+  python3 -I run_scenarios.py --provider-version 7.24.0 [--terraform terraform] [--only s1,s2]
+  python3 -I run_scenarios.py --provider-version 7.24.0 \
+      --upgrade-from-ref <git-ref> --upgrade-from-provider-version 6.50.0
+The second form runs only the upgrade scenario (U1): the fixture and
+fleet-lifecycle module from <git-ref> (read with `git show`, never checked out)
+are applied with the older google-beta, then the current fixture and module are
+initialised with --provider-version against the same state and fake API.
+The previous module had no /tmp volume, so U1 expects exactly one in-place
+service update (the default disk-backed /tmp volume and mount, plus the
+settlement check every service update re-arms) and nothing else; with
+tmp_volume_config.enable = false it expects no change at all.
 Artifacts: lifecycle-tests/integration/artifacts/<run-id>/ (logs, events, results.json, SUMMARY.md)
 """
 import argparse
@@ -30,10 +40,22 @@ import urllib.request
 from urllib.parse import parse_qs
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
+FIXTURE_REL = "lifecycle-tests/integration/fixture/main.tf"
+MODULE_REL = "gcp/byo-project/modules/fleet-lifecycle"
 TOKEN = "fake-loopback-token-not-a-credential"
 PARENT = "projects/fictional-proj/locations/us-central1"
 SVC = PARENT + "/services/fleet-api"
 MOD = "module.lifecycle"
+SVC_ADDR = MOD + ".google_cloud_run_v2_service.fleet"
+# replace_triggered_by the service (restore_settlement.tf): every service update
+# re-arms the read-only settlement check (probe; the wait is skipped if settled).
+SETTLE_ADDR = MOD + ".time_sleep.restore_settle[0]"
+# Disk-backed /tmp as the real google-beta provider sends it (Run v2 JSON).
+TMP_VOLUME_NAME = "tmp"
+OPT_OUT = ("-var", "tmp_volume_config={enable=false}")
+# The only service paths the default /tmp may change on an upgraded service.
+TMP_PLAN_PATHS = {("template", 0, "volumes"), ("template", 0, "containers", 0, "volume_mounts")}
 
 
 def root_neg_service_refs():
@@ -49,6 +71,22 @@ def root_neg_service_refs():
     return refs
 
 
+def extract_from_git(ref, paths, dest):
+    """Write the files under `paths` as of `ref` to dest (read-only git plumbing;
+    the working tree, index and HEAD are not touched)."""
+    names = subprocess.run(["git", "-C", REPO, "ls-tree", "-r", "--name-only", ref, "--"] + paths,
+                           capture_output=True, text=True, check=True).stdout.split()
+    for p in paths:
+        assert any(n == p or n.startswith(p + "/") for n in names), "%s not found at %s" % (p, ref)
+    for n in names:
+        out = os.path.join(dest, n)
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "wb") as f:
+            f.write(subprocess.run(["git", "-C", REPO, "show", "%s:%s" % (ref, n)],
+                                   capture_output=True, check=True).stdout)
+    return dest
+
+
 def free_port():
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
@@ -62,30 +100,44 @@ class Runner:
         self.args = args
         self.tf_bin = args.terraform
         rid = time.strftime("%Y%m%d-%H%M%S") + "-tf" + self.tf_version().replace(".", "_") + "-gb" + args.provider_version.replace(".", "_")
+        if args.upgrade_from_ref:
+            rid += "-from-gb" + args.upgrade_from_provider_version.replace(".", "_")
         self.art = os.path.join(HERE, "artifacts", rid)
         self.work = os.path.join(self.art, "work")
         os.makedirs(self.work)
-        shutil.copy(os.path.join(HERE, "fixture", "main.tf"), self.work)
-        # the fixture's module source is relative to fixture/; rewrite for work/
-        mod_abs = os.path.normpath(os.path.join(HERE, "..", "..", "gcp", "byo-project", "modules", "fleet-lifecycle"))
-        p = os.path.join(self.work, "main.tf")
-        src = open(p).read().replace('"../../../gcp/byo-project/modules/fleet-lifecycle"', json.dumps(mod_abs))
         # the fixture's NEG stand-in takes the root's actual NEG expressions
         self.neg_refs = root_neg_service_refs()
+        if args.upgrade_from_ref:
+            # U1 starts from the previous fixture and module (extracted from git)
+            old = extract_from_git(args.upgrade_from_ref, [FIXTURE_REL, MODULE_REL], os.path.join(self.art, "from"))
+            self.write_config(open(os.path.join(old, FIXTURE_REL)).read(), os.path.join(old, MODULE_REL),
+                              args.upgrade_from_provider_version)
+        else:
+            self.write_current_config()
+        self.port = free_port()
+        self.step = 0
+        self.results = []
+        self.fake = None
+
+    def write_config(self, fixture_src, mod_abs, provider_version):
+        # the fixture's module source is relative to fixture/; rewrite for work/
+        rel = '"../../../%s"' % MODULE_REL
+        assert rel in fixture_src, "fixture module source missing"
+        src = fixture_src.replace(rel, json.dumps(os.path.normpath(mod_abs)))
         ph = "[local.fleet_service_name, local.fleet_service_name] # ROOT_NEG_SERVICE_REFS"
         assert ph in src, "fixture NEG placeholder missing"
         src = src.replace(ph, "[%s]" % ", ".join(self.neg_refs))
-        open(p, "w").write(src)
+        open(os.path.join(self.work, "main.tf"), "w").write(src)
         with open(os.path.join(self.work, "providers_pin.tf"), "w") as f:
             f.write('terraform {\n  required_providers {\n'
                     '    google-beta = { source = "hashicorp/google-beta", version = "%s" }\n'
                     '    terracurl   = { source = "devops-rob/terracurl", version = "1.2.2" }\n'
                     '    time        = { source = "hashicorp/time", version = "0.14.2" }\n'
-                    '  }\n}\n' % args.provider_version)
-        self.port = free_port()
-        self.step = 0
-        self.results = []
-        self.fake = None
+                    '  }\n}\n' % provider_version)
+
+    def write_current_config(self):
+        self.write_config(open(os.path.join(REPO, FIXTURE_REL)).read(), os.path.join(REPO, MODULE_REL),
+                          self.args.provider_version)
 
     def tf_version(self):
         out = subprocess.run([self.args.terraform, "version", "-json"], capture_output=True, text=True).stdout
@@ -302,16 +354,131 @@ def stop_wait_checks(r, sc, evs):
             wi is not None and si < wi < jc, "stop=%d wait=%s job=%d op=%s" % (si, wi, jc, op))
 
 
-def planned_resource_actions(r, label, *extra):
+def planned_changes(r, label, *extra):
+    """(plan rc, {address: actions} without no-op/read, resource_changes)."""
     rc, _ = r.tf("%s-plan" % label, "plan", "-no-color", "-out=%s.tfplan" % label, *extra)
     rcj, js = r.tf("%s-plan-show" % label, "show", "-json", "%s.tfplan" % label)
     try:
-        plan = json.loads(js)
-        acts = {c["address"]: c["change"]["actions"] for c in plan.get("resource_changes", [])
+        changes = json.loads(js).get("resource_changes", [])
+        acts = {c["address"]: c["change"]["actions"] for c in changes
                 if c["change"]["actions"] not in (["no-op"], ["read"])}
     except Exception as e:
-        acts = {"error": str(e)}
+        changes, acts = [], {"error": str(e)}
+    return rc, acts, changes
+
+
+def planned_resource_actions(r, label, *extra):
+    rc, acts, _ = planned_changes(r, label, *extra)
     return rc, acts
+
+
+def changed_paths(before, after, unknown, path=()):
+    """Paths whose planned value differs from the prior state. Values planned
+    unknown (computed by the provider at apply) are not configuration and are
+    skipped; everything else, nested blocks included, is compared exactly."""
+    if unknown is True:
+        return []
+    if isinstance(before, dict) and isinstance(after, dict):
+        u = unknown if isinstance(unknown, dict) else {}
+        return [p for key in sorted(set(before) | set(after))
+                for p in changed_paths(before.get(key), after.get(key), u.get(key), path + (key,))]
+    if isinstance(before, list) and isinstance(after, list) and len(before) == len(after):
+        u = unknown if isinstance(unknown, list) else []
+        return [p for i, (b, a) in enumerate(zip(before, after))
+                for p in changed_paths(b, a, u[i] if i < len(u) else None, path + (i,))]
+    return [] if before == after else [path]
+
+
+def service_plan_paths(changes):
+    c = [x for x in changes if x["address"] == SVC_ADDR]
+    if len(c) != 1:
+        return None
+    ch = c[0]["change"]
+    return changed_paths(ch.get("before"), ch.get("after"), ch.get("after_unknown"))
+
+
+def service_tmp(r):
+    """(volumes, container mounts) of the Fleet service as stored by the fake,
+    i.e. exactly what the real google-beta provider sent."""
+    t = (r.get("/_state")["services"].get(SVC) or {}).get("template") or {}
+    return t.get("volumes") or [], [m for c in t.get("containers", []) for m in (c.get("volumeMounts") or [])]
+
+
+def tmp_checks(r, sc, enabled, size="10Gi"):
+    vols, mounts = service_tmp(r)
+    detail = json.dumps({"volumes": vols, "volumeMounts": mounts})
+    if enabled:
+        r.check(sc, "service sent one empty_dir volume, medium DISK, sizeLimit %s, mounted at /tmp" % size,
+                vols == [{"name": TMP_VOLUME_NAME, "emptyDir": {"medium": "DISK", "sizeLimit": size}}]
+                and mounts == [{"name": TMP_VOLUME_NAME, "mountPath": "/tmp"}], detail)
+    else:
+        r.check(sc, "service has no volume and no mount (in-memory /tmp)", not vols and not mounts, detail)
+    st = r.get("/_state")
+    svc = st["services"].get(SVC) or {}
+    t = svc.get("template") or {}
+    c0 = (t.get("containers") or [{}])[0]
+    r.check(sc, "service keeps launchStage GA, GEN2 and the 4096Mi memory limit",
+            svc.get("launchStage") == "GA" and t.get("executionEnvironment") == "EXECUTION_ENVIRONMENT_GEN2"
+            and (c0.get("resources") or {}).get("limits", {}).get("memory") == "4096Mi",
+            json.dumps({"launchStage": svc.get("launchStage"), "executionEnvironment": t.get("executionEnvironment"),
+                        "limits": (c0.get("resources") or {}).get("limits")}))
+    jobs = {n: j["template"]["template"] for n, j in st["jobs"].items()}
+    bad = [n for n, jt in jobs.items()
+           if jt.get("volumes") or any(c.get("volumeMounts") for c in jt.get("containers", []))]
+    r.check(sc, "migration jobs carry no volume or mount", jobs and not bad, json.dumps(bad))
+
+
+def no_migration_activity(evs):
+    return not any(masked("MANUAL")(e) or e["kind"] in ("job_created", "execution_started", "job_deleted",
+                                                           "job_updated_UNEXPECTED", "service_created",
+                                                           "service_deleted") for e in evs)
+
+
+def tmp_rollout_checks(r, sc, label, want_enabled, *extra):
+    """On a running (AUTOMATIC, restored) service: the /tmp change plans as
+    exactly one in-place update of the service whose only differences are the
+    volume and its mount (plus the settlement wait that any service update
+    re-arms), applies as one provider PATCH and a new Ready
+    revision, with no stop, job or migration, and then settles (no-op)."""
+    st0 = r.get("/_state")["services"][SVC]
+    o0 = r.outputs()
+    s0 = r.seq()
+    rcp, acts, changes = planned_changes(r, "%s-change" % label, *extra)
+    r.check(sc, "plan: only the Fleet service updated in place (+ its settlement check re-armed), nothing else",
+            rcp == 0 and acts == {SVC_ADDR: ["update"], SETTLE_ADDR: ["delete", "create"]}, json.dumps(acts)[:600])
+    paths = service_plan_paths(changes)
+    r.check(sc, "plan: the service diff is only the /tmp volume and its container mount",
+            paths is not None and set(paths) == TMP_PLAN_PATHS, json.dumps(paths))
+    rc, _ = r.apply("%s-apply" % label, *extra)
+    evs = r.events_since(s0)
+    r.save_events(label, evs)
+    r.check(sc, "apply succeeded", rc == 0)
+    r.check(sc, "no stop, no job, no execution, no service create/delete (no migration re-run)", no_migration_activity(evs))
+    w = writes(evs)
+    r.check(sc, "the only Cloud Run write is one provider PATCH of the service (no updateMask)",
+            len(w) == 1 and w[0]["details"]["method"] == "PATCH" and w[0]["details"]["client"] == "google-beta"
+            and w[0]["details"]["path"] == "/v2/" + SVC and "updateMask" not in parse_qs(w[0]["details"]["query"]),
+            json.dumps([x["details"] for x in w])[:600])
+    fp = [e for e in evs if e["kind"] == "service_full_patch"]
+    r.check(sc, "that PATCH changed the template and kept AUTOMATIC/min=1",
+            len(fp) == 1 and fp[0]["details"]["template_changed"]
+            and fp[0]["details"]["scaling"] == {"scalingMode": "AUTOMATIC", "minInstanceCount": 1},
+            json.dumps([e["details"] for e in fp]))
+    r.check(sc, "a new revision became Ready", any(k("revision_created", outcome="ready")(e) for e in evs))
+    st1 = r.get("/_state")["services"][SVC]
+    marker = "fleetdm.com/lifecycle-restored"
+    r.check(sc, "same service (name, uid), restore marker and attempt annotation kept",
+            st1["uid"] == st0["uid"] and st1["name"] == st0["name"]
+            and st0.get("annotations", {}).get(marker) is not None
+            and st1.get("annotations", {}).get(marker) == st0.get("annotations", {}).get(marker)
+            and st1["template"].get("annotations") == st0["template"].get("annotations"),
+            json.dumps({"uid": [st0["uid"], st1["uid"]], "marker": st1.get("annotations", {}).get(marker)}))
+    o1 = r.outputs()
+    r.check(sc, "migration identity and job name unchanged",
+            o1.get("identity") == o0.get("identity") and o1.get("job_name") == o0.get("job_name") and o1.get("identity"),
+            json.dumps({"before": o0, "after": o1}))
+    tmp_checks(r, sc, want_enabled)
+    noop_checks(r, sc, label, *extra)
 
 
 def noop_checks(r, sc, label, *extra):
@@ -342,6 +509,7 @@ def scenario_fresh(r):
     migration_flow_checks(r, sc, evs, "fleetdm/fleet:v4.93.0", existing=False)
     o = r.outputs()
     r.check(sc, "outputs: AUTOMATIC not yet (plan-time view MANUAL)", o.get("declared_scaling_mode") == "MANUAL", json.dumps(o))
+    tmp_checks(r, sc, enabled=True)
     noop_checks(r, sc, "s1")
 
 
@@ -978,6 +1146,57 @@ def scenario_neg_cbd_failed_then_rollout(r):
     noop_checks(r, sc, "s21b", "-var", "image=" + image)
 
 
+def scenario_provider_upgrade(r):
+    """U1: state written by the previous fixture/module with the older
+    google-beta is taken over by the current module and --provider-version.
+    With /tmp opted out: no resource changes and no Cloud Run writes. With the
+    default /tmp: one in-place service update (volume + mount only), no
+    migration, then a settled no-op. Then a normal migration, and turning /tmp
+    off again (the reverse in-place update)."""
+    a = r.args
+    sc = "U1 upgrade from %s (google-beta %s) to the current module (google-beta %s)" % (
+        a.upgrade_from_ref, a.upgrade_from_provider_version, a.provider_version)
+    s0 = r.seq()
+    rc, _ = r.apply("u1-old-fresh")
+    evs = r.events_since(s0)
+    r.save_events("u1-old-fresh", evs)
+    r.check(sc, "previous module: fresh apply succeeded (google-beta %s)" % a.upgrade_from_provider_version, rc == 0)
+    migration_flow_checks(r, sc, evs, "fleetdm/fleet:v4.93.0", existing=False)
+    rcp, acts = planned_resource_actions(r, "u1-old")
+    r.check(sc, "previous module: next plan has no resource changes (outputs may refresh)", rcp == 0 and not acts,
+            json.dumps(acts)[:600])
+    vols, mounts = service_tmp(r)
+    r.check(sc, "previous module: service has no volume and no mount (in-memory /tmp)", not vols and not mounts,
+            json.dumps({"volumes": vols, "volumeMounts": mounts}))
+
+    r.write_current_config()
+    r.safety_assertions()
+    rci, _ = r.tf("u1-init-upgrade", "init", "-upgrade", "-backend=false", "-input=false", "-no-color", offline=False)
+    r.check(sc, "current module: init -upgrade succeeded", rci == 0, "rc=%d" % rci)
+    _, out = r.tf("u1-version", "version", "-json")
+    try:
+        got = json.loads(out)["provider_selections"].get("registry.terraform.io/hashicorp/google-beta")
+    except Exception:
+        got = None
+    r.check(sc, "current module: google-beta %s selected" % a.provider_version, got == a.provider_version, "selected=%r" % got)
+    # Opted out, the current module must take over the old service unchanged.
+    sco = sc + ": tmp_volume_config.enable = false"
+    noop_checks(r, sco, "u1-optout", *OPT_OUT)
+    tmp_checks(r, sco, enabled=False)
+
+    # Default: the intended, controlled difference (one in-place update).
+    tmp_rollout_checks(r, sc + ": default 10 GiB DISK /tmp added", "u1-tmp", True)
+
+    # A normal migration still works on the upgraded service and keeps /tmp.
+    image = "fleetdm/fleet:v4.94.0"
+    sci = sc + ": first image upgrade"
+    scenario_upgrade(r, image=image, sc=sci, label="u1-image")
+    tmp_checks(r, sci, enabled=True)
+
+    # Opting out later removes both blocks again, also in place, no migration.
+    tmp_rollout_checks(r, sc + ": /tmp turned off again", "u1-tmp-off", False, "-var", "image=" + image, *OPT_OUT)
+
+
 SCENARIOS = [
     ("s1", scenario_fresh),
     ("s2", scenario_env_change),
@@ -1010,10 +1229,18 @@ SCENARIOS = [
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--provider-version", default="6.50.0")
+    ap.add_argument("--provider-version", default="7.24.0")
     ap.add_argument("--terraform", default="terraform")
     ap.add_argument("--only", default="")
+    ap.add_argument("--upgrade-from-ref", default="",
+                    help="git ref of the previous fixture and fleet-lifecycle module; runs only U1")
+    ap.add_argument("--upgrade-from-provider-version", default="",
+                    help="google-beta version used with --upgrade-from-ref")
     args = ap.parse_args()
+    if bool(args.upgrade_from_ref) != bool(args.upgrade_from_provider_version):
+        ap.error("--upgrade-from-ref and --upgrade-from-provider-version go together")
+    if args.upgrade_from_ref and args.only:
+        ap.error("--only does not apply to the upgrade scenario")
     r = Runner(args)
     r.log("artifacts: " + r.art)
     rc, _ = r.tf("init", "init", "-backend=false", "-input=false", "-no-color", offline=False)
@@ -1026,7 +1253,8 @@ def main():
         unknown = only - {k for k, _ in SCENARIOS}
         if unknown:
             r.check("runner", "unknown scenario selection %s" % sorted(unknown), False)
-        for key, fn in SCENARIOS:
+        scenarios = [("u1", scenario_provider_upgrade)] if args.upgrade_from_ref else SCENARIOS
+        for key, fn in scenarios:
             if only and key not in only:
                 continue
             r.log("=== %s" % key)
@@ -1043,7 +1271,10 @@ def main():
             json.dump(r.results, f, indent=1)
         npass = sum(x["pass"] for x in r.results)
         lines = ["# Integration results (%s)" % os.path.basename(r.art), "",
-                 "terraform %s, google-beta %s, terracurl 1.2.2, time 0.14.2; loopback fake API, fake token." % (r.tf_version(), args.provider_version),
+                 "terraform %s, google-beta %s%s, terracurl 1.2.2, time 0.14.2; loopback fake API, fake token." % (
+                     r.tf_version(), args.provider_version,
+                     " (state first written by %s with google-beta %s)" % (args.upgrade_from_ref, args.upgrade_from_provider_version)
+                     if args.upgrade_from_ref else ""),
                  "", "%d/%d checks passed" % (npass, len(r.results)), ""]
         cur = None
         for x in r.results:

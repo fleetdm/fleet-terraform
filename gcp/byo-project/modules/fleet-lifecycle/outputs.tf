@@ -51,3 +51,18 @@ output "attempt_id" {
   description = "Current attempt ID (changes only with the job name). Exposed for tests/inspection."
   value       = var.migration_enabled ? terraform_data.attempt[0].id : null
 }
+
+output "tmp_volume" {
+  description = "The /tmp volume as declared on the service template (null when tmp_volume_config.enable = false): name, medium, size_limit and the container mount_path. Read from the service resource, not from the input."
+  value = (
+    length(google_cloud_run_v2_service.fleet.template[0].volumes) == 0 ? null : {
+      name       = google_cloud_run_v2_service.fleet.template[0].volumes[0].name
+      medium     = google_cloud_run_v2_service.fleet.template[0].volumes[0].empty_dir[0].medium
+      size_limit = google_cloud_run_v2_service.fleet.template[0].volumes[0].empty_dir[0].size_limit
+      mount_path = one([
+        for m in google_cloud_run_v2_service.fleet.template[0].containers[0].volume_mounts :
+        m.mount_path if m.name == google_cloud_run_v2_service.fleet.template[0].volumes[0].name
+      ])
+    }
+  )
+}

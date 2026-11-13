@@ -5,7 +5,7 @@ resource "random_id" "suffix" {
 
 module "private-service-access" {
   source  = "terraform-google-modules/sql-db/google//modules/private_service_access"
-  version = "~> 25.0"
+  version = "~> 26.2"
 
   project_id = var.project_id
   # Ordered after the network by value (its ID is unknown only while the network
@@ -17,7 +17,7 @@ module "private-service-access" {
 
 module "mysql" {
   source  = "terraform-google-modules/sql-db/google//modules/mysql"
-  version = "~> 25.0"
+  version = "~> 26.2"
 
   name                 = var.database_config.name
   project_id           = var.project_id
