@@ -344,7 +344,7 @@ tmp_volume_config = {
 
 **Quotas.** Check these before you apply:
 
-* **Per instance.** Each instance can use 10 GiB of ephemeral disk by default. A `size_gib` above 10 needs a per-instance quota increase in the project first.
+* **Per instance.** Each instance can use 10 GiB of ephemeral disk by default. A `size_gib` above 10 needs a [per-instance quota increase](https://docs.cloud.google.com/run/docs/configuring/services/ephemeral-disk#request_a_quota_increase) in the project first.
 * **Per region.** A project starts with a regional ephemeral disk allocation of 0 GiB. According to Google, the allocation becomes 100 GiB in a region after the first ephemeral disk deployment there. The allocation is shared by every running instance that uses ephemeral disk in that project and region, including other services and the old and new instances that overlap during a rollout. `size_gib` × `fleet_config.max_instance_count` must fit, with room for rollouts and other services. With the defaults (10 GiB, at most 5 instances), Fleet alone needs up to 50 GiB, and more while a rollout runs. If the quota is too small, Cloud Run can fail to deploy the revision or start instances.
 
 **Billing.** Cloud Run bills the full provisioned size (`size_gib`) for the lifetime of each instance that uses it, whether or not the space is used. See [Cloud Run pricing](https://cloud.google.com/run/pricing).
