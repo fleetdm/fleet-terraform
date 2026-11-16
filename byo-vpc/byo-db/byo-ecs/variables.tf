@@ -71,9 +71,11 @@ variable "fleet_config" {
     })
     server_tls_enabled = optional(bool, false)
     service = optional(object({
-      name = optional(string, "fleet")
+      name           = optional(string, "fleet")
+      propagate_tags = optional(string, null)
       }), {
-      name = "fleet"
+      name           = "fleet"
+      propagate_tags = null
     })
     database = object({
       password_secret_arn         = string
@@ -227,7 +229,8 @@ variable "fleet_config" {
     }
     server_tls_enabled = false
     service = {
-      name = "fleet"
+      name           = "fleet"
+      propagate_tags = null
     }
     database = {
       password_secret_arn = null
@@ -306,6 +309,10 @@ variable "fleet_config" {
   validation {
     condition     = contains(["ecs", "iam"], var.fleet_config.private_key_delivery_method)
     error_message = "fleet_config.private_key_delivery_method must be either \"ecs\" or \"iam\"."
+  }
+  validation {
+    condition     = var.fleet_config.service.propagate_tags == null ? true : contains(["SERVICE", "TASK_DEFINITION", "NONE"], var.fleet_config.service.propagate_tags)
+    error_message = "fleet_config.service.propagate_tags must be one of \"SERVICE\", \"TASK_DEFINITION\" or \"NONE\" when set."
   }
 
   validation {
