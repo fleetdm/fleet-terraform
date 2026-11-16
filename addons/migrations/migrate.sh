@@ -2,10 +2,55 @@
 set -e
 export AWS_PAGER=""
 
+# List every task that still belongs to a service and has not reached STOPPED yet.
+# ECS defaults ListTasks to desiredStatus=RUNNING, which hides tasks that ECS has already
+# decided to stop (desiredStatus=STOPPED) but that are still executing while they drain
+# from the load balancer, so both desired statuses are listed and filtered on lastStatus.
+function list_live_service_tasks(){
+	local SERVICE_NAME TASK_ARNS DESIRED_STATUS
+	SERVICE_NAME="${1:?}"
+	TASK_ARNS="$(
+		for DESIRED_STATUS in RUNNING STOPPED; do
+			aws ecs list-tasks --region "${REGION:?}" --cluster "${ECS_CLUSTER:?}" --service-name "${SERVICE_NAME:?}" --desired-status "${DESIRED_STATUS}" --query 'taskArns' --output text
+		done | tr '[:space:]' '\n' | grep -vE '^(None)?$' | sort -u
+	)"
+	[ -n "${TASK_ARNS}" ] || return 0
+	# describe-tasks accepts at most 100 tasks per call, and --tasks has to come last so
+	# xargs can append the batch to it.
+	echo "${TASK_ARNS}" | xargs -n 100 aws ecs describe-tasks --region "${REGION:?}" --cluster "${ECS_CLUSTER:?}" --query "tasks[?lastStatus!='STOPPED'].taskArn" --output text --tasks | tr '[:space:]' '\n' | grep -vE '^(None)?$' | sort -u | tr '\n' ' '
+}
+
+# Wait until a scaled-down service has no task left alive.  "aws ecs wait services-stable"
+# is not enough on its own: a service's runningCount only counts tasks in the RUNNING
+# state, so it reaches 0 as soon as the tasks enter DEACTIVATING, while the containers
+# keep running for the target group's deregistration delay (300s by default) plus the
+# container stop timeout.  Migrations must not start while those containers are alive.
+function wait_for_service_tasks_stopped(){
+	local SERVICE_NAME ELAPSED LIVE_TASK_ARNS
+	SERVICE_NAME="${1:?}"
+	ELAPSED=0
+	while [ "${ELAPSED}" -lt "${SCALE_DOWN_TIMEOUT_SECONDS:-900}" ]; do
+		LIVE_TASK_ARNS="$(list_live_service_tasks "${SERVICE_NAME:?}")"
+		if [ -z "${LIVE_TASK_ARNS// /}" ]; then
+			return 0
+		fi
+		echo "Waiting for ${SERVICE_NAME} tasks to stop: ${LIVE_TASK_ARNS}" >&2
+		sleep 10
+		ELAPSED=$((ELAPSED + 10))
+	done
+
+	echo "ERROR: tasks for service ${SERVICE_NAME} were still running after ${SCALE_DOWN_TIMEOUT_SECONDS:-900} seconds." >&2
+	echo "Refusing to continue: running migrations against live Fleet containers corrupts cron runs." >&2
+	echo "Still alive: ${LIVE_TASK_ARNS}" >&2
+	return 1
+}
+
 function scale_services(){
 	UP_DOWN="${1:?}"
-	SERVICE_NAME="${2:?}" # Take service name as an argument
-	SERVICE_TASK_ARNS=""
+	# Take service name as an argument.  Accept a service ARN too and reduce it to the
+	# name, because list-tasks only filters on the name.
+	SERVICE_NAME="${2:?}"
+	SERVICE_NAME="${SERVICE_NAME##*/}"
 	ADJUST_AUTOSCALING="${3:-}"
 	COUNT="${4:-1}"
 
@@ -21,14 +66,11 @@ function scale_services(){
 		CAPACITY_MAX="${MAX_CAPACITY:?}"
 	fi
 
+	# Registering a scalable target whose bounds exclude the current capacity makes
+	# Application Auto Scaling move the service into those bounds, so this already starts
+	# the scale-down to 0 on its own.
 	if [ -n "${ADJUST_AUTOSCALING}" ]; then
 		aws application-autoscaling register-scalable-target --region "${REGION:?}" --service-namespace ecs --resource-id "service/${ECS_CLUSTER:?}/${SERVICE_NAME:?}" --scalable-dimension "ecs:service:DesiredCount" --min-capacity "${CAPACITY:?}" --max-capacity "${CAPACITY_MAX:?}"
-	fi
-	
-	# Capture the service's current tasks before scaling down so we can wait for
-	# those exact tasks to reach STOPPED, not just for the service to report stable.
-	if [ "${UP_DOWN:?}" != "up" ]; then
-		SERVICE_TASK_ARNS="$(aws ecs list-tasks --region "${REGION:?}" --cluster "${ECS_CLUSTER:?}" --service-name "${SERVICE_NAME:?}" --desired-status RUNNING --query 'taskArns' --output text)"
 	fi
 
 	# We are scaling down, make it 0
@@ -41,12 +83,8 @@ function scale_services(){
 		aws ecs wait services-stable --region "${REGION:?}" --cluster "${ECS_CLUSTER:?}" --services "${SERVICE_NAME:?}"
 	fi
 
-	# services-stable only guarantees there are no RUNNING tasks for the service.
-	# Wait for the tasks we observed before scale-down to be fully STOPPED as well.
-	if [ "${UP_DOWN:?}" != "up" ] && [ -n "${SERVICE_TASK_ARNS}" ] && [ "${SERVICE_TASK_ARNS}" != "None" ]; then
-		# Intentionally unquoted so the tab/space-delimited ARN list is passed as
-		# separate --tasks arguments to the AWS CLI.
-		aws ecs wait tasks-stopped --region "${REGION:?}" --cluster "${ECS_CLUSTER:?}" --tasks ${SERVICE_TASK_ARNS}
+	if [ "${UP_DOWN:?}" != "up" ]; then
+		wait_for_service_tasks_stopped "${SERVICE_NAME:?}"
 	fi
 }
 
