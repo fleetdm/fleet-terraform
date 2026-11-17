@@ -38,6 +38,8 @@ resource "aws_ecs_service" "fleet" {
   desired_count                      = 1
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
+  propagate_tags                     = "SERVICE"
+  enable_ecs_managed_tags            = true
 
   lifecycle {
     ignore_changes = [desired_count]
