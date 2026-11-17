@@ -85,8 +85,8 @@ module "fleet_lifecycle" {
   min_instance_count    = var.fleet_config.min_instance_count
   max_instance_count    = var.fleet_config.max_instance_count
 
-  # Disk-backed /tmp (default 10 GiB). Kept out of the sensitive fleet_config
-  # and out of the migration identity.
+  # Opt-in disk-backed /tmp (off unless enable = true; 10 GiB when enabled).
+  # Kept out of the sensitive fleet_config and out of the migration identity.
   tmp_volume_config = var.tmp_volume_config
 
   migration_enabled = nonsensitive(var.fleet_config.exec_migration)

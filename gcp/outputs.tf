@@ -34,7 +34,7 @@ output "cloud_run_service_location" {
 }
 
 output "cloud_run_tmp_volume" {
-  description = "The disk-backed /tmp volume declared on the Fleet Cloud Run service (name, medium, size_limit, mount_path), or null when tmp_volume_config.enable = false."
+  description = "The disk-backed /tmp volume declared on the Fleet Cloud Run service (name, medium, size_limit, mount_path), or null when the opt-in tmp_volume_config is off (the default)."
   value       = module.fleet.cloud_run_tmp_volume
 }
 

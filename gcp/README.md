@@ -312,42 +312,50 @@ software_installers_config = {
 
 When versioning is enabled, noncurrent-version expiry defaults on after 30 days. The lifecycle targets **archived/noncurrent versions only**, never the live installer object. Disable expiry to retain all versions indefinitely. With versioning off, this module adds no expiry rule. Enabling expiry on an existing versioned bucket can delete versions already older than the configured window; `allow_destroy` does not prevent lifecycle expiry.
 
-## Disk-backed `/tmp`
+## Disk-backed `/tmp` (opt-in)
 
-By default the Fleet Cloud Run service mounts a 10 GiB [Cloud Run ephemeral disk](https://cloud.google.com/run/docs/configuring/services/ephemeral-disk) at `/tmp`. Without it, `/tmp` on Cloud Run is an in-memory filesystem: every file written there counts against the instance's memory limit (`fleet_config.fleet_memory`), so large temporary files can make an instance run out of memory. With the disk, files in `/tmp` use disk space instead of memory. This only helps with memory used by files in `/tmp`; it doesn't raise the memory limit or prevent out-of-memory errors that have other causes.
+**Off by default.** If you set nothing, this module declares no volume and the Fleet Cloud Run service keeps Cloud Run's implicit in-memory `/tmp`: every file written there counts against the instance's memory limit (`fleet_config.fleet_memory`), so large temporary files can make an instance run out of memory. Opting in mounts a [Cloud Run ephemeral disk](https://cloud.google.com/run/docs/configuring/services/ephemeral-disk) at `/tmp`, so files in `/tmp` use disk space instead of memory. This only helps with memory used by files in `/tmp`; it doesn't raise the memory limit or prevent out-of-memory errors that have other causes.
+
+**Check the quota before you opt in.** Ephemeral disk is quota-limited per region and per instance, and this module neither requests quota nor checks it: with too little quota Cloud Run rejects the revision or the instances. See the **Quotas** list below. The regional allocation can be **0 GiB**, and the 100 GiB grant Google documents as automatic is **not guaranteed here** — it has been observed to stay 0 in a real test, which is why the feature is opt-in.
 
 Configure it with `tmp_volume_config`, which is separate from `fleet_config`:
 
 ```hcl
-# Default (same as leaving tmp_volume_config unset): 10 GiB disk at /tmp.
+# Opt in: a 10 GiB disk at /tmp (size_gib defaults to 10).
+tmp_volume_config = {
+  enable = true
+}
+```
+
+```hcl
+# Opt in with a larger /tmp. enable = true is required: size_gib on its own
+# leaves the feature off. Above 10 GiB, request a per-instance quota increase
+# first (see the Quotas list below).
 tmp_volume_config = {
   enable   = true
-  size_gib = 10 # whole number from 1 to 100
+  size_gib = 20 # whole number from 1 to 100
 }
 ```
 
 ```hcl
-# Larger /tmp. Above 10 GiB, request a per-instance quota increase first (see below).
-tmp_volume_config = {
-  size_gib = 20
-}
-```
-
-```hcl
-# Opt out: no volume and no mount; /tmp stays in memory, as in earlier releases.
+# Off (the default): no volume and no mount; /tmp stays in memory.
 tmp_volume_config = {
   enable = false
 }
 ```
 
-**What the module declares.** One `empty_dir` volume named `tmp` with `medium = "DISK"` and `size_limit = "<size_gib>Gi"`, and a mount of that volume at `/tmp` in the Fleet container. The mount path and the `DISK` medium are fixed. With `enable = false`, neither the volume nor the mount is declared. The volume applies to the Fleet service only; the database migration job doesn't get one. The service keeps its `GA` launch stage and the second-generation execution environment, which ephemeral disks require. The container's CPU and memory limits don't change.
+Leaving `tmp_volume_config` unset, setting it to `{}`, or setting `enable = false` all mean off.
 
-**Quotas.** Check these before you apply:
+**What the module declares (only when `enable = true`).** One `empty_dir` volume named `tmp` with `medium = "DISK"` and `size_limit = "<size_gib>Gi"`, and a mount of that volume at `/tmp` in the Fleet container. The mount path and the `DISK` medium are fixed. When the feature is off, neither the volume nor the mount is declared. The volume applies to the Fleet service only; the database migration job doesn't get one. The service keeps its `GA` launch stage and the second-generation execution environment, which ephemeral disks require. The container's CPU and memory limits don't change.
 
-* **Per instance.** Each instance can use 10 GiB of ephemeral disk by default. A `size_gib` above 10 needs a [per-instance quota increase](https://docs.cloud.google.com/run/docs/configuring/services/ephemeral-disk#request_a_quota_increase) in the project first.
-* **Per region.** A project starts with a regional ephemeral disk allocation of 0 GiB. According to Google, the allocation becomes 100 GiB in a region after the first ephemeral disk deployment there. The allocation is shared by every running instance that uses ephemeral disk in that project and region, including other services and the old and new instances that overlap during a rollout. `size_gib` × `fleet_config.max_instance_count` must fit, with room for rollouts and other services. With the defaults (10 GiB, at most 5 instances), Fleet alone needs up to 50 GiB, and more while a rollout runs. If the quota is too small, Cloud Run can fail to deploy the revision or start instances.
+**Quotas.** Both of these are Cloud Run quotas on the project, and both must cover the deployment before you opt in:
 
-**Billing.** Cloud Run bills the full provisioned size (`size_gib`) for the lifetime of each instance that uses it, whether or not the space is used. See [Cloud Run pricing](https://cloud.google.com/run/pricing).
+* **Per region (check this first).** A project starts with a regional ephemeral disk allocation of **0 GiB**. Google's documentation says the allocation becomes 100 GiB in a region after the first ephemeral disk deployment there, but that automatic grant is **not guaranteed here**: it failed in an actual test of this feature, and this module never requests quota or enables an API for you. Confirm the project's actual regional ephemeral disk allocation in your target project and region, and request more if it is 0 or too small. The allocation is shared by every running instance that uses ephemeral disk in that project and region, including other services and the old and new instances that overlap during a rollout, so `size_gib` × `fleet_config.max_instance_count` must fit inside it with room for the rollout and those other services. With the opt-in defaults (10 GiB, at most 5 instances) Fleet alone can need up to 50 GiB, and more while a rollout runs.
+* **Per instance.** Each instance can use 10 GiB of ephemeral disk by default. A `size_gib` above 10 needs a higher per-instance quota first: [Request a quota increase](https://docs.cloud.google.com/run/docs/configuring/services/ephemeral-disk#request_a_quota_increase). This per-instance limit is separate from the regional allocation above: 10 GiB per instance says nothing about how much of the regional allocation your project has.
+
+If either quota is too small, Cloud Run can fail to deploy the revision or start instances.
+
+**Billing.** Only when you opt in: Cloud Run bills the full provisioned size (`size_gib`, 10 GiB by default) for the lifetime of each instance that uses it, whether or not the space is used. With the feature off, this module adds no disk and no disk billing. See [Cloud Run pricing](https://cloud.google.com/run/pricing).
 
 **Data lifetime.** The disk is temporary. Each instance gets its own empty disk, and its data is permanently deleted when the instance shuts down, for example when it scales in, crashes or is replaced by a new revision. Don't keep anything in `/tmp` that must survive an instance.
 
@@ -355,12 +363,13 @@ tmp_volume_config = {
 
 **Provider versions.** No new provider requirement: `google-beta` 7.24.0, this module's minimum (`>= 7.24.0, < 8.0.0`), accepts `medium = "DISK"`. The volume has been tested with `google-beta` 7.24.0 and 7.46.2 (`google` 6.35.0 and 6.50.0) on Terraform 1.12 and 1.14.
 
-**Validation status.** The volume and mount are covered by mocked `terraform test` suites and by the loopback integration harness in `lifecycle-tests/`, which runs the real `google-beta` provider against a fake Cloud Run API. That harness also upgrades state written by the previous release (with `google-beta` 6.x) to this release. None of this runs against Google Cloud, so it doesn't show quota enforcement, billing, or that Fleet writes to the mounted disk. Before relying on the feature, run these checks on live GCP:
+**Validation status.** The opt-in volume and mount, and the off default, are covered by mocked `terraform test` suites and by the loopback integration harness in `lifecycle-tests/`, which runs the real `google-beta` provider against a fake Cloud Run API. That harness also upgrades state written by the previous release (with `google-beta` 6.x) to this release and shows the upgrade changes nothing by default. None of this runs against Google Cloud, so it doesn't show quota enforcement, billing, or that Fleet writes to the mounted disk. Before relying on the feature, run these checks on live GCP:
 
-* Upgrade an existing deployment from the previous release. The plan must show only the changes described in [Upgrade notes](#upgrade-notes) for the `/tmp` volume: the in-place update of the Fleet service and the re-armed settlement check. After the apply, the new revision must be Ready and serve HTTPS `/healthz`, no migration job may have run, and the next plan must be clean.
+* Confirm the project's regional ephemeral disk allocation and per-instance quota in the region you deploy to.
+* Opt an existing deployment in with `tmp_volume_config = { enable = true }`. The plan must show only the changes described in [Upgrade notes](#upgrade-notes): the in-place update of the Fleet service and the re-armed settlement check. After the apply, the new revision must be Ready and serve HTTPS `/healthz`, no migration job may have run, and the next plan must be clean.
 * Deploy in a region where the project has never used an ephemeral disk, to confirm the regional allocation.
 * Set `size_gib` above 10 with and without the per-instance quota increase.
-* Upgrade with `enable = false` and confirm that the plan doesn't change the service.
+* Opt back out with `enable = false` and confirm the volume and mount are removed in place, without a migration.
 
 ## Database migration gate
 
@@ -434,7 +443,7 @@ Not every interrupted or cancelled run recovers on its own. If an apply was inte
   * The serverless NEG load balancer resources in lb-http 14 are the same as in 12.2. project-factory 18.1 changes only Shared VPC host grants, which Fleet doesn't use.
 
   The first plan after upgrading shouldn't replace the network, Cloud SQL instance, load balancer or project because of this upgrade. If it does, stop and review before you apply.
-* **Disk-backed `/tmp` (new default).** The Fleet service now mounts a 10 GiB ephemeral disk at `/tmp` (see [Disk-backed `/tmp`](#disk-backed-tmp)). The first plan after upgrading shows one in-place update of `module.fleet.module.fleet_lifecycle.google_cloud_run_v2_service.fleet` that adds the `tmp` volume and its `/tmp` mount. With `exec_migration = true`, the plan also replaces `time_sleep.restore_settle[0]`, as after any service update: the module re-runs its read-only settlement check, which waits (up to 210 s by default) only if the service isn't settled yet. No other resource changes and no Cloud Run service or job is replaced, so no `moved` blocks or state commands are needed. Applying it rolls out a new revision without a migration, stop or drain, unless the same apply also changes the Fleet image or database, in which case the volume is part of that migration's deploy step. Check the regional ephemeral disk quota before you apply. To keep the in-memory `/tmp`, set `tmp_volume_config = { enable = false }` in the same change; the service then shows no change from this feature.
+* **Disk-backed `/tmp` is opt-in and off by default** (see [Disk-backed `/tmp` (opt-in)](#disk-backed-tmp-opt-in)). Upgrading changes nothing for this feature: no volume, no mount, no Cloud Run service update, and `/tmp` stays the in-memory filesystem you have today. To turn it on, first check the project's regional ephemeral disk quota (it can be 0 GiB, and the 100 GiB grant Google documents as automatic is not guaranteed here), then set `tmp_volume_config = { enable = true }`. That plan shows one in-place update of `module.fleet.module.fleet_lifecycle.google_cloud_run_v2_service.fleet` adding the `tmp` volume and its `/tmp` mount. With `exec_migration = true`, the plan also replaces `time_sleep.restore_settle[0]`, as after any service update: the module re-runs its read-only settlement check, which waits (up to 210 s by default) only if the service isn't settled yet. No other resource changes and no Cloud Run service or job is replaced, so no `moved` blocks or state commands are needed. Applying it rolls out a new revision without a migration, stop or drain, unless the same apply also changes the Fleet image or database, in which case the volume is part of that migration's deploy step.
 * The root inputs `prefix` and `fleet_image` remain legacy inputs with no effect, as on main. The Fleet image is set only by `fleet_config.image_tag`.
 
 ## Known Limitations
@@ -502,7 +511,7 @@ Once the deployment is complete, migrations have run successfully, and DNS has p
 *   **GCS Bucket:** For S3-compatible software installer storage.
 *   **Secret Manager Secrets:** Database password, Fleet server private key, and HMAC key for GCS access.
 *   **Service Account (`fleet-run-sa`):** Used by Cloud Run services/jobs with necessary permissions.
-*   **Cloud Run Service:** Hosts the main Fleet application, with a disk-backed `/tmp` by default (see [Disk-backed `/tmp`](#disk-backed-tmp)).
+*   **Cloud Run Service:** Hosts the main Fleet application. Its `/tmp` is Cloud Run's in-memory filesystem unless you opt in to a disk-backed `/tmp` (see [Disk-backed `/tmp` (opt-in)](#disk-backed-tmp-opt-in)).
 *   **Cloud Run Job:** Runs database migrations.
 *   **External HTTP(S) Load Balancer:** Provides public HTTPS access to Fleet. Not created with `load_balancer_config.enable = false`; see [Bring your own load balancer](#bring-your-own-load-balancer-optional).
 *   **Cloud DNS Managed Zone:** Manages DNS records for `dns_zone_name`.
@@ -627,7 +636,7 @@ graph TD
 | <a name="input_region"></a> [region](#input\_region) | GCP region for regional-only resources (Cloud Run, Cloud SQL, Memorystore, VPC, LB, Certificate Manager). | `string` | `"us-central1"` | no |
 | <a name="input_replicate_secrets"></a> [replicate\_secrets](#input\_replicate\_secrets) | Regions to pin Secret Manager replication to (applies to fleet-managed<br/>secrets: DB password, Fleet server private key, HMAC secret).<br/><br/>Empty (default) uses `automatic` replication — Google chooses locations,<br/>fewest constraints, works everywhere. Non-empty switches to<br/>`user_managed` replication with one replica per region.<br/><br/>Provide at least two regions if you want cross-region redundancy under<br/>user\_managed (single-region user\_managed has no failover).<br/><br/>NOTE: switching an existing secret between automatic and user\_managed<br/>forces replacement (destroy + recreate). | `list(string)` | `[]` | no |
 | <a name="input_software_installers_config"></a> [software\_installers\_config](#input\_software\_installers\_config) | Object versioning and noncurrent-version retention for the software<br/>installers bucket (fleet\_config.installers\_bucket\_name). Matches the AWS<br/>module defaults:<br/><br/>  enable\_bucket\_versioning           - Turn on GCS object versioning<br/>                                       (default false).<br/>  expire\_noncurrent\_versions         - When versioning is on, delete<br/>                                       noncurrent (overwritten or deleted)<br/>                                       object versions after<br/>                                       noncurrent\_version\_expiration\_days<br/>                                       (default true). Set false to keep<br/>                                       every noncurrent version.<br/>  noncurrent\_version\_expiration\_days - Days a version must have been<br/>                                       noncurrent before it is deleted<br/>                                       (default 30). Must be a positive<br/>                                       whole number.<br/><br/>The expiry rule only matches noncurrent versions; live objects are never<br/>deleted by it. With versioning off no lifecycle rule is created. Turning<br/>versioning off on an existing versioned bucket suspends versioning but<br/>does not delete versions already stored. | <pre>object({<br/>    enable_bucket_versioning           = optional(bool, false)<br/>    expire_noncurrent_versions         = optional(bool, true)<br/>    noncurrent_version_expiration_days = optional(number, 30)<br/>  })</pre> | `{}` | no |
-| <a name="input_tmp_volume_config"></a> [tmp\_volume\_config](#input\_tmp\_volume\_config) | Disk-backed /tmp for the Fleet Cloud Run service (on by default).<br/>Separate from fleet\_config, and not sensitive.<br/><br/>  enable   - Mount one Cloud Run ephemeral disk volume (empty\_dir with<br/>             medium DISK) at /tmp in the Fleet container (default true).<br/>             Files Fleet writes to /tmp then use disk instead of instance<br/>             memory. false declares no volume and no mount: /tmp stays the<br/>             in-memory filesystem of earlier releases.<br/>  size\_gib - Volume size limit in GiB (default 10). A whole number from 1<br/>             to 100. Above 10 GiB, request a higher per-instance ephemeral<br/>             disk quota first.<br/><br/>Cloud Run bills the full provisioned size for the lifetime of each<br/>instance and deletes the data when the instance shuts down. Adding,<br/>resizing or removing the volume rolls out a new revision in place and<br/>never runs a database migration on its own. The migration job has no /tmp<br/>volume. | <pre>object({<br/>    enable   = optional(bool, true)<br/>    size_gib = optional(number, 10)<br/>  })</pre> | `{}` | no |
+| <a name="input_tmp_volume_config"></a> [tmp\_volume\_config](#input\_tmp\_volume\_config) | Disk-backed /tmp for the Fleet Cloud Run service (opt-in, off by<br/>default). Separate from fleet\_config, and not sensitive.<br/><br/>  enable   - Opt in with true to mount one Cloud Run ephemeral disk volume<br/>             (empty\_dir with medium DISK) at /tmp in the Fleet container<br/>             (default false). Files Fleet writes to /tmp then use disk<br/>             instead of instance memory. false, null or omitted declares no<br/>             volume and no mount: /tmp stays the in-memory filesystem Cloud<br/>             Run gives the container.<br/>  size\_gib - Volume size limit in GiB, used only when enable = true<br/>             (default 10). A whole number from 1 to 100. A size alone does<br/>             not enable the feature.<br/><br/>Check the project's ephemeral disk quotas before opting in: the regional<br/>allocation can be 0 GiB, and the 100 GiB grant Google documents as<br/>automatic is not guaranteed here. A size\_gib above 10 also needs a higher<br/>per-instance quota:<br/>https://docs.cloud.google.com/run/docs/configuring/services/ephemeral-disk#request_a_quota_increase<br/><br/>When enabled, Cloud Run bills the full provisioned size for the lifetime of<br/>each instance and deletes the data when the instance shuts down. Adding,<br/>resizing or removing the volume rolls out a new revision in place and<br/>never runs a database migration on its own. The migration job has no /tmp<br/>volume. | <pre>object({<br/>    enable   = optional(bool, false)<br/>    size_gib = optional(number, 10)<br/>  })</pre> | `{}` | no |
 | <a name="input_vpc_config"></a> [vpc\_config](#input\_vpc\_config) | Configuration for the VPC network and subnets. | <pre>object({<br/>    network_name = string<br/>    subnets = list(object({<br/>      subnet_name           = string<br/>      subnet_ip             = string<br/>      subnet_region         = string<br/>      subnet_private_access = bool<br/>    }))<br/>  })</pre> | <pre>{<br/>  "network_name": "fleet-network",<br/>  "subnets": [<br/>    {<br/>      "subnet_ip": "10.10.10.0/24",<br/>      "subnet_name": "fleet-subnet",<br/>      "subnet_private_access": true,<br/>      "subnet_region": "us-central1"<br/>    }<br/>  ]<br/>}</pre> | no |
 
 ## Outputs
@@ -637,7 +646,7 @@ graph TD
 | <a name="output_cloud_router_name"></a> [cloud\_router\_name](#output\_cloud\_router\_name) | The name of the Cloud Router created for NAT. |
 | <a name="output_cloud_run_service_location"></a> [cloud\_run\_service\_location](#output\_cloud\_run\_service\_location) | The location of the deployed Fleet Cloud Run service. |
 | <a name="output_cloud_run_service_name"></a> [cloud\_run\_service\_name](#output\_cloud\_run\_service\_name) | The name of the deployed Fleet Cloud Run service. |
-| <a name="output_cloud_run_tmp_volume"></a> [cloud\_run\_tmp\_volume](#output\_cloud\_run\_tmp\_volume) | The disk-backed /tmp volume declared on the Fleet Cloud Run service (name, medium, size\_limit, mount\_path), or null when tmp\_volume\_config.enable = false. |
+| <a name="output_cloud_run_tmp_volume"></a> [cloud\_run\_tmp\_volume](#output\_cloud\_run\_tmp\_volume) | The disk-backed /tmp volume declared on the Fleet Cloud Run service (name, medium, size\_limit, mount\_path), or null when the opt-in tmp\_volume\_config is off (the default). |
 | <a name="output_dns_managed_zone_name"></a> [dns\_managed\_zone\_name](#output\_dns\_managed\_zone\_name) | The name of the Cloud DNS managed zone created for Fleet. |
 | <a name="output_dns_managed_zone_name_servers"></a> [dns\_managed\_zone\_name\_servers](#output\_dns\_managed\_zone\_name\_servers) | The authoritative name servers for the created Cloud DNS managed zone. Delegate your domain to these. |
 | <a name="output_fleet_application_url"></a> [fleet\_application\_url](#output\_fleet\_application\_url) | The primary URL to access the Fleet application (via the Load Balancer). |

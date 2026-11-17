@@ -11,17 +11,19 @@
 #     waits for it to become Ready ("staged" restore).
 #   * the restore marker annotation is NOT declared (left to the restore
 #     PATCH; preserved by the provider's effective_annotations handling).
-#   * a disk-backed /tmp (var.tmp_volume_config, on by default): one Cloud Run
-#     ephemeral disk volume (empty_dir, medium DISK) mounted at /tmp in the
-#     Fleet container. The migration job gets no volume, and the setting is
-#     not part of the migration identity: adding, resizing or removing it is
-#     an ordinary in-place template update (new revision, no migration).
+#   * an opt-in disk-backed /tmp (var.tmp_volume_config, off by default):
+#     when enable = true, one Cloud Run ephemeral disk volume (empty_dir,
+#     medium DISK) mounted at /tmp in the Fleet container. The migration job
+#     gets no volume, and the setting is not part of the migration identity:
+#     adding, resizing or removing it is an ordinary in-place template update
+#     (new revision, no migration).
 # -----------------------------------------------------------------------------
 
 locals {
   # The volume's medium is the literal "DISK" below, never MEMORY (MEMORY is
-  # the in-memory /tmp this replaces). Ephemeral disk needs the GEN2
-  # execution environment declared on the template.
+  # the in-memory /tmp this replaces, which is also what an opted-out service
+  # keeps). Ephemeral disk needs the GEN2 execution environment declared on
+  # the template.
   tmp_volume_enabled = var.tmp_volume_config.enable
   tmp_volume_name    = "tmp"
   tmp_mount_path     = "/tmp"
@@ -70,8 +72,9 @@ resource "google_cloud_run_v2_service" "fleet" {
       max_instance_count = var.max_instance_count
     }
 
-    # Disk-backed /tmp (see the header). enable = false declares neither this
-    # volume nor the mount below, i.e. the previous in-memory /tmp.
+    # Opt-in disk-backed /tmp (see the header): enable = true declares this
+    # volume and the mount below; leaving it off (the default) declares
+    # neither, i.e. the in-memory /tmp Cloud Run gives the container.
     dynamic "volumes" {
       for_each = local.tmp_volume_enabled ? [local.tmp_volume_name] : []
       content {

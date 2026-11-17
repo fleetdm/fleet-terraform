@@ -18,17 +18,20 @@ name: gcp-terraform-test
 #   Run API (lifecycle-tests/integration, test-only Python standard library).
 #   The runner strips GOOGLE_*/CLOUDSDK_*/GCLOUD* variables, uses a literal
 #   fake token and points HTTP(S) proxies at a dead loopback port. Only
-#   `terraform init` reaches the network, to download public providers.
+#   `terraform init` reaches the network, to download public providers. The
+#   fixture opts in to the disk-backed /tmp, so these scenarios exercise the
+#   volume; the off default is proven by the mocked suites and by U1 below.
 #
 # lifecycle-upgrade: same loopback harness. Applies the fixture and
 #   fleet-lifecycle module from an earlier commit with google-beta 6.x, then
-#   takes that state over with the current module on google-beta 7.x. With
-#   tmp_volume_config.enable = false it requires no resource changes and no
-#   Cloud Run writes. With the default disk-backed /tmp it requires exactly
-#   one in-place service update whose only differences are the /tmp volume
-#   and mount (plus the settlement check every service update re-arms), one
-#   service PATCH, no migration, and a clean plan afterwards. Then it runs a
-#   normal migration and turns /tmp off again the same controlled way.
+#   takes that state over with the current module on google-beta 7.x. Disk-
+#   backed /tmp is opt-in and off by default, so the takeover with
+#   tmp_volume_config unset requires no resource changes and no Cloud Run
+#   writes. Opting in with tmp_volume_config = { enable = true } then requires
+#   exactly one in-place service update whose only differences are the /tmp
+#   volume and mount (plus the settlement check every service update re-arms),
+#   one service PATCH, no migration, and a clean plan afterwards. Then it runs
+#   a normal migration and opts /tmp back out the same controlled way.
 
 on:
   push:

@@ -51,14 +51,18 @@ variable "drain_seconds" {
   default = 2
 }
 
-# Forwarded as-is (the module's own default: 10 GiB DISK /tmp). U1 passes
-# {enable = false} to show that opting out keeps an upgraded service unchanged.
+# The loopback scenarios exercise the disk-backed /tmp code path, so the
+# fixture opts in explicitly. The module's own default is OFF (no volume, no
+# mount): the standalone mocked suites prove that, and U1 proves an upgraded
+# service is unchanged by default. U1 overrides this variable per step:
+# {} for the default (off) takeover, {enable=true} to opt in, {enable=false}
+# to opt back out.
 variable "tmp_volume_config" {
   type = object({
     enable   = optional(bool)
     size_gib = optional(number)
   })
-  default = {}
+  default = { enable = true, size_gib = 10 }
 }
 
 locals {

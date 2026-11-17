@@ -105,16 +105,21 @@ variable "secret_env" {
 variable "tmp_volume_config" {
   description = <<-EOT
     Disk-backed /tmp for the Fleet service container (not the migration job).
-    enable = true (default) mounts one Cloud Run ephemeral disk volume
-    (empty_dir, medium DISK, size_limit "<size_gib>Gi") at /tmp, so files
-    written to /tmp no longer use instance memory. enable = false declares no
-    volume and no mount: /tmp is the in-memory filesystem, as before.
-    size_gib must be a whole number from 1 to 100 (Cloud Run ephemeral disk
-    volume limits). Changes roll out as a new revision; they are not part of
-    the migration identity and never trigger a migration.
+    Opt-in, off by default: only enable = true mounts one Cloud Run ephemeral
+    disk volume (empty_dir, medium DISK, size_limit "<size_gib>Gi") at /tmp,
+    so files written to /tmp no longer use instance memory. enable = false,
+    null or omitted declares no volume and no mount: /tmp is the in-memory
+    filesystem. size_gib alone never enables the volume.
+    size_gib (default 10, used only when enabled) must be a whole number from
+    1 to 100 (Cloud Run ephemeral disk volume limits). Check the project's
+    ephemeral disk quotas before enabling: the regional allocation can be
+    0 GiB, and the 100 GiB grant Google documents as automatic is not
+    guaranteed here; above 10 GiB per instance also needs a quota increase.
+    Changes roll out as a new revision; they are not part of the migration
+    identity and never trigger a migration.
   EOT
   type = object({
-    enable   = optional(bool, true)
+    enable   = optional(bool, false)
     size_gib = optional(number, 10)
   })
   default  = {}

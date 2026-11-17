@@ -20,10 +20,12 @@ The second form runs only the upgrade scenario (U1): the fixture and
 fleet-lifecycle module from <git-ref> (read with `git show`, never checked out)
 are applied with the older google-beta, then the current fixture and module are
 initialised with --provider-version against the same state and fake API.
-The previous module had no /tmp volume, so U1 expects exactly one in-place
-service update (the default disk-backed /tmp volume and mount, plus the
-settlement check every service update re-arms) and nothing else; with
-tmp_volume_config.enable = false it expects no change at all.
+The previous module had no /tmp volume, and the current module's disk-backed
+/tmp is opt-in (off by default), so U1 expects NO change at all when the
+current module takes that state over with tmp_volume_config unset. Setting
+tmp_volume_config.enable = true then expects exactly one in-place service
+update (the disk-backed /tmp volume and mount, plus the settlement check
+every service update re-arms), and turning it off again the same way.
 Artifacts: lifecycle-tests/integration/artifacts/<run-id>/ (logs, events, results.json, SUMMARY.md)
 """
 import argparse
@@ -53,8 +55,13 @@ SVC_ADDR = MOD + ".google_cloud_run_v2_service.fleet"
 SETTLE_ADDR = MOD + ".time_sleep.restore_settle[0]"
 # Disk-backed /tmp as the real google-beta provider sends it (Run v2 JSON).
 TMP_VOLUME_NAME = "tmp"
+# The fixture opts in, so the S* scenarios keep exercising the volume. U1
+# overrides it per step: DEFAULT_OFF is the unset/default path (off), OPT_IN
+# opts in, OPT_OUT opts back out.
+DEFAULT_OFF = ("-var", "tmp_volume_config={}")
+OPT_IN = ("-var", "tmp_volume_config={enable=true}")
 OPT_OUT = ("-var", "tmp_volume_config={enable=false}")
-# The only service paths the default /tmp may change on an upgraded service.
+# The only service paths the /tmp volume may change on an upgraded service.
 TMP_PLAN_PATHS = {("template", 0, "volumes"), ("template", 0, "containers", 0, "volume_mounts")}
 
 
@@ -438,8 +445,9 @@ def tmp_rollout_checks(r, sc, label, want_enabled, *extra):
     """On a running (AUTOMATIC, restored) service: the /tmp change plans as
     exactly one in-place update of the service whose only differences are the
     volume and its mount (plus the settlement wait that any service update
-    re-arms), applies as one provider PATCH and a new Ready
-    revision, with no stop, job or migration, and then settles (no-op)."""
+    re-arms), applies as one provider PATCH and a new Ready revision, with no
+    stop, job or migration, and then settles (no-op). Used in both directions:
+    opting in and opting back out."""
     st0 = r.get("/_state")["services"][SVC]
     o0 = r.outputs()
     s0 = r.seq()
@@ -527,11 +535,11 @@ def scenario_env_change(r):
     noop_checks(r, sc, "s2", "-var", 'extra_env={"FLEET_EXAMPLE"="1"}')
 
 
-def scenario_upgrade(r, image="fleetdm/fleet:v4.94.0", sc="S3 image upgrade", label="s3"):
+def scenario_upgrade(r, image="fleetdm/fleet:v4.94.0", sc="S3 image upgrade", label="s3", extra=()):
     ann = dict(r.get("/_state")["services"][SVC].get("annotations", {}), **{"example.com/out-of-band": label})
     r.inject(action="set_annotations", service=SVC, annotations=ann)
     s0 = r.seq()
-    rc, _ = r.apply("%s-upgrade" % label, "-var", "image=" + image)
+    rc, _ = r.apply("%s-upgrade" % label, "-var", "image=" + image, *extra)
     evs = r.events_since(s0)
     r.save_events("%s-upgrade" % label, evs)
     r.check(sc, "apply succeeded", rc == 0)
@@ -540,7 +548,7 @@ def scenario_upgrade(r, image="fleetdm/fleet:v4.94.0", sc="S3 image upgrade", la
     r.check(sc, "out-of-band service annotation survives the provider update and the restore",
             st.get("annotations", {}).get("example.com/out-of-band") == label, json.dumps(st.get("annotations")))
     stop_wait_checks(r, sc, evs)
-    noop_checks(r, sc, label, "-var", "image=" + image)
+    noop_checks(r, sc, label, "-var", "image=" + image, *extra)
 
 
 def scenario_job_fail(r, outcome, image, sc, label, expect_tainted):
@@ -1149,10 +1157,12 @@ def scenario_neg_cbd_failed_then_rollout(r):
 def scenario_provider_upgrade(r):
     """U1: state written by the previous fixture/module with the older
     google-beta is taken over by the current module and --provider-version.
-    With /tmp opted out: no resource changes and no Cloud Run writes. With the
-    default /tmp: one in-place service update (volume + mount only), no
-    migration, then a settled no-op. Then a normal migration, and turning /tmp
-    off again (the reverse in-place update)."""
+    Disk-backed /tmp is opt-in and off by default, so the takeover with
+    tmp_volume_config unset must change nothing and send no Cloud Run writes.
+    Opting in (tmp_volume_config.enable = true) is then exactly one in-place
+    service update (volume + mount only), no migration, and it settles. Then a
+    normal migration keeps /tmp, and opting out again is the same controlled
+    in-place update in reverse."""
     a = r.args
     sc = "U1 upgrade from %s (google-beta %s) to the current module (google-beta %s)" % (
         a.upgrade_from_ref, a.upgrade_from_provider_version, a.provider_version)
@@ -1179,22 +1189,25 @@ def scenario_provider_upgrade(r):
     except Exception:
         got = None
     r.check(sc, "current module: google-beta %s selected" % a.provider_version, got == a.provider_version, "selected=%r" % got)
-    # Opted out, the current module must take over the old service unchanged.
-    sco = sc + ": tmp_volume_config.enable = false"
-    noop_checks(r, sco, "u1-optout", *OPT_OUT)
-    tmp_checks(r, sco, enabled=False)
+    # The current module's default (tmp_volume_config unset) is off: the
+    # upgraded service is taken over with no change and no writes.
+    sd = sc + ": default tmp_volume_config (off) changes nothing"
+    noop_checks(r, sd, "u1-default", *DEFAULT_OFF)
+    tmp_checks(r, sd, enabled=False)
 
-    # Default: the intended, controlled difference (one in-place update).
-    tmp_rollout_checks(r, sc + ": default 10 GiB DISK /tmp added", "u1-tmp", True)
+    # Opting in is the intended, controlled difference (one in-place update).
+    tmp_rollout_checks(r, sc + ": opt-in tmp_volume_config={enable=true} adds the 10 GiB DISK /tmp",
+                       "u1-tmp", True, *OPT_IN)
 
     # A normal migration still works on the upgraded service and keeps /tmp.
     image = "fleetdm/fleet:v4.94.0"
     sci = sc + ": first image upgrade"
-    scenario_upgrade(r, image=image, sc=sci, label="u1-image")
+    scenario_upgrade(r, image=image, sc=sci, label="u1-image", extra=OPT_IN)
     tmp_checks(r, sci, enabled=True)
 
     # Opting out later removes both blocks again, also in place, no migration.
-    tmp_rollout_checks(r, sc + ": /tmp turned off again", "u1-tmp-off", False, "-var", "image=" + image, *OPT_OUT)
+    tmp_rollout_checks(r, sc + ": /tmp turned off again", "u1-tmp-off", False,
+                       "-var", "image=" + image, *OPT_OUT)
 
 
 SCENARIOS = [

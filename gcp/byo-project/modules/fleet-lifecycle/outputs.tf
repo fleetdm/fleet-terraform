@@ -53,7 +53,7 @@ output "attempt_id" {
 }
 
 output "tmp_volume" {
-  description = "The /tmp volume as declared on the service template (null when tmp_volume_config.enable = false): name, medium, size_limit and the container mount_path. Read from the service resource, not from the input."
+  description = "The /tmp volume as declared on the service template (null when the opt-in tmp_volume_config is off, which is the default): name, medium, size_limit and the container mount_path. Read from the service resource, not from the input."
   value = (
     length(google_cloud_run_v2_service.fleet.template[0].volumes) == 0 ? null : {
       name       = google_cloud_run_v2_service.fleet.template[0].volumes[0].name
