@@ -1,0 +1,21 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+  - python3
+  - python3-pip
+  - git
+  - ansible-core
+
+runcmd:
+  - |
+      #!/bin/bash
+      set -euo pipefail
+      export HOME=/root
+      repo_dir="${ansible_repo_path}"
+      git clone --depth 1 --filter=blob:none --sparse --branch "${ansible_repo_ref}" "${ansible_repo_url}" "${ansible_repo_path}"
+      git -C "${repo_dir}" sparse-checkout set "${ansible_sparse_path}"
+      cat >/tmp/fleet-extra-vars.json <<'JSON'
+${ansible_extra_vars}
+JSON
+      ansible-playbook "${repo_dir}/${ansible_playbook}" --inventory localhost, --extra-vars @/tmp/fleet-extra-vars.json
