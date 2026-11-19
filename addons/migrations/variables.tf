@@ -64,3 +64,8 @@ variable "timeout_seconds" {
   default     = 600
 }
 
+variable "scale_down_timeout_seconds" {
+  description = "Maximum time in seconds to wait for a scaled-down ECS service's tasks to stop before migrations run. Default 900 (15 min), which covers the load balancer's default 300s deregistration delay."
+  type        = number
+  default     = 900
+}

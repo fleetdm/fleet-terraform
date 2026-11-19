@@ -35,6 +35,11 @@ module "fleet_migration" {
   # Increase to 1800+ for large production databases with heavy schema migrations.
   # timeout_seconds          = 600
 
+  # Optional: Maximum time in seconds to wait for a scaled-down service's tasks to stop
+  # before migrations run (default 900). Increase if the load balancer's deregistration
+  # delay is longer than the default 300s.
+  # scale_down_timeout_seconds = 900
+
   # Ensure this module depends on the resource that creates/updates the task definition revision
   # For example:
   # depends_on = [aws_ecs_task_definition.fleet_app]
@@ -51,7 +56,7 @@ module "fleet_migration" {
 ## Prerequisites
 
 *   **`bash` shell:** Must be available in the environment where Terraform is executed.
-*   **AWS CLI:** Must be installed and configured with credentials in the environment where Terraform is executed. The credentials need permissions to perform ECS actions (DescribeServices, UpdateService, RunTask, DescribeTasks) and potentially STS AssumeRole if `assume_role_arn` is provided.
+*   **AWS CLI:** Must be installed and configured with credentials in the environment where Terraform is executed. The credentials need permissions to perform ECS actions (DescribeServices, UpdateService, RunTask, ListTasks, DescribeTasks) and potentially STS AssumeRole if `assume_role_arn` is provided.
 *   **`migrate.sh` script:** A script named `migrate.sh` *must* exist within this module's directory (`path.module`). This script contains the actual logic for scaling services and running the migration task. **This module only triggers the script; it does not contain the migration logic itself.**
 *   **Existing Resources:** The specified ECS Cluster, Service, Task Definition (base ARN), Subnets, and Security Groups must exist.
 
@@ -94,6 +99,7 @@ No modules.
 | <a name="input_ecs_service"></a> [ecs\_service](#input\_ecs\_service) | n/a | `string` | n/a | yes |
 | <a name="input_max_capacity"></a> [max\_capacity](#input\_max\_capacity) | n/a | `number` | n/a | yes |
 | <a name="input_min_capacity"></a> [min\_capacity](#input\_min\_capacity) | n/a | `number` | n/a | yes |
+| <a name="input_scale_down_timeout_seconds"></a> [scale\_down\_timeout\_seconds](#input\_scale\_down\_timeout\_seconds) | Maximum time in seconds to wait for a scaled-down ECS service's tasks to stop before migrations run. Default 900 (15 min), which covers the load balancer's default 300s deregistration delay. | `number` | `900` | no |
 | <a name="input_security_groups"></a> [security\_groups](#input\_security\_groups) | n/a | `list(string)` | n/a | yes |
 | <a name="input_subnets"></a> [subnets](#input\_subnets) | n/a | `list(string)` | n/a | yes |
 | <a name="input_task_definition"></a> [task\_definition](#input\_task\_definition) | n/a | `string` | n/a | yes |
