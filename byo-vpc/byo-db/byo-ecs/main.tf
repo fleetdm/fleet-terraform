@@ -191,6 +191,8 @@ resource "aws_ecs_service" "fleet" {
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
   health_check_grace_period_seconds  = 30
+  propagate_tags                     = "SERVICE"
+  enable_ecs_managed_tags            = true
 
   dynamic "load_balancer" {
     for_each = local.load_balancers
