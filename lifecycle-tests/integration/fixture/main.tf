@@ -51,6 +51,20 @@ variable "drain_seconds" {
   default = 2
 }
 
+# The loopback scenarios exercise the disk-backed /tmp code path, so the
+# fixture opts in explicitly. The module's own default is OFF (no volume, no
+# mount): the standalone mocked suites prove that, and U1 proves an upgraded
+# service is unchanged by default. U1 overrides this variable per step:
+# {} for the default (off) takeover, {enable=true} to opt in, {enable=false}
+# to opt back out.
+variable "tmp_volume_config" {
+  type = object({
+    enable   = optional(bool)
+    size_gib = optional(number)
+  })
+  default = { enable = true, size_gib = 10 }
+}
+
 locals {
   endpoint = "http://127.0.0.1:${var.fake_port}/v2"
 }
@@ -106,6 +120,8 @@ module "lifecycle" {
   job_create_timeout     = "10m"
 
   restore_settle_interval_seconds = var.restore_settle_interval_seconds
+
+  tmp_volume_config = var.tmp_volume_config
 }
 
 # Stand-in for the root's serverless NEGs and the load balancer that depends

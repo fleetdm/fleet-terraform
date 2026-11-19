@@ -85,6 +85,10 @@ module "fleet_lifecycle" {
   min_instance_count    = var.fleet_config.min_instance_count
   max_instance_count    = var.fleet_config.max_instance_count
 
+  # Opt-in disk-backed /tmp (off unless enable = true; 10 GiB when enabled).
+  # Kept out of the sensitive fleet_config and out of the migration identity.
+  tmp_volume_config = var.tmp_volume_config
+
   migration_enabled = nonsensitive(var.fleet_config.exec_migration)
   # connection_name is computed-only: planned unknown on (same-name)
   # replacement => new migration identity.

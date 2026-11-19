@@ -2,7 +2,7 @@
 module "fleet_lb" {
   count   = local.lb_config.enable && !local.lb_config.use_regional_lb ? 1 : 0
   source  = "GoogleCloudPlatform/lb-http/google//modules/serverless_negs"
-  version = "~> 12.0"
+  version = "~> 14.0"
 
   project = var.project_id
   name    = "${var.prefix}-lb"

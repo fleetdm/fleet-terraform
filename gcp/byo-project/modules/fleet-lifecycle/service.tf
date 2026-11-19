@@ -11,7 +11,25 @@
 #     waits for it to become Ready ("staged" restore).
 #   * the restore marker annotation is NOT declared (left to the restore
 #     PATCH; preserved by the provider's effective_annotations handling).
+#   * an opt-in disk-backed /tmp (var.tmp_volume_config, off by default):
+#     when enable = true, one Cloud Run ephemeral disk volume (empty_dir,
+#     medium DISK) mounted at /tmp in the Fleet container. The migration job
+#     gets no volume, and the setting is not part of the migration identity:
+#     adding, resizing or removing it is an ordinary in-place template update
+#     (new revision, no migration).
 # -----------------------------------------------------------------------------
+
+locals {
+  # The volume's medium is the literal "DISK" below, never MEMORY (MEMORY is
+  # the in-memory /tmp this replaces, which is also what an opted-out service
+  # keeps). Ephemeral disk needs the GEN2 execution environment declared on
+  # the template.
+  tmp_volume_enabled = var.tmp_volume_config.enable
+  tmp_volume_name    = "tmp"
+  tmp_mount_path     = "/tmp"
+  tmp_volume_size    = "${var.tmp_volume_config.size_gib}Gi"
+}
+
 resource "google_cloud_run_v2_service" "fleet" {
   provider = google-beta
 
@@ -54,6 +72,20 @@ resource "google_cloud_run_v2_service" "fleet" {
       max_instance_count = var.max_instance_count
     }
 
+    # Opt-in disk-backed /tmp (see the header): enable = true declares this
+    # volume and the mount below; leaving it off (the default) declares
+    # neither, i.e. the in-memory /tmp Cloud Run gives the container.
+    dynamic "volumes" {
+      for_each = local.tmp_volume_enabled ? [local.tmp_volume_name] : []
+      content {
+        name = volumes.value
+        empty_dir {
+          medium     = "DISK"
+          size_limit = local.tmp_volume_size
+        }
+      }
+    }
+
     vpc_access {
       network_interfaces {
         network    = var.vpc_network
@@ -77,6 +109,14 @@ resource "google_cloud_run_v2_service" "fleet" {
         }
         cpu_idle          = true
         startup_cpu_boost = false
+      }
+
+      dynamic "volume_mounts" {
+        for_each = local.tmp_volume_enabled ? [local.tmp_volume_name] : []
+        content {
+          name       = volume_mounts.value
+          mount_path = local.tmp_mount_path
+        }
       }
 
       startup_probe {

@@ -245,6 +245,50 @@ variable "fleet_config" {
   }
 }
 
+variable "tmp_volume_config" {
+  description = <<-EOT
+    Disk-backed /tmp for the Fleet Cloud Run service (opt-in, off by
+    default). Separate from fleet_config, and not sensitive.
+
+      enable   - Opt in with true to mount one Cloud Run ephemeral disk volume
+                 (empty_dir with medium DISK) at /tmp in the Fleet container
+                 (default false). Files Fleet writes to /tmp then use disk
+                 instead of instance memory. false, null or omitted declares no
+                 volume and no mount: /tmp stays the in-memory filesystem Cloud
+                 Run gives the container.
+      size_gib - Volume size limit in GiB, used only when enable = true
+                 (default 10). A whole number from 1 to 100. A size alone does
+                 not enable the feature.
+
+    Check the project's ephemeral disk quotas before opting in: the regional
+    allocation can be 0 GiB, and the 100 GiB grant Google documents as
+    automatic is not guaranteed here. A size_gib above 10 also needs a higher
+    per-instance quota:
+    https://docs.cloud.google.com/run/docs/configuring/services/ephemeral-disk#request_a_quota_increase
+
+    When enabled, Cloud Run bills the full provisioned size for the lifetime of
+    each instance and deletes the data when the instance shuts down. Adding,
+    resizing or removing the volume rolls out a new revision in place and
+    never runs a database migration on its own. The migration job has no /tmp
+    volume.
+  EOT
+  type = object({
+    enable   = optional(bool, false)
+    size_gib = optional(number, 10)
+  })
+  default  = {}
+  nullable = false
+
+  validation {
+    condition = (
+      var.tmp_volume_config.size_gib >= 1 &&
+      var.tmp_volume_config.size_gib <= 100 &&
+      floor(var.tmp_volume_config.size_gib) == var.tmp_volume_config.size_gib
+    )
+    error_message = "tmp_volume_config.size_gib must be a whole number of GiB from 1 to 100."
+  }
+}
+
 variable "cmek" {
   description = <<-EOT
     Customer-Managed Encryption Key configuration. When enable = true, the GCS

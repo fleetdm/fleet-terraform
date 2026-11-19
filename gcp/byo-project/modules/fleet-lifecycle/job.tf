@@ -25,8 +25,8 @@
 #                         failed or cancelled: the apply fails, Fleet stays
 #                         MANUAL/0. The next plan sees a failed/cancelled
 #                         execution via jobs_live and plans a new job name.
-# The google-beta provider (6.x) does not expose completionStatus, hence the
-# metadata-only GET.
+# The google-beta provider (6.x, and 7.x as of 7.24) does not expose
+# completionStatus, hence the metadata-only GET.
 # -----------------------------------------------------------------------------
 resource "google_cloud_run_v2_job" "migration" {
   provider = google-beta
