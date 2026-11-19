@@ -466,6 +466,91 @@ variable "redis_config" {
     log_delivery_configuration = []
     tags                       = {}
   }
+  description = "The config for the cloudposse/elasticache-redis/aws module. Deprecated: use redis_configs instead."
+}
+
+variable "redis_configs" {
+  description = "Map of named ElastiCache replication group configurations for blue-green cutovers. When set, redis_config is ignored."
+  type = map(object({
+    name                          = optional(string, "fleet")
+    replication_group_id          = optional(string)
+    elasticache_subnet_group_name = optional(string, "")
+    allowed_security_group_ids    = optional(list(string), [])
+    subnets                       = list(string)
+    allowed_cidrs                 = list(string)
+    availability_zones            = optional(list(string), [])
+    cluster_size                  = optional(number, 3)
+    instance_type                 = optional(string, "cache.m5.large")
+    apply_immediately             = optional(bool, true)
+    automatic_failover_enabled    = optional(bool, false)
+    engine                        = optional(string, "redis")
+    engine_version                = optional(string, "7.1")
+    family                        = optional(string, "redis7")
+    at_rest_encryption_enabled    = optional(bool, true)
+    at_rest_kms = optional(object({
+      cmk_enabled        = optional(bool, false)
+      kms_key_arn        = optional(string, null)
+      kms_alias          = optional(string, "fleet-redis-at-rest")
+      extra_kms_policies = optional(list(any), [])
+      }), {
+      cmk_enabled        = false
+      kms_key_arn        = null
+      kms_alias          = "fleet-redis-at-rest"
+      extra_kms_policies = []
+    })
+    transit_encryption_enabled = optional(bool, true)
+    parameter = optional(list(object({
+      name  = string
+      value = string
+    })), [])
+    cloudwatch_log_group = optional(object({
+      retention_in_days = optional(number, null)
+      skip_destroy      = optional(bool, false)
+      kms = optional(object({
+        cmk_enabled        = optional(bool, false)
+        kms_key_arn        = optional(string, null)
+        kms_alias          = optional(string, "fleet-redis-logs")
+        extra_kms_policies = optional(list(any), [])
+        }), {
+        cmk_enabled        = false
+        kms_key_arn        = null
+        kms_alias          = "fleet-redis-logs"
+        extra_kms_policies = []
+      })
+      }), {
+      retention_in_days = null
+      skip_destroy      = false
+      kms = {
+        cmk_enabled        = false
+        kms_key_arn        = null
+        kms_alias          = "fleet-redis-logs"
+        extra_kms_policies = []
+      }
+    })
+    log_delivery_configuration = optional(list(map(any)), [])
+    tags                       = optional(map(string), {})
+  }))
+  default = null
+
+  validation {
+    condition     = var.redis_configs == null || length(var.redis_configs) > 0
+    error_message = "redis_configs must contain at least one cache configuration when set."
+  }
+  validation {
+    condition     = var.redis_configs == null || length(distinct([for config in values(var.redis_configs) : config.name])) == length(var.redis_configs)
+    error_message = "Each redis_configs entry must use a unique name."
+  }
+}
+
+variable "active_redis_config_name" {
+  description = "Name of the redis_configs entry used by Fleet. Defaults to the synthetic current entry when using legacy redis_config."
+  type        = string
+  default     = "current"
+
+  validation {
+    condition     = var.redis_configs == null ? var.active_redis_config_name == "current" : contains(keys(var.redis_configs), var.active_redis_config_name)
+    error_message = "active_redis_config_name must be current when using redis_config, or a key present in redis_configs."
+  }
 }
 
 variable "ecs_cluster" {

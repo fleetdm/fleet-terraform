@@ -106,28 +106,58 @@ locals {
     )
   }
 
-  redis_at_rest_cmk_enabled    = var.redis_config.at_rest_kms.cmk_enabled
-  redis_at_rest_create_kms_key = var.redis_config.at_rest_encryption_enabled == true && local.redis_at_rest_cmk_enabled == true && var.redis_config.at_rest_kms.kms_key_arn == null
-  redis_at_rest_kms_key_arn = var.redis_config.at_rest_encryption_enabled == true && local.redis_at_rest_cmk_enabled == true ? (
-    var.redis_config.at_rest_kms.kms_key_arn != null ? var.redis_config.at_rest_kms.kms_key_arn : aws_kms_key.redis_at_rest[0].arn
-  ) : null
+  redis_configs = var.redis_configs != null ? var.redis_configs : { current = var.redis_config }
+
+  redis_at_rest_create_kms_keys = toset([
+    for config_name, config in local.redis_configs : config_name
+    if config.at_rest_encryption_enabled == true && config.at_rest_kms.cmk_enabled == true && config.at_rest_kms.kms_key_arn == null
+  ])
+  redis_at_rest_kms_key_arns = {
+    for config_name, config in local.redis_configs : config_name => config.at_rest_encryption_enabled == true && config.at_rest_kms.cmk_enabled == true ? (
+      config.at_rest_kms.kms_key_arn != null ? config.at_rest_kms.kms_key_arn : aws_kms_key.redis_at_rest[config_name].arn
+    ) : null
+  }
 
   redis_cloudwatch_log_group_destinations = {
-    for idx, config in var.redis_config.log_delivery_configuration :
-    tostring(idx) => config if try(lower(config.destination_type), "") == "cloudwatch-logs" && try(config.destination, null) != null
+    for config_name, config in local.redis_configs : config_name => {
+      for idx, delivery in config.log_delivery_configuration :
+      tostring(idx) => delivery if try(lower(delivery.destination_type), "") == "cloudwatch-logs" && try(delivery.destination, null) != null
+    }
   }
-  redis_cloudwatch_log_group_cmk_enabled    = var.redis_config.cloudwatch_log_group.kms.cmk_enabled
-  redis_cloudwatch_log_group_create_kms_key = length(local.redis_cloudwatch_log_group_destinations) > 0 && local.redis_cloudwatch_log_group_cmk_enabled == true && var.redis_config.cloudwatch_log_group.kms.kms_key_arn == null
-  redis_cloudwatch_log_group_kms_key_arn = length(local.redis_cloudwatch_log_group_destinations) > 0 && local.redis_cloudwatch_log_group_cmk_enabled == true ? (
-    var.redis_config.cloudwatch_log_group.kms.kms_key_arn != null ? var.redis_config.cloudwatch_log_group.kms.kms_key_arn : aws_kms_key.redis_cloudwatch_log_group[0].arn
-  ) : null
+  redis_cloudwatch_log_group_create_kms_keys = toset([
+    for config_name, config in local.redis_configs : config_name
+    if length(local.redis_cloudwatch_log_group_destinations[config_name]) > 0 && config.cloudwatch_log_group.kms.cmk_enabled == true && config.cloudwatch_log_group.kms.kms_key_arn == null
+  ])
+  redis_cloudwatch_log_group_kms_key_arns = {
+    for config_name, config in local.redis_configs : config_name => length(local.redis_cloudwatch_log_group_destinations[config_name]) > 0 && config.cloudwatch_log_group.kms.cmk_enabled == true ? (
+      config.cloudwatch_log_group.kms.kms_key_arn != null ? config.cloudwatch_log_group.kms.kms_key_arn : aws_kms_key.redis_cloudwatch_log_group[config_name].arn
+    ) : null
+  }
   # Keep the decision to manage Redis log groups based only on input-known values
   # so it can be used safely in for_each.
-  redis_manage_cloudwatch_log_groups = length(local.redis_cloudwatch_log_group_destinations) > 0 && (
-    var.redis_config.cloudwatch_log_group.retention_in_days != null ||
-    var.redis_config.cloudwatch_log_group.skip_destroy == true ||
-    local.redis_cloudwatch_log_group_cmk_enabled == true
-  )
+  redis_manage_cloudwatch_log_groups = {
+    for config_name, config in local.redis_configs : config_name => length(local.redis_cloudwatch_log_group_destinations[config_name]) > 0 && (
+      config.cloudwatch_log_group.retention_in_days != null ||
+      config.cloudwatch_log_group.skip_destroy == true ||
+      config.cloudwatch_log_group.kms.cmk_enabled == true
+    )
+  }
+  # Managed Redis log groups were historically keyed only by the
+  # log_delivery_configuration index ("0", "1", ...). The "current" entry keeps
+  # those bare index keys so existing log groups stay at their state addresses
+  # without moved blocks or replacement. Every other entry uses
+  # "<config_name>_<index>". Indexes are digits only, so bare keys never contain
+  # "_" and the text after the last "_" always identifies the index, which keeps
+  # keys unique across all entries.
+  redis_cloudwatch_log_groups = merge([
+    for config_name, destinations in local.redis_cloudwatch_log_group_destinations : {
+      for idx, delivery in destinations :
+      (config_name == "current" ? idx : "${config_name}_${idx}") => {
+        config_name = config_name
+        destination = delivery.destination
+      }
+    } if local.redis_manage_cloudwatch_log_groups[config_name]
+  ]...)
   kms_base_policy_statements = var.kms_base_policy != null ? var.kms_base_policy : [
     {
       sid    = "EnableRootPermissions"
@@ -252,8 +282,8 @@ check "kms_base_policy_requires_module_managed_cmk" {
       length(local.rds_password_secret_create_kms_keys) > 0 ||
       length(local.rds_observability_create_kms_keys) > 0 ||
       length(local.rds_cloudwatch_log_group_create_kms_keys) > 0 ||
-      local.redis_at_rest_create_kms_key == true ||
-      local.redis_cloudwatch_log_group_create_kms_key == true
+      length(local.redis_at_rest_create_kms_keys) > 0 ||
+      length(local.redis_cloudwatch_log_group_create_kms_keys) > 0
     )
     error_message = "kms_base_policy is not used by byo-vpc unless this module is creating at least one CMK. When kms_key_arn is provided, external key policies remain caller-managed."
   }
@@ -624,7 +654,7 @@ resource "aws_kms_alias" "rds_cloudwatch_log_group" {
 # Each source uses its own dynamic "statement" block to avoid Terraform type
 # conflicts when concatenating typed variable values with inline literal tuples.
 data "aws_iam_policy_document" "redis_at_rest_kms" {
-  count = local.redis_at_rest_create_kms_key == true ? 1 : 0
+  for_each = local.redis_at_rest_create_kms_keys
 
   dynamic "statement" {
     for_each = local.kms_base_policy_statements
@@ -649,7 +679,7 @@ data "aws_iam_policy_document" "redis_at_rest_kms" {
   }
 
   dynamic "statement" {
-    for_each = var.redis_config.at_rest_kms.extra_kms_policies
+    for_each = local.redis_configs[each.key].at_rest_kms.extra_kms_policies
     content {
       sid       = statement.value.sid
       effect    = statement.value.effect
@@ -694,22 +724,22 @@ data "aws_iam_policy_document" "redis_at_rest_kms" {
 }
 
 resource "aws_kms_key" "redis_at_rest" {
-  count               = local.redis_at_rest_create_kms_key == true ? 1 : 0
+  for_each            = local.redis_at_rest_create_kms_keys
   description         = "CMK for ElastiCache at-rest encryption."
   enable_key_rotation = true
-  policy              = data.aws_iam_policy_document.redis_at_rest_kms[0].json
+  policy              = data.aws_iam_policy_document.redis_at_rest_kms[each.key].json
 }
 
 resource "aws_kms_alias" "redis_at_rest" {
-  count         = local.redis_at_rest_create_kms_key == true ? 1 : 0
-  target_key_id = aws_kms_key.redis_at_rest[0].id
-  name          = "alias/${var.redis_config.at_rest_kms.kms_alias}"
+  for_each      = local.redis_at_rest_create_kms_keys
+  target_key_id = aws_kms_key.redis_at_rest[each.key].id
+  name          = "alias/${local.redis_configs[each.key].at_rest_kms.kms_alias}"
 }
 
 # Each source uses its own dynamic "statement" block to avoid Terraform type
 # conflicts when concatenating typed variable values with inline literal tuples.
 data "aws_iam_policy_document" "redis_cloudwatch_log_group_kms" {
-  count = local.redis_cloudwatch_log_group_create_kms_key == true ? 1 : 0
+  for_each = local.redis_cloudwatch_log_group_create_kms_keys
 
   dynamic "statement" {
     for_each = local.kms_base_policy_statements
@@ -734,7 +764,7 @@ data "aws_iam_policy_document" "redis_cloudwatch_log_group_kms" {
   }
 
   dynamic "statement" {
-    for_each = var.redis_config.cloudwatch_log_group.kms.extra_kms_policies
+    for_each = local.redis_configs[each.key].cloudwatch_log_group.kms.extra_kms_policies
     content {
       sid       = statement.value.sid
       effect    = statement.value.effect
@@ -779,16 +809,16 @@ data "aws_iam_policy_document" "redis_cloudwatch_log_group_kms" {
 }
 
 resource "aws_kms_key" "redis_cloudwatch_log_group" {
-  count               = local.redis_cloudwatch_log_group_create_kms_key == true ? 1 : 0
+  for_each            = local.redis_cloudwatch_log_group_create_kms_keys
   description         = "CMK for ElastiCache CloudWatch Logs encryption."
   enable_key_rotation = true
-  policy              = data.aws_iam_policy_document.redis_cloudwatch_log_group_kms[0].json
+  policy              = data.aws_iam_policy_document.redis_cloudwatch_log_group_kms[each.key].json
 }
 
 resource "aws_kms_alias" "redis_cloudwatch_log_group" {
-  count         = local.redis_cloudwatch_log_group_create_kms_key == true ? 1 : 0
-  target_key_id = aws_kms_key.redis_cloudwatch_log_group[0].id
-  name          = "alias/${var.redis_config.cloudwatch_log_group.kms.kms_alias}"
+  for_each      = local.redis_cloudwatch_log_group_create_kms_keys
+  target_key_id = aws_kms_key.redis_cloudwatch_log_group[each.key].id
+  name          = "alias/${local.redis_configs[each.key].cloudwatch_log_group.kms.kms_alias}"
 }
 
 module "byo-db" {
@@ -805,7 +835,7 @@ module "byo-db" {
       password_secret_kms_key_arn = local.rds_password_secret_kms_key_arns[var.active_rds_config_name]
     }
     redis = {
-      address = "${module.redis.endpoint}:${module.redis.port}"
+      address = "${module.redis[var.active_redis_config_name].endpoint}:${module.redis[var.active_redis_config_name].port}"
     }
     networking = {
       subnets          = var.vpc_config.networking.subnets
@@ -910,37 +940,39 @@ resource "aws_security_group_rule" "rds_ecs_ingress" {
 }
 
 module "redis" {
+  for_each = local.redis_configs
+
   source  = "cloudposse/elasticache-redis/aws"
   version = ">= 1.9.1"
 
-  name                          = var.redis_config.name
-  replication_group_id          = var.redis_config.replication_group_id == null ? var.redis_config.name : var.redis_config.replication_group_id
-  elasticache_subnet_group_name = var.redis_config.elasticache_subnet_group_name == null ? var.redis_config.name : var.redis_config.elasticache_subnet_group_name
-  availability_zones            = var.redis_config.availability_zones
+  name                          = each.value.name
+  replication_group_id          = each.value.replication_group_id == null ? each.value.name : each.value.replication_group_id
+  elasticache_subnet_group_name = each.value.elasticache_subnet_group_name == null ? each.value.name : each.value.elasticache_subnet_group_name
+  availability_zones            = each.value.availability_zones
   vpc_id                        = var.vpc_config.vpc_id
   description                   = "Fleet cache"
-  #allowed_security_group_ids = concat(var.redis_config.allowed_security_group_ids, module.byo-db.ecs.security_group)
-  subnets                    = var.redis_config.subnets
-  cluster_size               = var.redis_config.cluster_size
-  instance_type              = var.redis_config.instance_type
-  apply_immediately          = var.redis_config.apply_immediately
-  automatic_failover_enabled = var.redis_config.automatic_failover_enabled
-  engine                     = var.redis_config.engine
-  engine_version             = var.redis_config.engine_version
-  family                     = var.redis_config.family
-  at_rest_encryption_enabled = var.redis_config.at_rest_encryption_enabled
-  kms_key_id                 = local.redis_at_rest_kms_key_arn
-  transit_encryption_enabled = var.redis_config.transit_encryption_enabled
-  parameter                  = var.redis_config.parameter
-  log_delivery_configuration = var.redis_config.log_delivery_configuration
+  #allowed_security_group_ids = concat(each.value.allowed_security_group_ids, module.byo-db.ecs.security_group)
+  subnets                    = each.value.subnets
+  cluster_size               = each.value.cluster_size
+  instance_type              = each.value.instance_type
+  apply_immediately          = each.value.apply_immediately
+  automatic_failover_enabled = each.value.automatic_failover_enabled
+  engine                     = each.value.engine
+  engine_version             = each.value.engine_version
+  family                     = each.value.family
+  at_rest_encryption_enabled = each.value.at_rest_encryption_enabled
+  kms_key_id                 = local.redis_at_rest_kms_key_arns[each.key]
+  transit_encryption_enabled = each.value.transit_encryption_enabled
+  parameter                  = each.value.parameter
+  log_delivery_configuration = each.value.log_delivery_configuration
   additional_security_group_rules = [{
     type        = "ingress"
     from_port   = 0
     to_port     = 65535
     protocol    = "tcp"
-    cidr_blocks = var.redis_config.allowed_cidrs
+    cidr_blocks = each.value.allowed_cidrs
   }]
-  tags = var.redis_config.tags
+  tags = each.value.tags
 }
 
 module "secrets-manager-1" {
@@ -958,13 +990,13 @@ module "secrets-manager-1" {
 }
 
 resource "aws_cloudwatch_log_group" "redis" {
-  for_each = local.redis_manage_cloudwatch_log_groups ? local.redis_cloudwatch_log_group_destinations : {}
+  for_each = local.redis_cloudwatch_log_groups
 
   name              = each.value.destination
-  retention_in_days = var.redis_config.cloudwatch_log_group.retention_in_days
-  kms_key_id        = local.redis_cloudwatch_log_group_kms_key_arn
-  skip_destroy      = var.redis_config.cloudwatch_log_group.skip_destroy
-  tags              = var.redis_config.tags
+  retention_in_days = local.redis_configs[each.value.config_name].cloudwatch_log_group.retention_in_days
+  kms_key_id        = local.redis_cloudwatch_log_group_kms_key_arns[each.value.config_name]
+  skip_destroy      = local.redis_configs[each.value.config_name].cloudwatch_log_group.skip_destroy
+  tags              = local.redis_configs[each.value.config_name].tags
 }
 
 resource "aws_db_parameter_group" "main" {
