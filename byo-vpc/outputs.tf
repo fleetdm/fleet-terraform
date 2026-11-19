@@ -12,7 +12,12 @@ output "rds_clusters" {
 }
 
 output "redis" {
-  value = module.redis
+  value = module.redis[var.active_redis_config_name]
+}
+
+output "redis_clusters" {
+  description = "All named ElastiCache replication group module outputs."
+  value       = module.redis
 }
 
 output "secrets" {

@@ -77,3 +77,31 @@ moved {
   from = aws_kms_alias.rds_cloudwatch_log_group[0]
   to   = aws_kms_alias.rds_cloudwatch_log_group["current"]
 }
+
+moved {
+  from = module.redis
+  to   = module.redis["current"]
+}
+
+moved {
+  from = aws_kms_key.redis_at_rest[0]
+  to   = aws_kms_key.redis_at_rest["current"]
+}
+
+moved {
+  from = aws_kms_alias.redis_at_rest[0]
+  to   = aws_kms_alias.redis_at_rest["current"]
+}
+
+moved {
+  from = aws_kms_key.redis_cloudwatch_log_group[0]
+  to   = aws_kms_key.redis_cloudwatch_log_group["current"]
+}
+
+moved {
+  from = aws_kms_alias.redis_cloudwatch_log_group[0]
+  to   = aws_kms_alias.redis_cloudwatch_log_group["current"]
+}
+
+# aws_cloudwatch_log_group.redis needs no moved block: the "current" entry keeps
+# the historical log_delivery_configuration index keys ("0", "1", ...).

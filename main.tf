@@ -189,12 +189,16 @@ module "byo-vpc" {
     })
   }
   active_rds_config_name = var.active_rds_config_name
-  redis_config = merge(var.redis_config, {
-    subnets                       = module.vpc.elasticache_subnets
-    allowed_cidrs                 = module.vpc.private_subnets_cidr_blocks
-    elasticache_subnet_group_name = module.vpc.elasticache_subnet_group_name
-    availability_zones            = var.vpc.azs
-  })
+  redis_configs = {
+    for config_name, config in(var.redis_configs != null ? var.redis_configs : { current = var.redis_config }) :
+    config_name => merge(config, {
+      subnets                       = module.vpc.elasticache_subnets
+      allowed_cidrs                 = module.vpc.private_subnets_cidr_blocks
+      elasticache_subnet_group_name = module.vpc.elasticache_subnet_group_name
+      availability_zones            = var.vpc.azs
+    })
+  }
+  active_redis_config_name = var.active_redis_config_name
   alb_config = merge(var.alb_config, {
     subnets         = module.vpc.public_subnets
     certificate_arn = var.certificate_arn
