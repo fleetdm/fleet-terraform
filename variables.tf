@@ -16,6 +16,7 @@ variable "vpc" {
     one_nat_gateway_per_az                          = optional(bool, false)
     single_nat_gateway                              = optional(bool, true)
     enable_nat_gateway                              = optional(bool, true)
+    enable_s3_gateway_endpoint                      = optional(bool, true)
     enable_dns_hostnames                            = optional(bool, false)
     enable_dns_support                              = optional(bool, true)
     enable_flow_log                                 = optional(bool, false)
@@ -91,6 +92,7 @@ variable "vpc" {
     one_nat_gateway_per_az                          = false
     single_nat_gateway                              = true
     enable_nat_gateway                              = true
+    enable_s3_gateway_endpoint                      = true
     enable_dns_hostnames                            = false
     enable_dns_support                              = true
     enable_flow_log                                 = false
