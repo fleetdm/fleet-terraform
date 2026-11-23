@@ -173,6 +173,20 @@ module "vpc" {
   default_network_acl_egress  = var.vpc.default_network_acl_egress
 }
 
+# Without this, S3 traffic from the private subnets (software installers,
+# carves, ECR image layers) is billed as NAT gateway data processing.
+resource "aws_vpc_endpoint" "s3" {
+  count             = var.vpc.enable_s3_gateway_endpoint == true ? 1 : 0
+  vpc_id            = module.vpc.vpc_id
+  service_name      = "com.amazonaws.${data.aws_region.current.region}.s3"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids   = module.vpc.private_route_table_ids
+
+  tags = {
+    Name = "${var.vpc.name}-s3"
+  }
+}
+
 module "byo-vpc" {
   source          = "./byo-vpc"
   kms_base_policy = var.kms_base_policy
